@@ -1,0 +1,11 @@
+[package]
+name = "muSickBeets"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+fltk = "1.5.22"
+miniaudio = "0.10.0"
+rand = "0.9.2"
+trpl = "0.3.0"
