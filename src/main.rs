@@ -86,8 +86,7 @@
 mod helper;         // Math utilities, frequency table, shared algorithms
 mod envelope;       // ADSR envelope system
 mod instruments;    // Sound generators (sine, square, noise, pulse, etc.)
-mod effects_legacy; // Legacy effects system (backward compatibility)
-mod effects;        // New unified effects system (reverb, delay, chorus, etc.)
+mod effects;        // Unified effects system (reverb, delay, chorus, etc.)
 mod channel;        // Per-channel synthesis and state
 mod master_bus;     // Master output bus and global effects
 mod parser;         // CSV song file parser
