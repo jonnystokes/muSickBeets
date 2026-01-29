@@ -176,7 +176,7 @@ const DEBUG_LEVEL: DebugLevel = DebugLevel::Basic;
 /// Whether to export to WAV file before playing
 /// If true, renders to file first, then plays the file
 /// If false, plays in real-time directly
-const EXPORT_TO_WAV: bool = false;
+const EXPORT_TO_WAV: bool = true;
 
 /// Whether to normalize the output when exporting to WAV
 /// Normalization adjusts volume so the loudest peak hits the target level

@@ -1,11 +1,11 @@
 Voice0,Voice1,Voice2,Voice3,Voice4,Voice5,Voice6,Voice7,Voice8,Voice9,Voice10,Voice11
-config, title: Silicon Dreams, export_wav: true, tempo_bpm: 120
+config, title: Silicon Dreams, export_wav: true, tempo_bpm: 60
 // ============================================================================
 // SILICON DREAMS - A Tetris-Inspired Electronic Piece
 // Bass on channels 0-3 (creative walking pattern)
 // Flute melody on channels 4-5 (sine waves, 2 notes/second)
 // ============================================================================
-master reverb:0.5'0.4,,,,,,,,,,,
+master reverb2:0.8'3.0'0.3'0.45'30.0,,,,,,,,,,,
 // [INTRO] C#2 root - establishing the key
 c#2 sine amplitude:0.35,c#2 sine amplitude:0.35,c#3 trisaw:0.0 amplitude:0.2,c#3 trisaw:0.0 amplitude:0.2,e5 sine amplitude:0.25,e5 sine amplitude:0.22,,,,,
 -,-,-,-,-,-,,,,,,
