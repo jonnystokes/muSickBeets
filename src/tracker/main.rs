@@ -83,15 +83,15 @@
 // Each module is in its own file in the src/ directory.
 // ============================================================================
 
-mod helper;      // Math utilities, frequency table, shared algorithms
-mod envelope;    // ADSR envelope system
-mod instruments; // Sound generators (sine, square, noise, pulse, etc.)
-mod effects;     // Audio effects (reverb, delay, chorus, etc.)
-mod channel;     // Per-channel synthesis and state
-mod master_bus;  // Master output bus and global effects
-mod parser;      // CSV song file parser
-mod engine;      // Playback engine and sequencer
-mod audio;       // WAV export and audio utilities
+mod helper;         // Math utilities, frequency table, shared algorithms
+mod envelope;       // ADSR envelope system
+mod instruments;    // Sound generators (sine, square, noise, pulse, etc.)
+mod effects;        // Unified effects system (reverb, delay, chorus, etc.)
+mod channel;        // Per-channel synthesis and state
+mod master_bus;     // Master output bus and global effects
+mod parser;         // CSV song file parser
+mod engine;         // Playback engine and sequencer
+mod audio;          // WAV export and audio utilities
 
 // ============================================================================
 // EXTERNAL DEPENDENCIES
@@ -137,9 +137,24 @@ const CHANNEL_COUNT: usize = 12;
 const TICK_DURATION_SECONDS: f32 = 0.25;
 
 /// Audio buffer size (samples per callback)
-/// Smaller = lower latency but more CPU interrupts
-/// 960 samples at 48kHz = 20ms latency
-const AUDIO_BUFFER_SIZE: u32 = 960;
+/// Larger = more stable with heavy effects, but higher latency
+/// 960 = 20ms, 2048 = 43ms, 4096 = 85ms at 48kHz
+/// For heavy reverb/delay, use 2048 or higher
+const AUDIO_BUFFER_SIZE: u32 = 4096;
+
+/// Number of audio buffers (periods) to use
+/// More buffers = smoother playback but higher latency
+/// 3-4 is good for heavy effects
+const AUDIO_BUFFER_COUNT: u32 = 3;
+
+// ---- Effect Buffer Settings ----
+
+/// Maximum reverb/delay time in seconds
+/// Larger = more memory but allows longer reverb tails
+const MAX_EFFECT_BUFFER_SECONDS: f32 = 4.0;
+
+/// Maximum chorus/flanger delay in milliseconds
+const MAX_MODULATION_DELAY_MS: f32 = 100.0;
 
 // ---- Envelope Settings ----
 
@@ -176,7 +191,7 @@ const DEBUG_LEVEL: DebugLevel = DebugLevel::Basic;
 /// Whether to export to WAV file before playing
 /// If true, renders to file first, then plays the file
 /// If false, plays in real-time directly
-const EXPORT_TO_WAV: bool = false;
+const EXPORT_TO_WAV: bool = true;
 
 /// Whether to normalize the output when exporting to WAV
 /// Normalization adjusts volume so the loudest peak hits the target level
@@ -284,11 +299,37 @@ fn main() {
         return;
     }
 
+    // ---- Apply Song Configuration Overrides ----
+    // Settings from the config row in the CSV file override the defaults
+    let tick_duration = song_data.config.tick_duration.unwrap_or(TICK_DURATION_SECONDS);
+    let export_wav = song_data.config.export_wav.unwrap_or(EXPORT_TO_WAV);
+    let normalize_wav = song_data.config.normalize_wav.unwrap_or(NORMALIZE_WAV);
+
+    // Print config overrides if any were found
+    if song_data.config.has_any_settings() {
+        println!("[MAIN] Song configuration overrides:");
+        if let Some(title) = &song_data.config.title {
+            println!("[MAIN]   Title: {}", title);
+        }
+        if song_data.config.tick_duration.is_some() {
+            println!("[MAIN]   Tick duration: {:.3}s (overridden)", tick_duration);
+        }
+        if song_data.config.export_wav.is_some() {
+            println!("[MAIN]   Export WAV: {} (overridden)", export_wav);
+        }
+        if song_data.config.normalize_wav.is_some() {
+            println!("[MAIN]   Normalize WAV: {} (overridden)", normalize_wav);
+        }
+        if let Some(bpm) = song_data.config.tempo_bpm {
+            println!("[MAIN]   Tempo: {} BPM", bpm);
+        }
+    }
+
     // ---- Create Engine Configuration ----
     let engine_config = EngineConfig {
         sample_rate: SAMPLE_RATE,
         channel_count: CHANNEL_COUNT,
-        tick_duration_seconds: TICK_DURATION_SECONDS,
+        tick_duration_seconds: tick_duration,
         default_attack_seconds: DEFAULT_ATTACK_SECONDS,
         default_release_seconds: DEFAULT_RELEASE_SECONDS,
         fast_release_seconds: FAST_RELEASE_SECONDS,
@@ -296,20 +337,21 @@ fn main() {
     };
 
     // Calculate duration
-    let total_duration_seconds = song_data.row_count() as f32 * TICK_DURATION_SECONDS;
+    let total_duration_seconds = song_data.row_count() as f32 * tick_duration;
     println!(
         "[MAIN] Song duration: {:.2}s ({} rows)",
         total_duration_seconds,
         song_data.row_count()
     );
 
-    // ---- WAV Export Mode ----
-    if EXPORT_TO_WAV {
-        export_to_wav(song_data, engine_config, song_path);
-        return;
+    // ---- WAV Export (if enabled) ----
+    // When export_wav is true, we export first, then also play
+    if export_wav {
+        export_to_wav(song_data.clone(), engine_config.clone(), song_path, normalize_wav);
     }
 
-    // ---- Real-Time Playback Mode ----
+    // ---- Real-Time Playback ----
+    // Always play the song (after exporting, if export was enabled)
     play_realtime(song_data, engine_config, total_duration_seconds);
 }
 
@@ -318,6 +360,7 @@ fn export_to_wav(
     song_data: crate::parser::SongData,
     engine_config: EngineConfig,
     song_path: &str,
+    normalize_wav: bool,
 ) {
     println!("\n[EXPORT] Rendering to WAV...");
 
@@ -336,7 +379,7 @@ fn export_to_wav(
     }
 
     // Normalize if requested
-    if NORMALIZE_WAV {
+    if normalize_wav {
         let gain = crate::audio::normalize_audio(&mut samples, NORMALIZE_TARGET_PEAK);
         println!("[EXPORT] Normalized with gain: {:.3}", gain);
     }

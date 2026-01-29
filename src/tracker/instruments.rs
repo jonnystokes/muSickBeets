@@ -560,6 +560,7 @@ pub fn is_instrument_playable(instrument_id: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::PI;
 
     #[test]
     fn test_find_instrument_by_name() {
