@@ -650,7 +650,8 @@ fn parse_cell(cell: &str, context: &mut ParserContext) -> CellAction {
     let first_char = first_token.chars().next().unwrap().to_ascii_lowercase();
 
     // Is it a note? (starts with a-g)
-    let is_note = matches!(first_char, 'a'..='g');
+    // But NOT if it contains a colon - that's an effect like "a:0.4", not a note like "a4"
+    let is_note = matches!(first_char, 'a'..='g') && !first_token.contains(':');
 
     if is_note {
         // Note trigger: "c4 sine a:0.8"
@@ -1119,5 +1120,37 @@ mod tests {
         assert_eq!(parse_parameter_list("0.5"), vec![0.5]);
         assert_eq!(parse_parameter_list("0.5'0.3"), vec![0.5, 0.3]);
         assert_eq!(parse_parameter_list("1'2'3"), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_effect_only_change_not_parsed_as_note() {
+        // "a:0.4" should be parsed as an effect change, not as a note trigger
+        // This tests the fix for cells like "a:0.4" being incorrectly treated as notes
+        use crate::helper::FrequencyTable;
+
+        let freq_table = FrequencyTable::new();
+        let mut context = ParserContext {
+            frequency_table: &freq_table,
+            channel_count: 1,
+            debug_level: DebugLevel::Off,
+            current_line: 1,
+            current_column: 0,
+            errors: Vec::new(),
+            missing_cell_behavior: MissingCellBehavior::SlowRelease,
+        };
+
+        // "a:0.4" should be ChangeEffects (amplitude change), not TriggerNote
+        let action = parse_cell("a:0.4", &mut context);
+        assert!(matches!(action, CellAction::ChangeEffects { .. }),
+                "a:0.4 should be parsed as ChangeEffects, not as a note");
+
+        // "a4 sine" should still be TriggerNote
+        let action2 = parse_cell("a4 sine", &mut context);
+        assert!(matches!(action2, CellAction::TriggerNote { .. }),
+                "a4 sine should be parsed as TriggerNote");
+
+        // Verify no errors were generated for "a:0.4"
+        assert!(context.errors.is_empty(),
+                "No errors should be generated for effect-only change 'a:0.4'");
     }
 }
