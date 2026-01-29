@@ -24,7 +24,8 @@ anyhow = "1.0.100"
 
 # GUI framework - fast, lightweight, cross-platform
 # Note: Made optional in dev environment - requires Xft library
-fltk = { version = "1.5.22", optional = true }
+# let's keep this commented out until I get to that GUI project.
+#fltk = "1.5.22"
 
 # Audio backend - cross-platform real-time audio
 # Using the maintained fork which fixes compatibility with newer glibc
@@ -37,7 +38,5 @@ rand = "0.9.2"
 # Rust Programming Language utilities
 trpl = "0.3.0"
 
+# Don't need features 
 
-[features]
-default = []
-gui = ["fltk"]
