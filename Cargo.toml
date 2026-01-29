@@ -3,47 +3,27 @@ name = "muSickBeets"
 version = "0.1.0"
 edition = "2024"
 description = "A CSV-driven music tracker synthesizer with real-time audio synthesis"
-authors = ["muSickBeets Contributors"]
+authors = ["Jon Stokes ( mightey man )"]
+default-run = "tracker"
 
-# ============================================================================
-# BINARY TARGETS
-# ============================================================================
-#
-# The main tracker synth program
+
 [[bin]]
 name = "tracker"
 path = "src/main.rs"
 
-# The GUI test program (separate from the main synth)
-# Build with: cargo build --bin gui --features gui
+
 [[bin]]
 name = "gui"
 path = "src/main_gui.rs"
-required-features = ["gui"]
 
-# ============================================================================
-# FEATURES
-# ============================================================================
-#
-# Optional features that can be enabled at build time
-#
-[features]
-default = []  # By default, only build the tracker (no GUI)
-gui = ["fltk"]  # Enable this feature to build the GUI binary
 
-# ============================================================================
-# DEPENDENCIES
-# ============================================================================
-#
-# Core audio and UI libraries used by the synthesizer.
-# These are kept for current use and potential future features.
-#
 [dependencies]
+
 # Error handling - provides better error messages and context
 anyhow = "1.0.100"
 
 # GUI framework - fast, lightweight, cross-platform
-# Optional: Only needed when building with --features gui
+# Note: Made optional in dev environment - requires Xft library
 fltk = { version = "1.5.22", optional = true }
 
 # Audio backend - cross-platform real-time audio
@@ -56,3 +36,8 @@ rand = "0.9.2"
 
 # Rust Programming Language utilities
 trpl = "0.3.0"
+
+
+[features]
+default = []
+gui = ["fltk"]

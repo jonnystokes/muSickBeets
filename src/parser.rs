@@ -52,6 +52,133 @@ pub enum DebugLevel {
 }
 
 // ============================================================================
+// SONG CONFIGURATION
+// ============================================================================
+//
+// Per-song configuration that can be specified in the CSV file.
+// If a row starts with "config" in the first cell, it's parsed as settings.
+// Format: config, setting_name: value, another_setting: value, ...
+//
+// Example:
+//   Voice0,Voice1,Voice2
+//   config, export_wav: true, tick_duration: 0.125
+//   ... song data ...
+//
+// ============================================================================
+
+/// Per-song configuration options that can be set in the CSV file
+#[derive(Clone, Debug)]
+pub struct SongConfig {
+    /// Override tick duration (seconds per row)
+    pub tick_duration: Option<f32>,
+
+    /// Whether to export to WAV file
+    pub export_wav: Option<bool>,
+
+    /// Whether to normalize the WAV output
+    pub normalize_wav: Option<bool>,
+
+    /// Debug level override
+    pub debug_level: Option<DebugLevel>,
+
+    /// Song title (for display/metadata)
+    pub title: Option<String>,
+
+    /// Song tempo in BPM (informational, calculated from tick_duration)
+    pub tempo_bpm: Option<f32>,
+}
+
+impl Default for SongConfig {
+    fn default() -> Self {
+        Self {
+            tick_duration: None,
+            export_wav: None,
+            normalize_wav: None,
+            debug_level: None,
+            title: None,
+            tempo_bpm: None,
+        }
+    }
+}
+
+impl SongConfig {
+    /// Parse a config row into settings
+    /// Format: config, setting_name: value, setting_name: value, ...
+    pub fn parse_config_row(cells: &[&str]) -> Self {
+        let mut config = SongConfig::default();
+
+        // Skip the first cell (which is "config")
+        for cell in cells.iter().skip(1) {
+            let trimmed = cell.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // Split on ':' to get setting name and value
+            if let Some(colon_pos) = trimmed.find(':') {
+                let name = trimmed[..colon_pos].trim().to_lowercase();
+                let value = trimmed[colon_pos + 1..].trim();
+
+                match name.as_str() {
+                    "tick_duration" | "tick" | "duration" => {
+                        if let Ok(v) = value.parse::<f32>() {
+                            config.tick_duration = Some(v);
+                        }
+                    }
+                    "export_wav" | "export" | "wav" => {
+                        config.export_wav = Some(
+                            value == "true" || value == "1" || value == "yes"
+                        );
+                    }
+                    "normalize_wav" | "normalize" | "norm" => {
+                        config.normalize_wav = Some(
+                            value == "true" || value == "1" || value == "yes"
+                        );
+                    }
+                    "debug_level" | "debug" => {
+                        config.debug_level = match value.to_lowercase().as_str() {
+                            "off" | "0" | "none" => Some(DebugLevel::Off),
+                            "basic" | "1" => Some(DebugLevel::Basic),
+                            "verbose" | "2" => Some(DebugLevel::Verbose),
+                            "detailed" | "3" | "all" => Some(DebugLevel::Detailed),
+                            _ => None,
+                        };
+                    }
+                    "title" | "name" | "song" => {
+                        config.title = Some(value.to_string());
+                    }
+                    "tempo_bpm" | "tempo" | "bpm" => {
+                        if let Ok(v) = value.parse::<f32>() {
+                            config.tempo_bpm = Some(v);
+                            // Also calculate tick_duration from BPM if not already set
+                            // Assuming 4 rows per beat: tick = 60 / (bpm * 4)
+                            if config.tick_duration.is_none() {
+                                config.tick_duration = Some(60.0 / (v * 4.0));
+                            }
+                        }
+                    }
+                    _ => {
+                        // Unknown setting - ignore
+                    }
+                }
+            }
+        }
+
+        config
+    }
+
+    /// Check if any configuration was found
+    pub fn has_any_settings(&self) -> bool {
+        self.tick_duration.is_some()
+            || self.export_wav.is_some()
+            || self.normalize_wav.is_some()
+            || self.debug_level.is_some()
+            || self.title.is_some()
+            || self.tempo_bpm.is_some()
+    }
+}
+
+// ============================================================================
 // PARSE ERROR
 // ============================================================================
 
@@ -211,6 +338,7 @@ pub enum CellAction {
 // ============================================================================
 
 /// Parsed song data ready for playback
+#[derive(Clone)]
 pub struct SongData {
     /// Grid of cell actions: rows[row_index][channel_index]
     pub rows: Vec<Vec<CellAction>>,
@@ -223,6 +351,9 @@ pub struct SongData {
 
     /// Number of channels detected
     pub channel_count: usize,
+
+    /// Per-song configuration (from config row, if present)
+    pub config: SongConfig,
 }
 
 impl SongData {
@@ -318,6 +449,8 @@ pub fn parse_song(
     let mut rows: Vec<Vec<CellAction>> = Vec::new();
     let mut raw_lines: Vec<String> = Vec::new();
     let mut is_first_data_row = true;
+    let mut song_config = SongConfig::default();
+    let mut config_parsed = false;
 
     for (line_index, line) in song_text.lines().enumerate() {
         context.current_line = line_index + 1; // 1-indexed for humans
@@ -341,6 +474,32 @@ pub fn parse_song(
                 println!("[PARSER] Line {}: Skipping header: '{}'", context.current_line, trimmed_line);
             }
             continue;
+        }
+
+        // Check for config row (first cell is "config")
+        // This must come right after the header row
+        if !config_parsed {
+            config_parsed = true;
+            let cells: Vec<&str> = trimmed_line.split(',').collect();
+            if !cells.is_empty() && cells[0].trim().to_lowercase() == "config" {
+                song_config = SongConfig::parse_config_row(&cells);
+                if debug_level >= DebugLevel::Basic {
+                    println!("[PARSER] Line {}: Found config row", context.current_line);
+                    if let Some(title) = &song_config.title {
+                        println!("[PARSER]   Title: {}", title);
+                    }
+                    if let Some(tick) = song_config.tick_duration {
+                        println!("[PARSER]   Tick duration: {}s", tick);
+                    }
+                    if let Some(export) = song_config.export_wav {
+                        println!("[PARSER]   Export WAV: {}", export);
+                    }
+                    if let Some(bpm) = song_config.tempo_bpm {
+                        println!("[PARSER]   Tempo: {} BPM", bpm);
+                    }
+                }
+                continue; // Don't parse this as song data
+            }
         }
 
         // Store raw line for debug display
@@ -418,6 +577,7 @@ pub fn parse_song(
         raw_lines,
         errors: context.errors,
         channel_count,
+        config: song_config,
     }
 }
 
