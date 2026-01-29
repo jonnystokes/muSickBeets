@@ -83,15 +83,16 @@
 // Each module is in its own file in the src/ directory.
 // ============================================================================
 
-mod helper;      // Math utilities, frequency table, shared algorithms
-mod envelope;    // ADSR envelope system
-mod instruments; // Sound generators (sine, square, noise, pulse, etc.)
-mod effects;     // Audio effects (reverb, delay, chorus, etc.)
-mod channel;     // Per-channel synthesis and state
-mod master_bus;  // Master output bus and global effects
-mod parser;      // CSV song file parser
-mod engine;      // Playback engine and sequencer
-mod audio;       // WAV export and audio utilities
+mod helper;         // Math utilities, frequency table, shared algorithms
+mod envelope;       // ADSR envelope system
+mod instruments;    // Sound generators (sine, square, noise, pulse, etc.)
+mod effects_legacy; // Legacy effects system (backward compatibility)
+mod effects;        // New unified effects system (reverb, delay, chorus, etc.)
+mod channel;        // Per-channel synthesis and state
+mod master_bus;     // Master output bus and global effects
+mod parser;         // CSV song file parser
+mod engine;         // Playback engine and sequencer
+mod audio;          // WAV export and audio utilities
 
 // ============================================================================
 // EXTERNAL DEPENDENCIES
@@ -137,9 +138,24 @@ const CHANNEL_COUNT: usize = 12;
 const TICK_DURATION_SECONDS: f32 = 0.25;
 
 /// Audio buffer size (samples per callback)
-/// Smaller = lower latency but more CPU interrupts
-/// 960 samples at 48kHz = 20ms latency
-const AUDIO_BUFFER_SIZE: u32 = 960;
+/// Larger = more stable with heavy effects, but higher latency
+/// 960 = 20ms, 2048 = 43ms, 4096 = 85ms at 48kHz
+/// For heavy reverb/delay, use 2048 or higher
+const AUDIO_BUFFER_SIZE: u32 = 4096;
+
+/// Number of audio buffers (periods) to use
+/// More buffers = smoother playback but higher latency
+/// 3-4 is good for heavy effects
+const AUDIO_BUFFER_COUNT: u32 = 3;
+
+// ---- Effect Buffer Settings ----
+
+/// Maximum reverb/delay time in seconds
+/// Larger = more memory but allows longer reverb tails
+const MAX_EFFECT_BUFFER_SECONDS: f32 = 4.0;
+
+/// Maximum chorus/flanger delay in milliseconds
+const MAX_MODULATION_DELAY_MS: f32 = 100.0;
 
 // ---- Envelope Settings ----
 
