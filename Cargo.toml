@@ -9,7 +9,7 @@ default-run = "tracker"
 
 [[bin]]
 name = "tracker"
-path = "src/main.rs"
+path = "src/tracker/main.rs"
 
 
 [[bin]]
