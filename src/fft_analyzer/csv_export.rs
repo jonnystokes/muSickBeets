@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use std::fs::File;
 use std::path::Path;
 
-use super::{Spectrogram, FftParams};
+use super::data::{Spectrogram, FftParams, FftFrame, WindowType, TimeUnit};
 
 pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftParams, path: P) -> Result<()> {
     let file = File::create(&path)
@@ -15,10 +15,10 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
 
     // Write metadata header (row 1)
     let window_type_str = match params.window_type {
-        super::WindowType::Hann => "Hann".to_string(),
-        super::WindowType::Hamming => "Hamming".to_string(),
-        super::WindowType::Blackman => "Blackman".to_string(),
-        super::WindowType::Kaiser(beta) => format!("Kaiser_{}", beta),
+        WindowType::Hann => "Hann".to_string(),
+        WindowType::Hamming => "Hamming".to_string(),
+        WindowType::Blackman => "Blackman".to_string(),
+        WindowType::Kaiser(beta) => format!("Kaiser_{}", beta),
     };
 
     writer.write_record(&[
@@ -36,7 +36,7 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
     // Write column labels (row 2)
     writer.write_record(&[
         "time_sec",
-        "frequency_hz", 
+        "frequency_hz",
         "magnitude",
         "phase_rad"
     ]).context("Failed to write CSV header")?;
@@ -62,7 +62,6 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
 
 pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParams)> {
     use csv::ReaderBuilder;
-    use super::fft_engine::FftFrame;
 
     let mut reader = ReaderBuilder::new()
         .has_headers(false)
@@ -89,16 +88,16 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         .context("Invalid hop_length in metadata")?;
     let overlap_percent: f32 = metadata[3].parse()
         .context("Invalid overlap_percent in metadata")?;
-    
+
     let window_type = if metadata[4].starts_with("Kaiser_") {
         let beta: f32 = metadata[4].trim_start_matches("Kaiser_").parse()
             .context("Invalid Kaiser beta in metadata")?;
-        super::WindowType::Kaiser(beta)
+        WindowType::Kaiser(beta)
     } else {
         match metadata[4].as_ref() {
-            "Hann" => super::WindowType::Hann,
-            "Hamming" => super::WindowType::Hamming,
-            "Blackman" => super::WindowType::Blackman,
+            "Hann" => WindowType::Hann,
+            "Hamming" => WindowType::Hamming,
+            "Blackman" => WindowType::Blackman,
             _ => anyhow::bail!("Unknown window type: {}", &metadata[4]),
         }
     };
@@ -118,7 +117,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
 
     for result in records {
         let record = result.context("Failed to read CSV record")?;
-        
+
         if record.len() < 4 {
             continue;
         }
@@ -137,7 +136,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
     let mut frames = Vec::new();
     for (time_str, bins) in frames_map {
         let time_seconds: f64 = time_str.parse().unwrap_or(0.0);
-        
+
         let mut frequencies = Vec::new();
         let mut magnitudes = Vec::new();
         let mut phases = Vec::new();
@@ -165,7 +164,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         use_center,
         start_time: start_sample as f64 / sample_rate as f64,
         stop_time: stop_sample as f64 / sample_rate as f64,
-        time_unit: super::TimeUnit::Seconds,
+        time_unit: TimeUnit::Seconds,
         sample_rate,
     };
 
@@ -175,7 +174,6 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::fft_engine::FftFrame;
 
     #[test]
     fn test_csv_roundtrip() {
