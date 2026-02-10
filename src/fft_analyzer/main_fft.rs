@@ -28,7 +28,6 @@ use std::time::{Duration, Instant};
 use data::{AudioData, FftParams, Spectrogram, ViewState, FreqScale, ColormapId, TransportState, WindowType, TimeUnit};
 use processing::fft_engine::FftEngine;
 use processing::reconstructor::Reconstructor;
-use processing::waveform_cache::WaveformPeaks;
 use rendering::spectrogram_renderer::SpectrogramRenderer;
 use rendering::waveform_renderer::WaveformRenderer;
 use playback::audio_player::{AudioPlayer, PlaybackState};
@@ -40,7 +39,7 @@ use ui::tooltips::{TooltipManager, set_tooltip};
 enum WorkerMessage {
     FftComplete(Spectrogram),
     ReconstructionComplete(AudioData),
-    WaveformReady(WaveformPeaks),
+    WaveformReady,
     Error(String),
 }
 
@@ -56,12 +55,12 @@ struct AppState {
     audio_player: AudioPlayer,
     spec_renderer: SpectrogramRenderer,
     wave_renderer: WaveformRenderer,
-    waveform_peaks: WaveformPeaks,
 
     reconstructed_audio: Option<AudioData>,
     recon_start_time: f64,  // time offset of reconstructed audio within full file
     is_processing: bool,
     dirty: bool,            // true when settings changed and recompute needed
+    lock_to_active: bool,   // when true, viewport snaps to processing range on recompute
     has_audio: bool,
 
     tooltip_mgr: TooltipManager,
@@ -79,16 +78,12 @@ impl AppState {
             audio_player: AudioPlayer::new(),
             spec_renderer: SpectrogramRenderer::new(),
             wave_renderer: WaveformRenderer::new(),
-            waveform_peaks: WaveformPeaks {
-                peaks: vec![],
-                time_start: 0.0,
-                time_end: 0.0,
-            },
 
             reconstructed_audio: None,
             recon_start_time: 0.0,
             is_processing: false,
             dirty: false,
+            lock_to_active: false,
             has_audio: false,
 
             tooltip_mgr: TooltipManager::new(),
@@ -666,6 +661,22 @@ fn main() {
     btn_tooltips.set_label_size(10);
     set_tooltip(&mut btn_tooltips, "Toggle tooltip help bubbles on/off.");
     left.fixed(&btn_tooltips, 22);
+
+    // Lock viewport to active area toggle
+    let mut check_lock_active = fltk::button::CheckButton::default().with_label(" Lock to Active");
+    check_lock_active.set_checked(false);
+    check_lock_active.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    check_lock_active.set_label_size(10);
+    set_tooltip(&mut check_lock_active, "When checked, viewport auto-snaps to\nthe processing time range on recompute.");
+    left.fixed(&check_lock_active, 22);
+
+    // Home button — snap viewport to processing range
+    let mut btn_home = Button::default().with_label("Home");
+    btn_home.set_color(theme::color(theme::BG_WIDGET));
+    btn_home.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_home.set_label_size(11);
+    set_tooltip(&mut btn_home, "Snap viewport to the active processing\ntime range (sidebar Start/Stop).");
+    left.fixed(&btn_home, 25);
 
     // Spacer to push everything up
     Frame::default();
@@ -1631,6 +1642,42 @@ fn main() {
         });
     }
 
+    // Lock to Active toggle
+    {
+        let state = state.clone();
+        check_lock_active.set_callback(move |c| {
+            state.borrow_mut().lock_to_active = c.is_checked();
+        });
+    }
+
+    // Home button — snap viewport to processing time range
+    {
+        let state = state.clone();
+        let mut spec_display = spec_display.clone();
+        let mut waveform_display = waveform_display.clone();
+
+        btn_home.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            let proc_min = match st.fft_params.time_unit {
+                TimeUnit::Seconds => st.fft_params.start_time,
+                TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
+            };
+            let proc_max = match st.fft_params.time_unit {
+                TimeUnit::Seconds => st.fft_params.stop_time,
+                TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
+            };
+            if proc_max > proc_min {
+                st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
+                st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
+                st.spec_renderer.invalidate();
+                st.wave_renderer.invalidate();
+            }
+            drop(st);
+            spec_display.redraw();
+            waveform_display.redraw();
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  DRAW CALLBACKS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1816,10 +1863,16 @@ fn main() {
                 None
             };
 
-            // Clone peaks and view to avoid simultaneous mutable/immutable borrow of st
-            let peaks = st.waveform_peaks.clone();
+            // Clone view and take audio out temporarily to avoid simultaneous mut/immut borrow
             let view = st.view.clone();
-            st.wave_renderer.draw(&peaks, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
+            let audio_opt = st.reconstructed_audio.take();
+            let recon_start = st.recon_start_time;
+            if let Some(ref audio) = audio_opt {
+                st.wave_renderer.draw(&audio.samples, audio.sample_rate, recon_start, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
+            } else {
+                st.wave_renderer.draw(&[], 44100, 0.0, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
+            }
+            st.reconstructed_audio = audio_opt;
         });
     }
 
@@ -2394,21 +2447,23 @@ fn main() {
                                     let duration = reconstructed.duration_seconds;
                                     let samples = reconstructed.num_samples();
                                     st.transport.duration_seconds = duration;
-
-                                    // Waveform peaks: computed for entire reconstructed audio
-                                    let peaks = WaveformPeaks::compute(
-                                        &reconstructed.samples,
-                                        reconstructed.sample_rate,
-                                        st.recon_start_time,
-                                        st.recon_start_time + duration,
-                                        800,
-                                    );
-                                    st.waveform_peaks = peaks;
                                     st.wave_renderer.invalidate();
 
                                     st.reconstructed_audio = Some(reconstructed);
                                     st.is_processing = false;
                                     st.dirty = false;
+
+                                    // If "Lock to Active" is on, snap viewport to processing range
+                                    if st.lock_to_active {
+                                        let proc_min = st.recon_start_time;
+                                        let proc_max = st.recon_start_time + duration;
+                                        if proc_max > proc_min {
+                                            st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
+                                            st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
+                                            st.spec_renderer.invalidate();
+                                        }
+                                    }
+
                                     Ok((duration, samples))
                                 }
                                 Err(e) => {
@@ -2424,6 +2479,7 @@ fn main() {
                                     "Reconstructed | {:.2}s | {} samples",
                                     duration, samples
                                 ));
+                                spec_display.redraw();
                                 waveform_display.redraw();
                             }
                             Err(e) => {
@@ -2432,11 +2488,8 @@ fn main() {
                             }
                         }
                     }
-                    WorkerMessage::WaveformReady(peaks) => {
-                        let mut st = state.borrow_mut();
-                        st.waveform_peaks = peaks;
-                        st.wave_renderer.invalidate();
-                        drop(st);
+                    WorkerMessage::WaveformReady => {
+                        state.borrow_mut().wave_renderer.invalidate();
                         waveform_display.redraw();
                     }
                     WorkerMessage::Error(msg) => {
