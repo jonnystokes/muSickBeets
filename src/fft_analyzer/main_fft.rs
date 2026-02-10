@@ -2030,9 +2030,8 @@ fn main() {
             if data_range <= 0.0 { return; }
 
             let vis_range = st.view.visible_time_range().max(0.001);
-            // FLTK Scrollbar: with max=10000, effective value range is [0, 10000*(1-slider_size)]
-            let max_val = (s.maximum() * (1.0 - s.slider_size() as f64)).max(1.0);
-            let scroll_frac = (s.value() / max_val).clamp(0.0, 1.0);
+            // FLTK slider_size is purely visual — value range is always [0, maximum]
+            let scroll_frac = (s.value() / s.maximum()).clamp(0.0, 1.0);
             let start = st.view.data_time_min_sec + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.time_min_sec = start.max(st.view.data_time_min_sec);
             st.view.time_max_sec = (start + vis_range).min(st.view.data_time_max_sec);
@@ -2065,9 +2064,8 @@ fn main() {
             if data_range <= 0.0 { return; }
 
             let vis_range = st.view.visible_freq_range().max(1.0);
-            // FLTK Scrollbar: with max=10000, effective value range is [0, 10000*(1-slider_size)]
-            let max_val = (s.maximum() as f32 * (1.0 - s.slider_size())).max(1.0);
-            let scroll_frac = 1.0 - (s.value() as f32 / max_val).clamp(0.0, 1.0);  // inverted for vertical
+            // FLTK slider_size is purely visual — value range is always [0, maximum]
+            let scroll_frac = 1.0 - (s.value() as f32 / s.maximum() as f32).clamp(0.0, 1.0);  // inverted for vertical
             let start = data_min + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.freq_min_hz = start.max(data_min);
             st.view.freq_max_hz = (start + vis_range).min(data_max);
@@ -2277,9 +2275,8 @@ fn main() {
                     let frac = if scroll_range > 0.001 {
                         ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range).clamp(0.0, 1.0)
                     } else { 0.0 };
-                    // FLTK Scrollbar: max=10000, effective range [0, 10000*(1-slider_size)]
-                    let max_val = (10000.0 * (1.0 - ratio as f64)).max(0.0);
-                    Some((ratio, frac * max_val))
+                    // FLTK slider_size is purely visual — value range is [0, 10000]
+                    Some((ratio, frac * 10000.0))
                 } else { None };
 
                 let y_data = if data_freq_range > 1.0 {
@@ -2290,8 +2287,7 @@ fn main() {
                         ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0) as f64
                     } else { 0.0 };
                     // Invert for vertical (higher freq at top)
-                    let max_val = (10000.0 * (1.0 - ratio as f64)).max(0.0);
-                    Some((ratio, ((1.0 - frac) * max_val).clamp(0.0, max_val)))
+                    Some((ratio, (1.0 - frac) * 10000.0))
                 } else { None };
 
                 Some((x_data, y_data))
