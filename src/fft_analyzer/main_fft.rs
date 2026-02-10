@@ -20,7 +20,7 @@ use fltk::{
     dialog,
 };
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -1095,11 +1095,29 @@ fn main() {
                 return;
             }
 
-            let spec_ref = st.spectrogram.as_ref().unwrap();
+            // Filter spectrogram frames to processing time range (sidebar Start/Stop)
+            // so the CSV only contains the section the user cares about.
+            let spec_full = st.spectrogram.as_ref().unwrap();
+            let proc_time_min = match st.fft_params.time_unit {
+                TimeUnit::Seconds => st.fft_params.start_time,
+                TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
+            };
+            let proc_time_max = match st.fft_params.time_unit {
+                TimeUnit::Seconds => st.fft_params.stop_time,
+                TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
+            };
+            let filtered_frames: Vec<_> = spec_full.frames.iter()
+                .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
+                .cloned()
+                .collect();
+            let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
 
-            match csv_export::export_to_csv(spec_ref, &st.fft_params, &st.view, &filename) {
+            match csv_export::export_to_csv(&filtered_spec, &st.fft_params, &st.view, &filename) {
                 Ok(_) => {
-                    status_bar.set_label("FFT data saved");
+                    status_bar.set_label(&format!(
+                        "FFT saved ({} frames, {:.2}s-{:.2}s)",
+                        filtered_spec.num_frames(), proc_time_min, proc_time_max
+                    ));
                 }
                 Err(e) => {
                     dialog::alert_default(&format!("Error saving CSV:\n{}", e));
@@ -1988,26 +2006,32 @@ fn main() {
     //  SCROLLBAR CALLBACKS
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Generation counters: incremented in scrollbar callbacks, checked in timer.
+    // When the counter changes, the timer skips set_value() to avoid fighting user drags.
+    let x_scroll_gen = Rc::new(Cell::new(0u64));
+    let y_scroll_gen = Rc::new(Cell::new(0u64));
+
     // X scrollbar: controls time panning (viewport only, no effect on processing)
     {
         let state = state.clone();
         let mut spec_display = spec_display.clone();
         let mut waveform_display = waveform_display.clone();
+        let x_scroll_gen = x_scroll_gen.clone();
 
         x_scroll.set_minimum(0.0);
-        x_scroll.set_maximum(1.0);
+        x_scroll.set_maximum(10000.0);
         x_scroll.set_slider_size(1.0);
         x_scroll.set_value(0.0);
 
         x_scroll.set_callback(move |s| {
+            x_scroll_gen.set(x_scroll_gen.get() + 1);
             let Ok(mut st) = state.try_borrow_mut() else { return; };
             let data_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
             if data_range <= 0.0 { return; }
 
             let vis_range = st.view.visible_time_range().max(0.001);
-            // FLTK Scrollbar value range is [min, max - slider_size*(max-min)]
-            // With min=0, max=1: value goes [0, 1-slider_size]
-            let max_val = (1.0 - s.slider_size() as f64).max(0.001);
+            // FLTK Scrollbar: with max=10000, effective value range is [0, 10000*(1-slider_size)]
+            let max_val = (s.maximum() * (1.0 - s.slider_size() as f64)).max(1.0);
             let scroll_frac = (s.value() / max_val).clamp(0.0, 1.0);
             let start = st.view.data_time_min_sec + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.time_min_sec = start.max(st.view.data_time_min_sec);
@@ -2025,13 +2049,15 @@ fn main() {
     {
         let state = state.clone();
         let mut spec_display = spec_display.clone();
+        let y_scroll_gen = y_scroll_gen.clone();
 
         y_scroll.set_minimum(0.0);
-        y_scroll.set_maximum(1.0);
+        y_scroll.set_maximum(10000.0);
         y_scroll.set_slider_size(1.0);
         y_scroll.set_value(0.0);
 
         y_scroll.set_callback(move |s| {
+            y_scroll_gen.set(y_scroll_gen.get() + 1);
             let Ok(mut st) = state.try_borrow_mut() else { return; };
             let data_max = st.view.data_freq_max_hz;
             let data_min = 1.0_f32;
@@ -2039,8 +2065,8 @@ fn main() {
             if data_range <= 0.0 { return; }
 
             let vis_range = st.view.visible_freq_range().max(1.0);
-            // FLTK Scrollbar value range is [0, 1-slider_size]
-            let max_val = (1.0 - s.slider_size() as f32).max(0.001);
+            // FLTK Scrollbar: with max=10000, effective value range is [0, 10000*(1-slider_size)]
+            let max_val = (s.maximum() as f32 * (1.0 - s.slider_size())).max(1.0);
             let scroll_frac = 1.0 - (s.value() as f32 / max_val).clamp(0.0, 1.0);  // inverted for vertical
             let start = data_min + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.freq_min_hz = start.max(data_min);
@@ -2221,10 +2247,24 @@ fn main() {
         let mut x_scroll = x_scroll.clone();
         let mut y_scroll = y_scroll.clone();
         let tx = tx.clone();
+        let x_scroll_gen = x_scroll_gen.clone();
+        let y_scroll_gen = y_scroll_gen.clone();
+
+        // Track last-seen generation to detect user scrollbar interaction
+        let mut last_x_gen: u64 = 0;
+        let mut last_y_gen: u64 = 0;
 
         app::add_timeout3(0.016, move |handle| {
             // ── Sync scrollbars with view state ──
-            // Extract scroll data first, then update widgets AFTER dropping borrow
+            // Only update scrollbar VALUE when user is NOT actively dragging
+            // (detected via generation counter). Always update slider_size (safe).
+            let cur_x_gen = x_scroll_gen.get();
+            let cur_y_gen = y_scroll_gen.get();
+            let x_user_active = cur_x_gen != last_x_gen;
+            let y_user_active = cur_y_gen != last_y_gen;
+            last_x_gen = cur_x_gen;
+            last_y_gen = cur_y_gen;
+
             let scroll_data = if let Ok(st) = state.try_borrow() {
                 let data_time_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
                 let data_freq_min = 1.0_f32;
@@ -2232,14 +2272,14 @@ fn main() {
 
                 let x_data = if data_time_range > 0.001 {
                     let vis_time = st.view.visible_time_range();
-                    let ratio = (vis_time / data_time_range).clamp(0.02, 1.0);
+                    let ratio = (vis_time / data_time_range).clamp(0.02, 1.0) as f32;
                     let scroll_range = (data_time_range - vis_time).max(0.0);
                     let frac = if scroll_range > 0.001 {
                         ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range).clamp(0.0, 1.0)
                     } else { 0.0 };
-                    // FLTK value range is [0, 1-slider_size], so scale frac accordingly
-                    let max_val = (1.0 - ratio).max(0.0);
-                    Some((ratio as f32, frac * max_val))
+                    // FLTK Scrollbar: max=10000, effective range [0, 10000*(1-slider_size)]
+                    let max_val = (10000.0 * (1.0 - ratio as f64)).max(0.0);
+                    Some((ratio, frac * max_val))
                 } else { None };
 
                 let y_data = if data_freq_range > 1.0 {
@@ -2247,24 +2287,28 @@ fn main() {
                     let ratio = (vis_freq / data_freq_range).clamp(0.02, 1.0);
                     let scroll_range = (data_freq_range - vis_freq).max(0.0);
                     let frac = if scroll_range > 0.1 {
-                        ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0)
+                        ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0) as f64
                     } else { 0.0 };
-                    // Invert for vertical (higher freq at top), scale to FLTK range
-                    let max_val = (1.0 - ratio as f64).max(0.0);
-                    Some((ratio, ((1.0 - frac as f64) * max_val).clamp(0.0, max_val)))
+                    // Invert for vertical (higher freq at top)
+                    let max_val = (10000.0 * (1.0 - ratio as f64)).max(0.0);
+                    Some((ratio, ((1.0 - frac) * max_val).clamp(0.0, max_val)))
                 } else { None };
 
                 Some((x_data, y_data))
             } else { None };
-            // Now update scrollbar widgets with borrow dropped
+
             if let Some((x_data, y_data)) = scroll_data {
                 if let Some((sz, pos)) = x_data {
                     x_scroll.set_slider_size(sz);
-                    x_scroll.set_value(pos);
+                    if !x_user_active {
+                        x_scroll.set_value(pos);
+                    }
                 }
                 if let Some((sz, pos)) = y_data {
                     y_scroll.set_slider_size(sz);
-                    y_scroll.set_value(pos);
+                    if !y_user_active {
+                        y_scroll.set_value(pos);
+                    }
                 }
             }
 

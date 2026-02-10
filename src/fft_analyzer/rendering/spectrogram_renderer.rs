@@ -51,6 +51,9 @@ impl SpectrogramRenderer {
         hash = hash.wrapping_mul(31).wrapping_add(h as u64);
         hash = hash.wrapping_mul(31).wrapping_add((proc_time_min * 10000.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((proc_time_max * 10000.0) as u64);
+        hash = hash.wrapping_mul(31).wrapping_add(view.recon_freq_count as u64);
+        hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_min_hz * 100.0) as u64);
+        hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_max_hz * 100.0) as u64);
         hash
     }
 
@@ -122,6 +125,36 @@ impl SpectrogramRenderer {
         let num_frames = spec.num_frames();
         let num_bins = spec.num_bins();
 
+        // Pre-compute active bins per frame based on freq range + freq count filtering
+        // This mirrors what the Reconstructor does, so the spectrogram shows
+        // exactly which bins will be used for reconstruction.
+        let freq_min = view.recon_freq_min_hz;
+        let freq_max = view.recon_freq_max_hz;
+        let freq_count = view.recon_freq_count;
+
+        let active_bins: Vec<Vec<bool>> = spec.frames.par_iter()
+            .map(|frame| {
+                let mut bin_mags: Vec<(usize, f32)> = frame.magnitudes.iter()
+                    .zip(frame.frequencies.iter())
+                    .enumerate()
+                    .filter_map(|(i, (&mag, &freq))| {
+                        if freq >= freq_min && freq <= freq_max {
+                            Some((i, mag))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                let keep = freq_count.min(bin_mags.len());
+                let mut active = vec![false; frame.magnitudes.len()];
+                for &(idx, _) in &bin_mags[..keep] {
+                    active[idx] = true;
+                }
+                active
+            })
+            .collect();
+
         // Pre-compute frequency bin for each pixel row
         let row_bins: Vec<(usize, usize)> = (0..height)
             .map(|py| {
@@ -165,14 +198,16 @@ impl SpectrogramRenderer {
                 for px in 0..width {
                     let (frame_start, frame_end, time) = col_data[px];
 
-                    // Get max magnitude in the region
+                    // Get max magnitude in the region, only from active bins
                     let mut max_mag = 0.0f32;
                     for fi in frame_start..frame_end {
                         if let Some(frame) = spec.frames.get(fi) {
                             for bi in bin_start..bin_end {
-                                if let Some(&mag) = frame.magnitudes.get(bi) {
-                                    if mag > max_mag {
-                                        max_mag = mag;
+                                if active_bins[fi].get(bi).copied().unwrap_or(false) {
+                                    if let Some(&mag) = frame.magnitudes.get(bi) {
+                                        if mag > max_mag {
+                                            max_mag = mag;
+                                        }
                                     }
                                 }
                             }
