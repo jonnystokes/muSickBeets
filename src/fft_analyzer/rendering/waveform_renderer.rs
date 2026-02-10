@@ -2,6 +2,7 @@ use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 
 use crate::processing::waveform_cache::WaveformPeaks;
+use crate::data::ViewState;
 
 /// Colors for the dark theme waveform
 const BG_COLOR: (u8, u8, u8) = (0x1e, 0x1e, 0x2e);
@@ -15,6 +16,7 @@ pub struct WaveformRenderer {
     cache_valid: bool,
     last_size: (i32, i32),
     last_peaks_len: usize,
+    last_view_hash: u64,
 }
 
 impl WaveformRenderer {
@@ -25,6 +27,7 @@ impl WaveformRenderer {
             cache_valid: false,
             last_size: (0, 0),
             last_peaks_len: 0,
+            last_view_hash: 0,
         }
     }
 
@@ -32,10 +35,21 @@ impl WaveformRenderer {
         self.cache_valid = false;
     }
 
+    fn view_hash(view: &ViewState, peaks: &WaveformPeaks) -> u64 {
+        let mut h: u64 = 0;
+        h = h.wrapping_mul(31).wrapping_add((view.time_min_sec * 10000.0) as u64);
+        h = h.wrapping_mul(31).wrapping_add((view.time_max_sec * 10000.0) as u64);
+        h = h.wrapping_mul(31).wrapping_add((peaks.time_start * 10000.0) as u64);
+        h = h.wrapping_mul(31).wrapping_add((peaks.time_end * 10000.0) as u64);
+        h = h.wrapping_mul(31).wrapping_add(peaks.peaks.len() as u64);
+        h
+    }
+
     pub fn draw(
         &mut self,
         peaks: &WaveformPeaks,
-        cursor_x: Option<i32>,  // pixel X for playback cursor, relative to widget
+        view: &ViewState,
+        cursor_x: Option<i32>,
         x: i32, y: i32, w: i32, h: i32,
     ) {
         if w <= 0 || h <= 0 {
@@ -47,14 +61,17 @@ impl WaveformRenderer {
             return;
         }
 
+        let hash = Self::view_hash(view, peaks);
         let needs_rebuild = !self.cache_valid
             || self.last_size != (w, h)
-            || self.last_peaks_len != peaks.peaks.len();
+            || self.last_peaks_len != peaks.peaks.len()
+            || self.last_view_hash != hash;
 
         if needs_rebuild {
-            self.rebuild_cache(peaks, w as usize, h as usize);
+            self.rebuild_cache(peaks, view, w as usize, h as usize);
             self.last_size = (w, h);
             self.last_peaks_len = peaks.peaks.len();
+            self.last_view_hash = hash;
             self.cache_valid = true;
         }
 
@@ -84,7 +101,10 @@ impl WaveformRenderer {
         draw::draw_text("Waveform", x + 10, y + h / 2 + 4);
     }
 
-    fn rebuild_cache(&mut self, peaks: &WaveformPeaks, width: usize, height: usize) {
+    /// Rebuild waveform image, mapping peaks to viewport time range.
+    /// Peaks have their own time_start..time_end (the processing range).
+    /// The viewport may show a different time range, so we map correctly.
+    fn rebuild_cache(&mut self, peaks: &WaveformPeaks, view: &ViewState, width: usize, height: usize) {
         let buffer_size = width * height * 3;
         if self.cached_buffer.len() != buffer_size {
             self.cached_buffer = vec![0u8; buffer_size];
@@ -108,15 +128,28 @@ impl WaveformRenderer {
             self.cached_buffer[idx + 2] = CENTER_LINE_COLOR.2;
         }
 
-        // Draw waveform peaks
+        // Draw waveform peaks, mapping audio time to viewport pixels
         let num_peaks = peaks.peaks.len();
-        for px in 0..width {
-            let peak_idx = if num_peaks > 0 {
-                (px * num_peaks) / width
-            } else {
-                continue;
-            };
+        if num_peaks == 0 {
+            self.finalize_image(width, height);
+            return;
+        }
 
+        let peak_time_range = peaks.time_end - peaks.time_start;
+
+        for px in 0..width {
+            // What time does this pixel column represent in the viewport?
+            let t = px as f64 / width as f64;
+            let pixel_time = view.x_to_time(t);
+
+            // Is this time within the peaks' time range?
+            if pixel_time < peaks.time_start || pixel_time > peaks.time_end || peak_time_range <= 0.0 {
+                continue;
+            }
+
+            // Map pixel time to peak index
+            let peak_t = (pixel_time - peaks.time_start) / peak_time_range;
+            let peak_idx = (peak_t * num_peaks as f64) as usize;
             if peak_idx >= num_peaks {
                 continue;
             }
@@ -140,6 +173,10 @@ impl WaveformRenderer {
             }
         }
 
+        self.finalize_image(width, height);
+    }
+
+    fn finalize_image(&mut self, width: usize, height: usize) {
         match RgbImage::new(
             &self.cached_buffer,
             width as i32,

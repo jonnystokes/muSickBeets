@@ -2,7 +2,7 @@ use rayon::prelude::*;
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 
-use crate::data::{Spectrogram, ViewState, ActiveMask};
+use crate::data::{Spectrogram, ViewState};
 use super::color_lut::ColorLUT;
 
 pub struct SpectrogramRenderer {
@@ -36,7 +36,7 @@ impl SpectrogramRenderer {
         }
     }
 
-    fn view_hash(view: &ViewState, w: i32, h: i32) -> u64 {
+    fn view_hash(view: &ViewState, proc_time_min: f64, proc_time_max: f64, w: i32, h: i32) -> u64 {
         let mut hash: u64 = 0;
         hash = hash.wrapping_mul(31).wrapping_add((view.freq_min_hz * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.freq_max_hz * 100.0) as u64);
@@ -49,30 +49,28 @@ impl SpectrogramRenderer {
         hash = hash.wrapping_mul(31).wrapping_add(view.colormap as u64);
         hash = hash.wrapping_mul(31).wrapping_add(w as u64);
         hash = hash.wrapping_mul(31).wrapping_add(h as u64);
-        // Include reconstruction params in hash so dimming updates when they change
-        hash = hash.wrapping_mul(31).wrapping_add(view.recon_freq_count as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_min_hz * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_max_hz * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(if view.lock_freq { 1 } else { 0 });
-        hash = hash.wrapping_mul(31).wrapping_add(if view.lock_time { 1 } else { 0 });
+        hash = hash.wrapping_mul(31).wrapping_add((proc_time_min * 10000.0) as u64);
+        hash = hash.wrapping_mul(31).wrapping_add((proc_time_max * 10000.0) as u64);
         hash
     }
 
-    fn needs_rebuild(&self, view: &ViewState, width: i32, height: i32) -> bool {
+    fn needs_rebuild(&self, view: &ViewState, proc_time_min: f64, proc_time_max: f64, width: i32, height: i32) -> bool {
         if !self.cache_valid {
             return true;
         }
-        let hash = Self::view_hash(view, width, height);
+        let hash = Self::view_hash(view, proc_time_min, proc_time_max, width, height);
         hash != self.last_view_hash
     }
 
     /// Main draw method - call from widget's draw callback.
-    /// active_mask: if Some, pixels for inactive bins are dimmed to 30%.
+    /// proc_time_min/max: the processing time range (sidebar Start/Stop).
+    /// Areas outside this time range are rendered grayed out.
     pub fn draw(
         &mut self,
         spec: &Spectrogram,
         view: &ViewState,
-        active_mask: Option<&ActiveMask>,
+        proc_time_min: f64,
+        proc_time_max: f64,
         x: i32, y: i32, w: i32, h: i32,
     ) {
         if w <= 0 || h <= 0 {
@@ -84,20 +82,17 @@ impl SpectrogramRenderer {
             return;
         }
 
-        if self.needs_rebuild(view, w, h) {
+        if self.needs_rebuild(view, proc_time_min, proc_time_max, w, h) {
             self.update_lut(view);
-            self.rebuild_cache(spec, view, active_mask, w as usize, h as usize);
+            self.rebuild_cache(spec, view, proc_time_min, proc_time_max, w as usize, h as usize);
             self.last_widget_size = (w, h);
-            self.last_view_hash = Self::view_hash(view, w, h);
+            self.last_view_hash = Self::view_hash(view, proc_time_min, proc_time_max, w, h);
             self.cache_valid = true;
         }
 
         if let Some(ref mut image) = self.cached_image {
             image.draw(x, y, w, h);
         }
-
-        // Draw boundary lines for the processing window when unlocked
-        self.draw_boundary_lines(view, spec, x, y, w, h);
     }
 
     fn draw_no_data(&self, x: i32, y: i32, w: i32, h: i32) {
@@ -110,69 +105,12 @@ impl SpectrogramRenderer {
         draw::draw_text("Load an audio file to begin", x + 10, y + h / 2);
     }
 
-    /// Draw boundary lines showing the processing window edges when unlocked
-    fn draw_boundary_lines(&self, view: &ViewState, spec: &Spectrogram, x: i32, y: i32, w: i32, h: i32) {
-        use fltk::draw;
-        use fltk::enums::Color;
-
-        let border_color = Color::from_hex(0xf9e2af); // accent yellow
-
-        // Frequency boundaries (horizontal lines) when freq is unlocked
-        if !view.lock_freq {
-            draw::set_draw_color(border_color);
-            draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
-
-            // Min freq boundary
-            let t_min = view.freq_to_y(view.recon_freq_min_hz);
-            if t_min > 0.0 && t_min < 1.0 {
-                let py = y + h - (t_min * h as f32) as i32;
-                draw::draw_line(x, py, x + w, py);
-            }
-
-            // Max freq boundary
-            let t_max = view.freq_to_y(view.recon_freq_max_hz);
-            if t_max > 0.0 && t_max < 1.0 {
-                let py = y + h - (t_max * h as f32) as i32;
-                draw::draw_line(x, py, x + w, py);
-            }
-
-            draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
-        }
-
-        // Time boundaries (vertical lines) when time is unlocked
-        if !view.lock_time {
-            draw::set_draw_color(border_color);
-            draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
-
-            let time_range = view.time_max_sec - view.time_min_sec;
-            if time_range > 0.0 {
-                // Use the spectrogram's actual time range as the "processing" time window
-                // (FftParams start/stop determine what was FFT'd)
-                let proc_min = spec.min_time;
-                let proc_max = spec.max_time;
-
-                let t_left = view.time_to_x(proc_min);
-                if t_left > 0.0 && t_left < 1.0 {
-                    let px = x + (t_left * w as f64) as i32;
-                    draw::draw_line(px, y, px, y + h);
-                }
-
-                let t_right = view.time_to_x(proc_max);
-                if t_right > 0.0 && t_right < 1.0 {
-                    let px = x + (t_right * w as f64) as i32;
-                    draw::draw_line(px, y, px, y + h);
-                }
-            }
-
-            draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
-        }
-    }
-
     fn rebuild_cache(
         &mut self,
         spec: &Spectrogram,
         view: &ViewState,
-        active_mask: Option<&ActiveMask>,
+        proc_time_min: f64,
+        proc_time_max: f64,
         width: usize,
         height: usize,
     ) {
@@ -204,24 +142,17 @@ impl SpectrogramRenderer {
             })
             .collect();
 
-        // Pre-compute frame index for each pixel column
-        let col_frames: Vec<(usize, usize)> = (0..width)
+        // Pre-compute frame index and time for each pixel column
+        let col_data: Vec<(usize, usize, f64)> = (0..width)
             .map(|px| {
                 let t = px as f64 / width.max(1) as f64;
                 let time = view.x_to_time(t);
-
                 let frame_idx = spec.frame_at_time(time).unwrap_or(0);
-                (frame_idx, (frame_idx + 1).min(num_frames))
+                (frame_idx, (frame_idx + 1).min(num_frames), time)
             })
             .collect();
 
         let lut = &self.color_lut;
-
-        // Determine processing time range for dimming
-        // When time is unlocked, frames outside the spectrogram's own range get dimmed
-        // (the spectrogram only contains frames for the FFT'd time range)
-        let proc_time_min = spec.min_time;
-        let proc_time_max = spec.max_time;
 
         // Parallel rendering by rows
         let row_size = width * 3;
@@ -232,7 +163,7 @@ impl SpectrogramRenderer {
                 let (bin_start, bin_end) = row_bins[py];
 
                 for px in 0..width {
-                    let (frame_start, frame_end) = col_frames[px];
+                    let (frame_start, frame_end, time) = col_data[px];
 
                     // Get max magnitude in the region
                     let mut max_mag = 0.0f32;
@@ -250,41 +181,20 @@ impl SpectrogramRenderer {
 
                     let (r, g, b) = lut.lookup(max_mag);
 
-                    // Determine if this pixel is "active" (will be reconstructed)
-                    let is_active = if let Some(mask) = active_mask {
-                        // Check if ANY bin in the region is active in ANY frame
-                        let mut any_active = false;
-                        'outer: for fi in frame_start..frame_end {
-                            for bi in bin_start..bin_end {
-                                if mask.is_active(fi, bi) {
-                                    any_active = true;
-                                    break 'outer;
-                                }
-                            }
-                        }
-                        any_active
-                    } else {
-                        true // no mask = everything active
-                    };
-
-                    // Also check if pixel's time is within the spectrogram data range
-                    let time = if frame_start < spec.frames.len() {
-                        spec.frames[frame_start].time_seconds
-                    } else {
-                        proc_time_max + 1.0 // out of range
-                    };
-                    let in_time_range = time >= proc_time_min && time <= proc_time_max;
+                    // Check if this pixel's time is within the processing range
+                    let in_proc_range = time >= proc_time_min && time <= proc_time_max;
 
                     let idx = px * 3;
-                    if is_active && in_time_range {
+                    if in_proc_range {
                         row[idx] = r;
                         row[idx + 1] = g;
                         row[idx + 2] = b;
                     } else {
-                        // Dim to 30% for inactive/out-of-range pixels
-                        row[idx] = ((r as f32) * 0.3) as u8;
-                        row[idx + 1] = ((g as f32) * 0.3) as u8;
-                        row[idx + 2] = ((b as f32) * 0.3) as u8;
+                        // Grayed out: desaturate and dim to ~35%
+                        let gray = ((r as f32 * 0.3 + g as f32 * 0.59 + b as f32 * 0.11) * 0.35) as u8;
+                        row[idx] = gray;
+                        row[idx + 1] = gray;
+                        row[idx + 2] = gray;
                     }
                 }
             });
