@@ -3,9 +3,9 @@ use anyhow::{Context, Result};
 use std::fs::File;
 use std::path::Path;
 
-use super::data::{Spectrogram, FftParams, FftFrame, WindowType, TimeUnit};
+use super::data::{Spectrogram, FftParams, FftFrame, ViewState, WindowType, TimeUnit};
 
-pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftParams, path: P) -> Result<()> {
+pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftParams, view: &ViewState, path: P) -> Result<()> {
     let file = File::create(&path)
         .with_context(|| format!("Failed to create CSV file: {:?}", path.as_ref()))?;
 
@@ -13,7 +13,7 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
         .flexible(true)  // Allow rows with different numbers of fields
         .from_writer(file);
 
-    // Write metadata header (row 1)
+    // Write metadata header (row 1): FFT params + reconstruction params
     let window_type_str = match params.window_type {
         WindowType::Hann => "Hann".to_string(),
         WindowType::Hamming => "Hamming".to_string(),
@@ -22,15 +22,18 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
     };
 
     writer.write_record(&[
-        params.sample_rate.to_string(),
-        params.window_length.to_string(),
-        params.hop_length().to_string(),
-        params.overlap_percent.to_string(),
-        window_type_str,
-        params.use_center.to_string(),
-        "1".to_string(), // num_channels (always mono)
-        params.start_sample().to_string(),
-        params.stop_sample().to_string(),
+        params.sample_rate.to_string(),            // 0
+        params.window_length.to_string(),           // 1
+        params.hop_length().to_string(),            // 2
+        params.overlap_percent.to_string(),         // 3
+        window_type_str,                            // 4
+        params.use_center.to_string(),              // 5
+        "1".to_string(),                            // 6: num_channels
+        params.start_sample().to_string(),          // 7
+        params.stop_sample().to_string(),           // 8
+        view.recon_freq_count.to_string(),          // 9
+        format!("{:.2}", view.recon_freq_min_hz),   // 10
+        format!("{:.2}", view.recon_freq_max_hz),   // 11
     ]).context("Failed to write CSV metadata")?;
 
     // Write column labels (row 2)
@@ -60,7 +63,8 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
     Ok(())
 }
 
-pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParams)> {
+/// Returns (Spectrogram, FftParams, optional recon params)
+pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParams, Option<(usize, f32, f32)>)> {
     use csv::ReaderBuilder;
 
     let mut reader = ReaderBuilder::new()
@@ -77,7 +81,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         .context("Failed to read metadata row")?;
 
     if metadata.len() < 9 {
-        anyhow::bail!("Invalid metadata row - expected 9 fields, got {}", metadata.len());
+        anyhow::bail!("Invalid metadata row - expected at least 9 fields, got {}", metadata.len());
     }
 
     let sample_rate: u32 = metadata[0].parse()
@@ -108,6 +112,16 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         .context("Invalid start_sample in metadata")?;
     let stop_sample: usize = metadata[8].parse()
         .context("Invalid stop_sample in metadata")?;
+
+    // Read optional reconstruction params (fields 9-11, backward-compatible)
+    let recon_params = if metadata.len() >= 12 {
+        let freq_count: usize = metadata[9].parse().unwrap_or(1025);
+        let freq_min: f32 = metadata[10].parse().unwrap_or(0.0);
+        let freq_max: f32 = metadata[11].parse().unwrap_or(24000.0);
+        Some((freq_count, freq_min, freq_max))
+    } else {
+        None
+    };
 
     // Skip column labels (row 2)
     records.next();
@@ -168,7 +182,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         sample_rate,
     };
 
-    Ok((spectrogram, params))
+    Ok((spectrogram, params, recon_params))
 }
 
 #[cfg(test)]
@@ -177,7 +191,6 @@ mod tests {
 
     #[test]
     fn test_csv_roundtrip() {
-        // Create test data
         let frame = FftFrame {
             time_seconds: 0.0,
             frequencies: vec![0.0, 100.0, 200.0],
@@ -187,20 +200,22 @@ mod tests {
 
         let spec = Spectrogram::from_frames(vec![frame]);
         let params = FftParams::default();
+        let view = ViewState::default();
 
-        // Export
         let temp_path = "/tmp/test_roundtrip.csv";
-        export_to_csv(&spec, &params, temp_path).expect("Export should succeed");
+        export_to_csv(&spec, &params, &view, temp_path).expect("Export should succeed");
 
-        // Import
-        let (imported_spec, imported_params) = import_from_csv(temp_path).expect("Import should succeed");
+        let (imported_spec, imported_params, recon) = import_from_csv(temp_path).expect("Import should succeed");
 
-        // Verify
         assert_eq!(imported_params.sample_rate, params.sample_rate);
         assert_eq!(imported_params.window_length, params.window_length);
         assert_eq!(imported_spec.num_frames(), 1);
+        assert!(recon.is_some());
+        let (fc, fmin, fmax) = recon.unwrap();
+        assert_eq!(fc, view.recon_freq_count);
+        assert!((fmin - view.recon_freq_min_hz).abs() < 1.0);
+        assert!((fmax - view.recon_freq_max_hz).abs() < 1.0);
 
-        // Clean up
         std::fs::remove_file(temp_path).ok();
     }
 
@@ -223,11 +238,12 @@ mod tests {
 
         let spec = Spectrogram::from_frames(frames);
         let params = FftParams::default();
+        let view = ViewState::default();
 
         let temp_path = "/tmp/test_multi_frames.csv";
-        export_to_csv(&spec, &params, temp_path).expect("Export should succeed");
+        export_to_csv(&spec, &params, &view, temp_path).expect("Export should succeed");
 
-        let (imported_spec, _) = import_from_csv(temp_path).expect("Import should succeed");
+        let (imported_spec, _, _) = import_from_csv(temp_path).expect("Import should succeed");
         assert_eq!(imported_spec.num_frames(), 2);
 
         std::fs::remove_file(temp_path).ok();

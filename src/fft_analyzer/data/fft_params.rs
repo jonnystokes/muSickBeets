@@ -66,6 +66,7 @@ impl FftParams {
     }
 
     pub fn frequency_resolution(&self) -> f32 {
+        if self.window_length == 0 { return 0.0; }
         self.sample_rate as f32 / self.window_length as f32
     }
 
@@ -82,11 +83,13 @@ impl FftParams {
     }
 
     pub fn bin_duration_seconds(&self) -> f64 {
+        if self.sample_rate == 0 { return 0.0; }
         self.hop_length() as f64 / self.sample_rate as f64
     }
 
     pub fn generate_window(&self) -> Vec<f32> {
         let n = self.window_length;
+        if n <= 1 { return vec![1.0; n]; }
         let mut window = vec![0.0; n];
 
         match self.window_type {

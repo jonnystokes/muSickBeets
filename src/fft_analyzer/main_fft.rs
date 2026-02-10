@@ -23,12 +23,9 @@ use fltk::{
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-static SPACE_PRESSED: AtomicBool = AtomicBool::new(false);
-
-use data::{AudioData, FftParams, Spectrogram, ViewState, FreqScale, ColormapId, TransportState, WindowType, TimeUnit};
+use data::{AudioData, FftParams, Spectrogram, ViewState, FreqScale, ColormapId, TransportState, WindowType, TimeUnit, ActiveMask};
 use processing::fft_engine::FftEngine;
 use processing::reconstructor::Reconstructor;
 use processing::waveform_cache::WaveformPeaks;
@@ -62,6 +59,7 @@ struct AppState {
     waveform_peaks: WaveformPeaks,
 
     reconstructed_audio: Option<AudioData>,
+    active_mask: Option<ActiveMask>,
     is_processing: bool,
     has_audio: bool,
 
@@ -87,6 +85,7 @@ impl AppState {
             },
 
             reconstructed_audio: None,
+            active_mask: None,
             is_processing: false,
             has_audio: false,
 
@@ -488,6 +487,19 @@ fn main() {
     lbl_display.set_label_size(11);
     lbl_display.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_display, 18);
+
+    // Lock toggles: when ON, viewport = processing window
+    let mut check_lock_time = fltk::button::CheckButton::default().with_label(" Lock Time (H)");
+    check_lock_time.set_checked(true);
+    check_lock_time.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    set_tooltip(&mut check_lock_time, "Lock time viewport to processing window.\nON: scrollbar shifts time start/stop together, view = processed region.\nOFF: scrollbar moves viewport freely; unprocessed time is dimmed.");
+    left.fixed(&check_lock_time, 20);
+
+    let mut check_lock_freq = fltk::button::CheckButton::default().with_label(" Lock Freq (V)");
+    check_lock_freq.set_checked(true);
+    check_lock_freq.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    set_tooltip(&mut check_lock_freq, "Lock frequency viewport to reconstruction range.\nON: viewport zooms to freq min/max, scrollbar shifts range.\nOFF: viewport scrolls freely; out-of-range frequencies are dimmed.");
+    left.fixed(&check_lock_freq, 20);
 
     // Colormap
     let mut colormap_choice = Choice::default();
@@ -1047,7 +1059,7 @@ fn main() {
 
             let spec_ref = st.spectrogram.as_ref().unwrap();
 
-            match csv_export::export_to_csv(spec_ref, &st.fft_params, &filename) {
+            match csv_export::export_to_csv(spec_ref, &st.fft_params, &st.view, &filename) {
                 Ok(_) => {
                     status_bar.set_label("FFT data saved");
                 }
@@ -1086,7 +1098,7 @@ fn main() {
             app::awake();
 
             match csv_export::import_from_csv(&filename) {
-                Ok((imported_spec, imported_params)) => {
+                Ok((imported_spec, imported_params, recon_params)) => {
                     let num_frames = imported_spec.num_frames();
                     {
                         let mut st = state.borrow_mut();
@@ -1098,6 +1110,13 @@ fn main() {
                         st.view.data_time_max_sec = imported_spec.max_time;
                         st.view.freq_max_hz = imported_spec.max_freq;
                         st.view.data_freq_max_hz = imported_spec.max_freq;
+
+                        // Restore reconstruction params if present
+                        if let Some((fc, fmin, fmax)) = recon_params {
+                            st.view.recon_freq_count = fc;
+                            st.view.recon_freq_min_hz = fmin;
+                            st.view.recon_freq_max_hz = fmax;
+                        }
 
                         st.spectrogram = Some(Arc::new(imported_spec));
                         st.spec_renderer.invalidate();
@@ -1213,6 +1232,14 @@ fn main() {
                 st.view.recon_freq_min_hz = parse_or_zero_f32(&input_recon_freq_min.value());
                 st.view.recon_freq_max_hz = parse_or_zero_f32(&input_recon_freq_max.value());
                 st.view.max_freq_bins = st.fft_params.num_frequency_bins();
+
+                // Sync viewport when locked
+                if st.view.lock_freq {
+                    let fmin = st.view.recon_freq_min_hz.max(1.0);
+                    let fmax = st.view.recon_freq_max_hz.max(fmin + 1.0);
+                    st.view.freq_min_hz = fmin;
+                    st.view.freq_max_hz = fmax;
+                }
 
                 st.is_processing = true;
                 st.spec_renderer.invalidate();
@@ -1498,6 +1525,60 @@ fn main() {
         });
     }
 
+    // Lock time toggle
+    {
+        let state = state.clone();
+        let mut spec_display = spec_display.clone();
+        let input_start = input_start.clone();
+        let input_stop = input_stop.clone();
+
+        check_lock_time.set_callback(move |c| {
+            let mut st = state.borrow_mut();
+            st.view.lock_time = c.is_checked();
+            if c.is_checked() {
+                // When locking, sync viewport to processing time range
+                let start = parse_or_zero_f64(&input_start.value());
+                let stop = parse_or_zero_f64(&input_stop.value());
+                let (start_sec, stop_sec) = match st.fft_params.time_unit {
+                    TimeUnit::Seconds => (start, stop),
+                    TimeUnit::Samples => {
+                        let sr = st.fft_params.sample_rate as f64;
+                        (start / sr.max(1.0), stop / sr.max(1.0))
+                    }
+                };
+                st.view.time_min_sec = start_sec;
+                st.view.time_max_sec = stop_sec.max(start_sec + 0.001);
+            }
+            st.spec_renderer.invalidate();
+            st.wave_renderer.invalidate();
+            drop(st);
+            spec_display.redraw();
+        });
+    }
+
+    // Lock freq toggle
+    {
+        let state = state.clone();
+        let mut spec_display = spec_display.clone();
+        let input_recon_freq_min = input_recon_freq_min.clone();
+        let input_recon_freq_max = input_recon_freq_max.clone();
+
+        check_lock_freq.set_callback(move |c| {
+            let mut st = state.borrow_mut();
+            st.view.lock_freq = c.is_checked();
+            if c.is_checked() {
+                // When locking, zoom viewport to reconstruction freq range
+                let fmin = parse_or_zero_f32(&input_recon_freq_min.value()).max(1.0);
+                let fmax = parse_or_zero_f32(&input_recon_freq_max.value()).max(fmin + 1.0);
+                st.view.freq_min_hz = fmin;
+                st.view.freq_max_hz = fmax;
+            }
+            st.spec_renderer.invalidate();
+            drop(st);
+            spec_display.redraw();
+        });
+    }
+
     // Tooltip toggle
     {
         let state = state.clone();
@@ -1523,7 +1604,8 @@ fn main() {
 
             if let Some(spec) = st.spectrogram.clone() {
                 let view = st.view.clone();
-                st.spec_renderer.draw(&spec, &view, w.x(), w.y(), w.w(), w.h());
+                let mask = st.active_mask.clone();
+                st.spec_renderer.draw(&spec, &view, mask.as_ref(), w.x(), w.y(), w.w(), w.h());
 
                 // Draw playback cursor
                 if st.transport.duration_seconds > 0.0 {
@@ -1822,16 +1904,19 @@ fn main() {
     //  SCROLLBAR CALLBACKS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // X scrollbar: controls time panning (value = start of visible range, slider_size = visible fraction)
+    // X scrollbar: controls time panning
+    // When locked: shifts start/stop equally (viewport = processing window)
+    // When unlocked: moves viewport freely over full data range
     {
         let state = state.clone();
         let mut spec_display = spec_display.clone();
         let mut waveform_display = waveform_display.clone();
+        let mut input_start = input_start.clone();
+        let mut input_stop = input_stop.clone();
 
-        // Initialize scrollbar range (will be updated when data changes)
         x_scroll.set_minimum(0.0);
         x_scroll.set_maximum(1.0);
-        x_scroll.set_slider_size(1.0); // full range visible initially
+        x_scroll.set_slider_size(1.0);
         x_scroll.set_value(0.0);
 
         x_scroll.set_callback(move |s| {
@@ -1839,11 +1924,31 @@ fn main() {
             let data_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
             if data_range <= 0.0 { return; }
 
-            let vis_range = st.view.visible_time_range();
-            let scroll_pos = s.value(); // 0..1 normalized
-            let start = st.view.data_time_min_sec + scroll_pos * (data_range - vis_range);
+            let vis_range = st.view.visible_time_range().max(0.001);
+            let scroll_pos = s.value();
+            let start = st.view.data_time_min_sec + scroll_pos * (data_range - vis_range).max(0.0);
             st.view.time_min_sec = start.max(st.view.data_time_min_sec);
             st.view.time_max_sec = (start + vis_range).min(st.view.data_time_max_sec);
+
+            // When locked, also shift the processing time fields
+            if st.view.lock_time {
+                match st.fft_params.time_unit {
+                    TimeUnit::Seconds => {
+                        st.fft_params.start_time = st.view.time_min_sec;
+                        st.fft_params.stop_time = st.view.time_max_sec;
+                        input_start.set_value(&format!("{:.5}", st.view.time_min_sec));
+                        input_stop.set_value(&format!("{:.5}", st.view.time_max_sec));
+                    }
+                    TimeUnit::Samples => {
+                        let sr = st.fft_params.sample_rate as f64;
+                        st.fft_params.start_time = (st.view.time_min_sec * sr).round();
+                        st.fft_params.stop_time = (st.view.time_max_sec * sr).round();
+                        input_start.set_value(&format!("{}", st.fft_params.start_time as u64));
+                        input_stop.set_value(&format!("{}", st.fft_params.stop_time as u64));
+                    }
+                }
+            }
+
             st.spec_renderer.invalidate();
             st.wave_renderer.invalidate();
             drop(st);
@@ -1853,9 +1958,13 @@ fn main() {
     }
 
     // Y scrollbar: controls frequency panning
+    // When locked: shifts recon freq min/max equally
+    // When unlocked: moves viewport freely
     {
         let state = state.clone();
         let mut spec_display = spec_display.clone();
+        let mut input_recon_freq_min = input_recon_freq_min.clone();
+        let mut input_recon_freq_max = input_recon_freq_max.clone();
 
         y_scroll.set_minimum(0.0);
         y_scroll.set_maximum(1.0);
@@ -1865,16 +1974,24 @@ fn main() {
         y_scroll.set_callback(move |s| {
             let Ok(mut st) = state.try_borrow_mut() else { return; };
             let data_max = st.view.data_freq_max_hz;
-            let data_min = 20.0_f32; // minimum freq
+            let data_min = 1.0_f32;
             let data_range = data_max - data_min;
             if data_range <= 0.0 { return; }
 
-            let vis_range = st.view.visible_freq_range();
-            // Scrollbar value is inverted (top=0) for vertical
+            let vis_range = st.view.visible_freq_range().max(1.0);
             let scroll_pos = 1.0 - s.value() as f32;
-            let start = data_min + scroll_pos * (data_range - vis_range);
+            let start = data_min + scroll_pos * (data_range - vis_range).max(0.0);
             st.view.freq_min_hz = start.max(data_min);
             st.view.freq_max_hz = (start + vis_range).min(data_max);
+
+            // When locked, also shift the reconstruction freq range
+            if st.view.lock_freq {
+                st.view.recon_freq_min_hz = st.view.freq_min_hz;
+                st.view.recon_freq_max_hz = st.view.freq_max_hz;
+                input_recon_freq_min.set_value(&format!("{:.0}", st.view.freq_min_hz));
+                input_recon_freq_max.set_value(&format!("{:.0}", st.view.freq_max_hz));
+            }
+
             st.spec_renderer.invalidate();
             drop(st);
             spec_display.redraw();
@@ -1882,23 +1999,26 @@ fn main() {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  GLOBAL SPACEBAR HANDLER
+    //  SPACEBAR HANDLER (window-level KeyUp)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Global spacebar handler: consumes space KeyDown to block insertion in text
-    // fields, and uses KeyUp to set the flag (fires once per press, VNC-safe).
-    app::add_handler(|ev| {
-        if app::event_key() == Key::from_char(' ') {
-            if ev == Event::KeyDown {
-                return true; // consume to prevent space insertion in fields
+    // Spacebar detection on the window using KeyUp.
+    // Uses KeyUp (not KeyDown) because on some platforms KeyDown fires repeatedly
+    // while held, but KeyUp fires exactly once per press.
+    // Returns false so the event continues propagating to child widgets normally.
+    // FloatInput only accepts digits/minus/decimal so space won't enter text fields.
+    // When a native OS file dialog is open, the window loses focus and this
+    // handler won't fire — no special handling needed for file choosers.
+    {
+        let mut btn_rerun = btn_rerun.clone();
+        win.handle(move |_, event| {
+            if event == Event::KeyUp && app::event_key() == Key::from_char(' ') {
+                println!("Space bar press detected");
+                btn_rerun.do_callback();
             }
-            if ev == Event::KeyUp {
-                SPACE_PRESSED.store(true, Ordering::Relaxed);
-                return true;
-            }
-        }
-        false
-    });
+            false
+        });
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  MAIN POLL LOOP (16ms)
@@ -1914,17 +2034,11 @@ fn main() {
         let enable_spec_widgets = enable_spec_widgets.clone();
         let enable_wav_export = enable_wav_export.clone();
         let update_info = update_info.clone();
-        let mut btn_rerun = btn_rerun.clone();
         let mut x_scroll = x_scroll.clone();
         let mut y_scroll = y_scroll.clone();
         let tx = tx.clone();
 
         app::add_timeout3(0.016, move |handle| {
-            // ── Check spacebar flag ──
-            if SPACE_PRESSED.swap(false, Ordering::Relaxed) {
-                btn_rerun.do_callback();
-            }
-
             // ── Sync scrollbars with view state ──
             // Extract scroll data first, then update widgets AFTER dropping borrow
             let scroll_data = if let Ok(st) = state.try_borrow() {
@@ -1971,25 +2085,47 @@ fn main() {
                     WorkerMessage::FftComplete(spectrogram) => {
                         let num_frames = spectrogram.num_frames();
 
-                        // Store spectrogram and update view, then auto-reconstruct
+                        // Store spectrogram, compute active mask, then auto-reconstruct
                         let recon_data = {
                             let mut st = state.borrow_mut();
 
                             st.view.max_freq_bins = st.fft_params.num_frequency_bins();
 
-                            st.spectrogram = Some(Arc::new(spectrogram));
+                            let spec_arc = Arc::new(spectrogram);
+                            let (min_t, max_t, max_f) = (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
 
-                            // Update view to match spectrogram bounds
-                            if let Some(ref spec) = st.spectrogram {
-                                let (min_t, max_t, max_f) = (spec.min_time, spec.max_time, spec.max_freq);
+                            // Build active mask before storing spectrogram
+                            let mask = ActiveMask::compute(
+                                &spec_arc,
+                                st.view.recon_freq_count,
+                                st.view.recon_freq_min_hz,
+                                st.view.recon_freq_max_hz,
+                                min_t,
+                                max_t,
+                            );
+                            st.active_mask = Some(mask);
+
+                            st.spectrogram = Some(spec_arc);
+
+                            // Update data bounds
+                            st.view.data_time_min_sec = min_t;
+                            st.view.data_time_max_sec = max_t;
+                            if max_f > 0.0 {
+                                st.view.data_freq_max_hz = max_f;
+                            }
+
+                            // Sync viewport based on lock state
+                            if st.view.lock_time {
                                 st.view.time_min_sec = min_t;
                                 st.view.time_max_sec = max_t;
-                                st.view.data_time_min_sec = min_t;
-                                st.view.data_time_max_sec = max_t;
-                                if max_f > 0.0 {
-                                    st.view.data_freq_max_hz = max_f;
-                                    st.view.freq_max_hz = max_f;
-                                }
+                            }
+                            if st.view.lock_freq {
+                                let fmin = st.view.recon_freq_min_hz.max(1.0);
+                                let fmax = st.view.recon_freq_max_hz.max(fmin + 1.0);
+                                st.view.freq_min_hz = fmin;
+                                st.view.freq_max_hz = fmax;
+                            } else if max_f > 0.0 {
+                                st.view.freq_max_hz = max_f;
                             }
 
                             st.spec_renderer.invalidate();

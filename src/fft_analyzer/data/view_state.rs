@@ -45,12 +45,12 @@ impl ColormapId {
 
 #[derive(Debug, Clone)]
 pub struct ViewState {
-    // Frequency axis display range
+    // Frequency axis display range (viewport)
     pub freq_min_hz: f32,
     pub freq_max_hz: f32,
     pub freq_scale: FreqScale,
 
-    // Time axis display range
+    // Time axis display range (viewport)
     pub time_min_sec: f64,
     pub time_max_sec: f64,
 
@@ -60,12 +60,17 @@ pub struct ViewState {
     pub gamma: f32,
     pub colormap: ColormapId,
 
-    // Reconstruction parameters
+    // Reconstruction / processing parameters
     pub recon_freq_count: usize,
     pub recon_freq_min_hz: f32,
     pub recon_freq_max_hz: f32,
 
-    // Full data bounds (for reset zoom)
+    // Lock toggles: when ON, viewport = processing window
+    // When OFF, viewport can scroll freely; processed area shown with overlay
+    pub lock_time: bool,
+    pub lock_freq: bool,
+
+    // Full data bounds (for reset zoom / unlocked scrolling)
     pub data_freq_max_hz: f32,
     pub data_time_min_sec: f64,
     pub data_time_max_sec: f64,
@@ -90,6 +95,9 @@ impl Default for ViewState {
             recon_freq_count: 1025,
             recon_freq_min_hz: 0.0,
             recon_freq_max_hz: 24000.0,
+
+            lock_time: true,
+            lock_freq: true,
 
             data_freq_max_hz: 24000.0,
             data_time_min_sec: 0.0,
