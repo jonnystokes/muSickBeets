@@ -26,14 +26,6 @@ impl TooltipManager {
             fltk::misc::Tooltip::disable();
         }
     }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn toggle(&mut self) {
-        self.set_enabled(!self.enabled);
-    }
 }
 
 /// Helper to set a tooltip on any widget

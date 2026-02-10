@@ -178,21 +178,6 @@ impl ColorLUT {
         }
     }
 
-    pub fn threshold_db(&self) -> f32 {
-        self.threshold_db
-    }
-
-    pub fn brightness(&self) -> f32 {
-        self.brightness
-    }
-
-    pub fn gamma(&self) -> f32 {
-        self.gamma
-    }
-
-    pub fn colormap(&self) -> ColormapId {
-        self.colormap
-    }
 }
 
 impl Default for ColorLUT {

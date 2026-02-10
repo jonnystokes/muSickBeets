@@ -2,8 +2,9 @@
 name = "muSickBeets"
 version = "0.1.0"
 edition = "2024"
-description = "A CSV-driven music tracker synthesizer with real-time audio synthesis"
+description = "A CSV-driven music tracker synthesizer with real-time audio synthesis and FFT spectrogram analyzer"
 authors = ["Jon Stokes ( mightey man )"]
+license = "MIT"
 default-run = "fft_analyzer"
 
 

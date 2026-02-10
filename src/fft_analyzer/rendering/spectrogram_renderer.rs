@@ -250,9 +250,6 @@ impl SpectrogramRenderer {
         }
     }
 
-    pub fn is_cache_valid(&self) -> bool {
-        self.cache_valid
-    }
 }
 
 impl Default for SpectrogramRenderer {

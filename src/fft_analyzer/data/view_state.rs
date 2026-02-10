@@ -164,7 +164,6 @@ pub struct TransportState {
     pub position_seconds: f64,
     pub duration_seconds: f64,
     pub is_playing: bool,
-    pub is_scrubbing: bool,
     pub repeat: bool,
 }
 
@@ -174,7 +173,6 @@ impl Default for TransportState {
             position_seconds: 0.0,
             duration_seconds: 0.0,
             is_playing: false,
-            is_scrubbing: false,
             repeat: false,
         }
     }

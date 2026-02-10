@@ -39,8 +39,6 @@ use ui::tooltips::{TooltipManager, set_tooltip};
 enum WorkerMessage {
     FftComplete(Spectrogram),
     ReconstructionComplete(AudioData),
-    WaveformReady,
-    Error(String),
 }
 
 // ─── App State ─────────────────────────────────────────────────────────────────
@@ -114,7 +112,6 @@ impl AppState {
             segments,
             bin_duration_ms,
             window_length: self.fft_params.window_length,
-            sample_rate: self.fft_params.sample_rate,
         }
     }
 }
@@ -127,7 +124,6 @@ struct DerivedInfo {
     segments: usize,
     bin_duration_ms: f64,
     window_length: usize,
-    sample_rate: u32,
 }
 
 impl DerivedInfo {
@@ -162,18 +158,6 @@ impl UpdateThrottle {
             true
         } else {
             false
-        }
-    }
-}
-
-// ─── Helper: enable/disable a group of widgets ─────────────────────────────────
-
-fn set_widgets_active(widgets: &mut [&mut dyn WidgetExt], active: bool) {
-    for w in widgets.iter_mut() {
-        if active {
-            w.activate();
-        } else {
-            w.deactivate();
         }
     }
 }
@@ -2487,15 +2471,6 @@ fn main() {
                                 dialog::alert_default(&format!("Failed to load reconstructed audio:\n{}", e));
                             }
                         }
-                    }
-                    WorkerMessage::WaveformReady => {
-                        state.borrow_mut().wave_renderer.invalidate();
-                        waveform_display.redraw();
-                    }
-                    WorkerMessage::Error(msg) => {
-                        state.borrow_mut().is_processing = false;
-                        status_bar.set_label(&format!("Error: {}", msg));
-                        dialog::alert_default(&format!("Processing error:\n{}", msg));
                     }
                 }
             }

@@ -146,11 +146,6 @@ impl AudioPlayer {
         data.position as f64 / data.sample_rate as f64
     }
 
-    pub fn get_duration_seconds(&self) -> f64 {
-        let data = self.playback_data.lock().unwrap();
-        data.end_sample as f64 / data.sample_rate as f64
-    }
-
     pub fn has_audio(&self) -> bool {
         let data = self.playback_data.lock().unwrap();
         !data.samples.is_empty()

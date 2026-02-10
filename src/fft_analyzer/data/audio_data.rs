@@ -6,7 +6,8 @@ use std::path::Path;
 pub struct AudioData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
-    pub channels: u16,
+    #[allow(dead_code)]
+    pub channels: u16,  // kept as metadata from original WAV file
     pub duration_seconds: f64,
 }
 
@@ -105,16 +106,6 @@ impl AudioData {
         let start = start_sample.min(self.samples.len());
         let end = end_sample.min(self.samples.len());
         &self.samples[start..end]
-    }
-
-    #[inline]
-    pub fn time_to_sample(&self, time_seconds: f64) -> usize {
-        (time_seconds * self.sample_rate as f64) as usize
-    }
-
-    #[inline]
-    pub fn sample_to_time(&self, sample: usize) -> f64 {
-        sample as f64 / self.sample_rate as f64
     }
 
     pub fn nyquist_freq(&self) -> f32 {
