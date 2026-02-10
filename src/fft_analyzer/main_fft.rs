@@ -386,21 +386,39 @@ fn main() {
     attach_float_validation(&mut input_stop);
     left.fixed(&input_stop, 25);
 
-    // Window length (segments)
-    let mut lbl_wl = Frame::default().with_label("Window (Segments):");
+    // Window length (segments) with +/- buttons
+    let mut lbl_wl = Frame::default().with_label("Segment Size:");
     lbl_wl.set_label_color(theme::color(theme::TEXT_SECONDARY));
     lbl_wl.set_label_size(11);
     lbl_wl.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_wl, 16);
 
-    let mut input_window_len = Input::default();
-    input_window_len.set_value("2048");
-    input_window_len.set_color(theme::color(theme::BG_WIDGET));
-    input_window_len.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_window_len.deactivate();
-    set_tooltip(&mut input_window_len, "FFT window/segment size in samples. Auto-rounds to power of 2.\nFunctional range: 64 to 65536.\nSmaller = better time resolution, worse frequency resolution.\nLarger = better frequency resolution, worse time resolution.\nThe spectrogram is divided into segments of this size.\nYou can type any value if you want to experiment.");
-    attach_uint_validation(&mut input_window_len);
-    left.fixed(&input_window_len, 25);
+    let mut seg_row = Flex::default().row();
+    seg_row.set_pad(2);
+
+    let mut btn_seg_minus = Button::default().with_label("-");
+    btn_seg_minus.set_color(theme::color(theme::BG_WIDGET));
+    btn_seg_minus.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_seg_minus.set_label_size(14);
+    btn_seg_minus.deactivate();
+    set_tooltip(&mut btn_seg_minus, "Halve the segment size.\nSmaller segments = better time resolution, worse frequency resolution.");
+    seg_row.fixed(&btn_seg_minus, 30);
+
+    let mut btn_seg_plus = Button::default().with_label("+");
+    btn_seg_plus.set_color(theme::color(theme::BG_WIDGET));
+    btn_seg_plus.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_seg_plus.set_label_size(14);
+    btn_seg_plus.deactivate();
+    set_tooltip(&mut btn_seg_plus, "Double the segment size.\nLarger segments = better frequency resolution, worse time resolution.");
+    seg_row.fixed(&btn_seg_plus, 30);
+
+    let mut lbl_seg_value = Frame::default().with_label("2048 smp / 42.67 ms");
+    lbl_seg_value.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    lbl_seg_value.set_label_size(10);
+    lbl_seg_value.set_align(Align::Inside | Align::Left);
+
+    seg_row.end();
+    left.fixed(&seg_row, 25);
 
     // Overlap
     let mut slider_overlap = HorNiceSlider::default();
@@ -447,12 +465,12 @@ fn main() {
     set_tooltip(&mut check_center, "Add zero-padding around signal for symmetric analysis.\nRecommended: ON for most use cases.");
     left.fixed(&check_center, 22);
 
-    let mut btn_rerun = Button::default().with_label("Recompute (Space)");
+    let mut btn_rerun = Button::default().with_label("Recompute + Rebuild (Space)");
     btn_rerun.set_color(theme::color(theme::ACCENT_BLUE));
     btn_rerun.set_label_color(theme::color(theme::BG_DARK));
-    btn_rerun.set_label_size(12);
+    btn_rerun.set_label_size(11);
     btn_rerun.deactivate();
-    set_tooltip(&mut btn_rerun, "Rerun FFT analysis with current parameters.\nShortcut: Spacebar (works from anywhere).");
+    set_tooltip(&mut btn_rerun, "Rerun FFT + reconstruct audio with current parameters.\nShortcut: Spacebar (works from anywhere).\nAll outputs (spectrogram, waveform, audio) will update.");
     left.fixed(&btn_rerun, 28);
 
     // Separator
@@ -600,12 +618,8 @@ fn main() {
     set_tooltip(&mut input_recon_freq_max, "Maximum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins above this frequency are zeroed out.");
     left.fixed(&input_recon_freq_max, 25);
 
-    let mut btn_reconstruct = Button::default().with_label("Reconstruct Audio");
-    btn_reconstruct.set_color(theme::color(theme::BG_WIDGET));
-    btn_reconstruct.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_reconstruct.deactivate();
-    set_tooltip(&mut btn_reconstruct, "Reconstruct audio from current spectrogram data\nusing the freq count and range settings above.\nThe result replaces what Play will output.");
-    left.fixed(&btn_reconstruct, 28);
+    // Reconstruction is now combined with Recompute (spacebar).
+    // No separate button needed.
 
     // Separator
     let mut sep4 = Frame::default();
@@ -843,12 +857,26 @@ fn main() {
         })))
     };
 
+    // Helper: update segment size label with dual display
+    let update_seg_label: SharedCb = {
+        let state = state.clone();
+        let mut lbl_seg_value = lbl_seg_value.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            let st = state.borrow();
+            let wl = st.fft_params.window_length;
+            let sr = st.fft_params.sample_rate;
+            let ms = wl as f64 / sr as f64 * 1000.0;
+            lbl_seg_value.set_label(&format!("{} smp / {:.2} ms", wl, ms));
+        })))
+    };
+
     // Helper: enable widgets that require audio data
     let enable_audio_widgets: SharedCb = {
         let mut btn_time_unit = btn_time_unit.clone();
         let mut input_start = input_start.clone();
         let mut input_stop = input_stop.clone();
-        let mut input_window_len = input_window_len.clone();
+        let mut btn_seg_minus = btn_seg_minus.clone();
+        let mut btn_seg_plus = btn_seg_plus.clone();
         let mut slider_overlap = slider_overlap.clone();
         let mut window_type_choice = window_type_choice.clone();
         let mut check_center = check_center.clone();
@@ -857,7 +885,8 @@ fn main() {
             btn_time_unit.activate();
             input_start.activate();
             input_stop.activate();
-            input_window_len.activate();
+            btn_seg_minus.activate();
+            btn_seg_plus.activate();
             slider_overlap.activate();
             window_type_choice.activate();
             check_center.activate();
@@ -868,7 +897,6 @@ fn main() {
     // Helper: enable widgets that require spectrogram data
     let enable_spec_widgets: SharedCb = {
         let mut btn_save_fft = btn_save_fft.clone();
-        let mut btn_reconstruct = btn_reconstruct.clone();
         let mut input_freq_count = input_freq_count.clone();
         let mut input_recon_freq_min = input_recon_freq_min.clone();
         let mut input_recon_freq_max = input_recon_freq_max.clone();
@@ -879,7 +907,6 @@ fn main() {
         let mut repeat_choice = repeat_choice.clone();
         Rc::new(RefCell::new(Box::new(move || {
             btn_save_fft.activate();
-            btn_reconstruct.activate();
             input_freq_count.activate();
             input_recon_freq_min.activate();
             input_recon_freq_max.activate();
@@ -913,6 +940,7 @@ fn main() {
         let mut waveform_display = waveform_display.clone();
         let tx = tx.clone();
         let update_info = update_info.clone();
+        let update_seg_label = update_seg_label.clone();
         let enable_audio_widgets = enable_audio_widgets.clone();
 
         btn_open.set_callback(move |_| {
@@ -969,8 +997,9 @@ fn main() {
 
                     (enable_audio_widgets.borrow_mut())();
                     (update_info.borrow_mut())();
+                    (update_seg_label.borrow_mut())();
 
-                    // Launch background FFT
+                    // Launch background FFT (reconstruction auto-follows via FftComplete handler)
                     let tx_clone = tx.clone();
                     let audio_for_fft = audio.clone();
                     std::thread::spawn(move || {
@@ -1037,9 +1066,9 @@ fn main() {
         let mut spec_display = spec_display.clone();
         let mut input_start = input_start.clone();
         let mut input_stop = input_stop.clone();
-        let mut input_window_len = input_window_len.clone();
         let mut slider_overlap = slider_overlap.clone();
         let update_info = update_info.clone();
+        let update_seg_label = update_seg_label.clone();
         let enable_audio_widgets = enable_audio_widgets.clone();
         let enable_spec_widgets = enable_spec_widgets.clone();
 
@@ -1077,12 +1106,12 @@ fn main() {
 
                     input_start.set_value(&format!("{:.5}", imported_params.start_time));
                     input_stop.set_value(&format!("{:.5}", imported_params.stop_time));
-                    input_window_len.set_value(&imported_params.window_length.to_string());
                     slider_overlap.set_value(imported_params.overlap_percent as f64);
 
                     (enable_audio_widgets.borrow_mut())();
                     (enable_spec_widgets.borrow_mut())();
                     (update_info.borrow_mut())();
+                    (update_seg_label.borrow_mut())();
 
                     status_bar.set_label(&format!("Loaded {} frames from CSV", num_frames));
                     spec_display.redraw();
@@ -1129,9 +1158,10 @@ fn main() {
         });
     }
 
-    // ── Rerun analysis (also triggered by spacebar) ──
+    // ── Rerun analysis + reconstruction (also triggered by spacebar) ──
     // Reads ALL current field values before launching FFT so that
     // typing a number + spacebar works without needing to press Enter.
+    // After FFT completes, reconstruction is automatically triggered.
     {
         let state = state.clone();
         let mut status_bar = status_bar.clone();
@@ -1140,13 +1170,13 @@ fn main() {
         let tx = tx.clone();
         let input_start = input_start.clone();
         let input_stop = input_stop.clone();
-        let input_window_len = input_window_len.clone();
         let slider_overlap = slider_overlap.clone();
         let input_freq_count = input_freq_count.clone();
         let input_recon_freq_min = input_recon_freq_min.clone();
         let input_recon_freq_max = input_recon_freq_max.clone();
         let check_center = check_center.clone();
         let update_info = update_info.clone();
+        let update_seg_label = update_seg_label.clone();
         let window_type_choice = window_type_choice.clone();
         let input_kaiser_beta = input_kaiser_beta.clone();
 
@@ -1161,8 +1191,7 @@ fn main() {
                 st.fft_params.start_time = parse_or_zero_f64(&input_start.value());
                 st.fft_params.stop_time = parse_or_zero_f64(&input_stop.value());
 
-                let wl = parse_or_zero_usize(&input_window_len.value()).max(2).next_power_of_two();
-                st.fft_params.window_length = wl;
+                // Window length is managed by +/- buttons, already in state
                 st.fft_params.overlap_percent = slider_overlap.value() as f32;
                 st.fft_params.use_center = check_center.is_checked();
 
@@ -1196,7 +1225,8 @@ fn main() {
             };
 
             (update_info.borrow_mut())();
-            status_bar.set_label("Processing FFT...");
+            (update_seg_label.borrow_mut())();
+            status_bar.set_label("Processing FFT + Reconstruct...");
             app::awake();
 
             let tx_clone = tx.clone();
@@ -1283,6 +1313,36 @@ fn main() {
                 }
                 _ => WindowType::Hann,
             };
+        });
+    }
+
+    // Segment size +/- buttons
+    {
+        let state = state.clone();
+        let update_info = update_info.clone();
+        let update_seg_label = update_seg_label.clone();
+
+        btn_seg_minus.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            let new_wl = (st.fft_params.window_length / 2).max(64);
+            st.fft_params.window_length = new_wl;
+            drop(st);
+            (update_info.borrow_mut())();
+            (update_seg_label.borrow_mut())();
+        });
+    }
+    {
+        let state = state.clone();
+        let update_info = update_info.clone();
+        let update_seg_label = update_seg_label.clone();
+
+        btn_seg_plus.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            let new_wl = (st.fft_params.window_length * 2).min(65536);
+            st.fft_params.window_length = new_wl;
+            drop(st);
+            (update_info.borrow_mut())();
+            (update_seg_label.borrow_mut())();
         });
     }
 
@@ -1386,47 +1446,8 @@ fn main() {
         });
     }
 
-    // Reconstruction field values are read at recompute time (btn_rerun callback)
-    // and reconstruct callback.
-
-    // Reconstruct button - reads freq count/range fields at click time
-    {
-        let state = state.clone();
-        let mut status_bar = status_bar.clone();
-        let tx = tx.clone();
-        let input_freq_count = input_freq_count.clone();
-        let input_recon_freq_min = input_recon_freq_min.clone();
-        let input_recon_freq_max = input_recon_freq_max.clone();
-
-        btn_reconstruct.set_callback(move |_| {
-            let (spec, params, view) = {
-                let mut st = state.borrow_mut();
-                if st.spectrogram.is_none() {
-                    dialog::alert_default("No FFT data to reconstruct!\n\nLoad audio or import CSV first.");
-                    return;
-                }
-                if st.is_processing { return; }
-
-                // Read current field values
-                let fc = parse_or_zero_usize(&input_freq_count.value()).max(1);
-                st.view.recon_freq_count = fc;
-                st.view.recon_freq_min_hz = parse_or_zero_f32(&input_recon_freq_min.value());
-                st.view.recon_freq_max_hz = parse_or_zero_f32(&input_recon_freq_max.value());
-                st.is_processing = true;
-
-                (st.spectrogram.clone().unwrap(), st.fft_params.clone(), st.view.clone())
-            };
-
-            status_bar.set_label("Reconstructing audio...");
-            app::awake();
-
-            let tx_clone = tx.clone();
-            std::thread::spawn(move || {
-                let reconstructed = Reconstructor::reconstruct(&spec, &params, &view);
-                tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
-            });
-        });
-    }
+    // Reconstruction is now triggered automatically after FFT completes.
+    // No separate callback needed.
 
     // ── Playback callbacks ──
 
@@ -1896,6 +1917,7 @@ fn main() {
         let mut btn_rerun = btn_rerun.clone();
         let mut x_scroll = x_scroll.clone();
         let mut y_scroll = y_scroll.clone();
+        let tx = tx.clone();
 
         app::add_timeout3(0.016, move |handle| {
             // ── Check spacebar flag ──
@@ -1949,38 +1971,11 @@ fn main() {
                     WorkerMessage::FftComplete(spectrogram) => {
                         let num_frames = spectrogram.num_frames();
 
-                        {
+                        // Store spectrogram and update view, then auto-reconstruct
+                        let recon_data = {
                             let mut st = state.borrow_mut();
 
-                            // Load original audio for playback
-                            if let Some(ref audio) = st.audio_data {
-                                let start = st.fft_params.start_sample().min(audio.num_samples());
-                                let stop = st.fft_params.stop_sample().min(audio.num_samples());
-                                let playback_audio = AudioData {
-                                    samples: audio.samples[start..stop].to_vec(),
-                                    sample_rate: audio.sample_rate,
-                                    channels: 1,
-                                    duration_seconds: (stop - start) as f64 / audio.sample_rate as f64,
-                                };
-                                if let Err(e) = st.audio_player.load_audio(&playback_audio) {
-                                    status_bar.set_label(&format!("Audio load error: {}", e));
-                                }
-                                st.transport.duration_seconds = playback_audio.duration_seconds;
-
-                                // Build waveform peaks
-                                let peaks = WaveformPeaks::compute(
-                                    &playback_audio.samples,
-                                    playback_audio.sample_rate,
-                                    st.view.time_min_sec,
-                                    st.view.time_max_sec,
-                                    800, // approximate width, will rebuild on draw
-                                );
-                                st.waveform_peaks = peaks;
-                                st.wave_renderer.invalidate();
-                            }
-
                             st.view.max_freq_bins = st.fft_params.num_frequency_bins();
-                            st.view.recon_freq_count = st.fft_params.num_frequency_bins();
 
                             st.spectrogram = Some(Arc::new(spectrogram));
 
@@ -1998,17 +1993,30 @@ fn main() {
                             }
 
                             st.spec_renderer.invalidate();
-                            st.is_processing = false;
-                        }
+
+                            // Prepare reconstruction data
+                            let spec = st.spectrogram.clone().unwrap();
+                            let params = st.fft_params.clone();
+                            let view = st.view.clone();
+                            // Keep is_processing = true for reconstruction phase
+                            (spec, params, view)
+                        };
 
                         (enable_spec_widgets.borrow_mut())();
                         (update_info.borrow_mut())();
                         status_bar.set_label(&format!(
-                            "Ready | {} frames processed",
+                            "FFT done ({} frames) | Reconstructing...",
                             num_frames
                         ));
                         spec_display.redraw();
-                        waveform_display.redraw();
+
+                        // Auto-trigger reconstruction
+                        let tx_clone = tx.clone();
+                        let (spec, params, view) = recon_data;
+                        std::thread::spawn(move || {
+                            let reconstructed = Reconstructor::reconstruct(&spec, &params, &view);
+                            tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
+                        });
                     }
                     WorkerMessage::ReconstructionComplete(reconstructed) => {
                         let recon_result = {

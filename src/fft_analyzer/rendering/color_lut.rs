@@ -82,6 +82,7 @@ impl ColorLUT {
             ColormapId::Inferno => Self::colormap_inferno(intensity),
             ColormapId::Greyscale => Self::colormap_greyscale(intensity),
             ColormapId::InvertedGrey => Self::colormap_inverted_grey(intensity),
+            ColormapId::Geek => Self::colormap_geek(intensity),
         }
     }
 
@@ -149,6 +150,32 @@ impl ColorLUT {
     fn colormap_inverted_grey(t: f32) -> (u8, u8, u8) {
         let v = ((1.0 - t.clamp(0.0, 1.0)) * 255.0) as u8;
         (v, v, v)
+    }
+
+    fn colormap_geek(t: f32) -> (u8, u8, u8) {
+        // black -> dark green -> light green -> white at peak
+        let t = t.clamp(0.0, 1.0);
+        if t < 0.6 {
+            // black (0,0,0) -> dark green (0,100,0)
+            let s = t / 0.6;
+            (0, (s * 100.0) as u8, 0)
+        } else if t < 0.9 {
+            // dark green (0,100,0) -> light green (144,238,144)
+            let s = (t - 0.6) / 0.3;
+            (
+                (s * 144.0) as u8,
+                (100.0 + s * 138.0) as u8,
+                (s * 144.0) as u8,
+            )
+        } else {
+            // light green (144,238,144) -> white (255,255,255)
+            let s = (t - 0.9) / 0.1;
+            (
+                (144.0 + s * 111.0) as u8,
+                (238.0 + s * 17.0) as u8,
+                (144.0 + s * 111.0) as u8,
+            )
+        }
     }
 
     pub fn threshold_db(&self) -> f32 {

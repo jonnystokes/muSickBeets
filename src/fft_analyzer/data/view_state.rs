@@ -12,6 +12,7 @@ pub enum ColormapId {
     Inferno,
     Greyscale,
     InvertedGrey,
+    Geek,
 }
 
 impl ColormapId {
@@ -22,6 +23,7 @@ impl ColormapId {
         ColormapId::Inferno,
         ColormapId::Greyscale,
         ColormapId::InvertedGrey,
+        ColormapId::Geek,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -32,6 +34,7 @@ impl ColormapId {
             ColormapId::Inferno => "Inferno",
             ColormapId::Greyscale => "Greyscale",
             ColormapId::InvertedGrey => "Inverted Grey",
+            ColormapId::Geek => "Geek",
         }
     }
 
