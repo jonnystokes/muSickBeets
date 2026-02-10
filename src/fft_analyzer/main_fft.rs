@@ -11,7 +11,7 @@ use fltk::{
     enums::{Align, CallbackTrigger, Event, FrameType, Font, Key, Shortcut},
     frame::Frame,
     group::Flex,
-    input::Input,
+    input::{Input, FloatInput},
     menu::{Choice, MenuBar, MenuFlag},
     prelude::*,
     valuator::{HorNiceSlider, HorSlider},
@@ -190,6 +190,69 @@ fn format_time(seconds: f64) -> String {
     format!("{}:{:05.2}", mins, secs)
 }
 
+// ─── Float/Int Input Validation ──────────────────────────────────────────────
+//
+// Revert-based validation: let the character enter, then validate and revert
+// if invalid. This works on VNC/Termux/remote desktop where keystroke blocking
+// doesn't work because input arrives as Shortcut/Paste events.
+
+fn is_valid_float_input(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if digits.is_empty() { return true; }
+    if digits.starts_with('.') { return false; }
+    let parts: Vec<&str> = digits.split('.').collect();
+    parts.len() <= 2 && parts.iter().all(|p| p.is_empty() || p.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn is_valid_uint_input(text: &str) -> bool {
+    text.is_empty() || text.chars().all(|c| c.is_ascii_digit())
+}
+
+fn attach_float_validation(input: &mut FloatInput) {
+    let mut last_valid = String::new();
+    input.set_trigger(CallbackTrigger::Changed);
+    input.set_callback(move |field| {
+        let current = field.value();
+        let minus_just_added = current.contains('-') && !last_valid.contains('-');
+        let typed_at_start = field.position() == 1;
+        if is_valid_float_input(&current) && !(minus_just_added && !typed_at_start) {
+            last_valid = current;
+        } else {
+            let restore = field.position().saturating_sub(1);
+            field.set_value(&last_valid);
+            field.set_position(restore).ok();
+        }
+    });
+}
+
+fn attach_uint_validation(input: &mut Input) {
+    let mut last_valid = String::new();
+    input.set_trigger(CallbackTrigger::Changed);
+    input.set_callback(move |field| {
+        let current = field.value();
+        if is_valid_uint_input(&current) {
+            last_valid = current;
+        } else {
+            let restore = field.position().saturating_sub(1);
+            field.set_value(&last_valid);
+            field.set_position(restore).ok();
+        }
+    });
+}
+
+// Helper: parse a field value as f64, treating empty as 0
+fn parse_or_zero_f64(s: &str) -> f64 {
+    if s.is_empty() { 0.0 } else { s.parse().unwrap_or(0.0) }
+}
+
+fn parse_or_zero_usize(s: &str) -> usize {
+    if s.is_empty() { 0 } else { s.parse().unwrap_or(0) }
+}
+
+fn parse_or_zero_f32(s: &str) -> f32 {
+    if s.is_empty() { 0.0 } else { s.parse().unwrap_or(0.0) }
+}
+
 // ─── MAIN ──────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -305,26 +368,26 @@ fn main() {
     set_tooltip(&mut btn_time_unit, "Toggle between Seconds and Samples.\nClicking converts the start/stop values.");
     left.fixed(&btn_time_unit, 25);
 
-    let mut input_start = Input::default().with_label("Start:");
-    input_start.set_value("0.00000");
+    let mut input_start = FloatInput::default().with_label("Start:");
+    input_start.set_value("0");
     input_start.set_color(theme::color(theme::BG_WIDGET));
     input_start.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_start.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_start.deactivate();
     set_tooltip(&mut input_start, "Analysis start position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.");
+    attach_float_validation(&mut input_start);
     left.fixed(&input_start, 25);
 
-    let mut input_stop = Input::default().with_label("Stop:");
-    input_stop.set_value("0.00000");
+    let mut input_stop = FloatInput::default().with_label("Stop:");
+    input_stop.set_value("0");
     input_stop.set_color(theme::color(theme::BG_WIDGET));
     input_stop.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_stop.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_stop.deactivate();
     set_tooltip(&mut input_stop, "Analysis stop position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.");
+    attach_float_validation(&mut input_stop);
     left.fixed(&input_stop, 25);
 
-    // Window length
-    let mut lbl_wl = Frame::default().with_label("Window Length:");
+    // Window length (segments)
+    let mut lbl_wl = Frame::default().with_label("Window (Segments):");
     lbl_wl.set_label_color(theme::color(theme::TEXT_SECONDARY));
     lbl_wl.set_label_size(11);
     lbl_wl.set_align(Align::Inside | Align::Left);
@@ -334,9 +397,9 @@ fn main() {
     input_window_len.set_value("2048");
     input_window_len.set_color(theme::color(theme::BG_WIDGET));
     input_window_len.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_window_len.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_window_len.deactivate();
-    set_tooltip(&mut input_window_len, "FFT window size in samples. Auto-rounds to power of 2.\nFunctional range: 64 to 65536.\nSmaller = better time resolution, worse frequency resolution.\nLarger = better frequency resolution, worse time resolution.\nYou can type any value if you want to experiment.");
+    set_tooltip(&mut input_window_len, "FFT window/segment size in samples. Auto-rounds to power of 2.\nFunctional range: 64 to 65536.\nSmaller = better time resolution, worse frequency resolution.\nLarger = better frequency resolution, worse time resolution.\nThe spectrogram is divided into segments of this size.\nYou can type any value if you want to experiment.");
+    attach_uint_validation(&mut input_window_len);
     left.fixed(&input_window_len, 25);
 
     // Overlap
@@ -369,11 +432,10 @@ fn main() {
     set_tooltip(&mut window_type_choice, "Windowing function applied to each FFT segment.\nHann: general purpose, good frequency resolution.\nHamming: slightly better sidelobe rejection.\nBlackman: best sidelobe rejection, wider main lobe.\nKaiser: configurable via beta parameter.");
     left.fixed(&window_type_choice, 25);
 
-    let mut input_kaiser_beta = Input::default().with_label("Kaiser B:");
+    let mut input_kaiser_beta = FloatInput::default().with_label("Kaiser B:");
     input_kaiser_beta.set_value("8.6");
     input_kaiser_beta.set_color(theme::color(theme::BG_WIDGET));
     input_kaiser_beta.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_kaiser_beta.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_kaiser_beta.deactivate();
     set_tooltip(&mut input_kaiser_beta, "Kaiser window beta parameter.\nFunctional range: 0.0 to 20.0.\nHigher = narrower main lobe, higher sidelobes.\n8.6 approximates a Blackman window.");
     left.fixed(&input_kaiser_beta, 25);
@@ -505,7 +567,6 @@ fn main() {
     input_freq_count.set_value("1025");
     input_freq_count.set_color(theme::color(theme::BG_WIDGET));
     input_freq_count.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_freq_count.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_freq_count.deactivate();
     set_tooltip(&mut input_freq_count, "Number of top-magnitude frequency bins to keep per frame.\nFunctional range: 1 to max bins (shown in INFO).\nMax = perfect reconstruction. Lower = simplified/filtered sound.\nAt 1, only the loudest frequency per frame is reconstructed.");
     left.fixed(&input_freq_count, 25);
@@ -517,11 +578,10 @@ fn main() {
     lbl_freq_min.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_freq_min, 16);
 
-    let mut input_recon_freq_min = Input::default();
+    let mut input_recon_freq_min = FloatInput::default();
     input_recon_freq_min.set_value("0");
     input_recon_freq_min.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_min.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_recon_freq_min.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_recon_freq_min.deactivate();
     set_tooltip(&mut input_recon_freq_min, "Minimum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins below this frequency are zeroed out.");
     left.fixed(&input_recon_freq_min, 25);
@@ -532,11 +592,10 @@ fn main() {
     lbl_freq_max.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_freq_max, 16);
 
-    let mut input_recon_freq_max = Input::default();
+    let mut input_recon_freq_max = FloatInput::default();
     input_recon_freq_max.set_value("24000");
     input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_max.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_recon_freq_max.set_trigger(CallbackTrigger::EnterKeyAlways);
     input_recon_freq_max.deactivate();
     set_tooltip(&mut input_recon_freq_max, "Maximum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins above this frequency are zeroed out.");
     left.fixed(&input_recon_freq_max, 25);
@@ -855,7 +914,6 @@ fn main() {
         let tx = tx.clone();
         let update_info = update_info.clone();
         let enable_audio_widgets = enable_audio_widgets.clone();
-        let enable_spec_widgets = enable_spec_widgets.clone();
 
         btn_open.set_callback(move |_| {
             let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
@@ -1072,33 +1130,72 @@ fn main() {
     }
 
     // ── Rerun analysis (also triggered by spacebar) ──
+    // Reads ALL current field values before launching FFT so that
+    // typing a number + spacebar works without needing to press Enter.
     {
         let state = state.clone();
         let mut status_bar = status_bar.clone();
         let mut spec_display = spec_display.clone();
         let mut waveform_display = waveform_display.clone();
         let tx = tx.clone();
+        let input_start = input_start.clone();
+        let input_stop = input_stop.clone();
+        let input_window_len = input_window_len.clone();
+        let slider_overlap = slider_overlap.clone();
+        let input_freq_count = input_freq_count.clone();
+        let input_recon_freq_min = input_recon_freq_min.clone();
+        let input_recon_freq_max = input_recon_freq_max.clone();
+        let check_center = check_center.clone();
+        let update_info = update_info.clone();
+        let window_type_choice = window_type_choice.clone();
+        let input_kaiser_beta = input_kaiser_beta.clone();
 
         btn_rerun.set_callback(move |_| {
-            let (audio, params) = {
-                let st = state.borrow();
-                if st.audio_data.is_none() {
-                    dialog::alert_default("No audio loaded!");
-                    return;
-                }
-                if st.is_processing {
-                    return;  // silently ignore if already processing
-                }
-                (st.audio_data.clone().unwrap(), st.fft_params.clone())
-            };
-
+            // Sync all field values into state before running
             {
                 let mut st = state.borrow_mut();
+                if st.audio_data.is_none() { return; }
+                if st.is_processing { return; }
+
+                // Read current field values
+                st.fft_params.start_time = parse_or_zero_f64(&input_start.value());
+                st.fft_params.stop_time = parse_or_zero_f64(&input_stop.value());
+
+                let wl = parse_or_zero_usize(&input_window_len.value()).max(2).next_power_of_two();
+                st.fft_params.window_length = wl;
+                st.fft_params.overlap_percent = slider_overlap.value() as f32;
+                st.fft_params.use_center = check_center.is_checked();
+
+                // Read window type + kaiser beta
+                st.fft_params.window_type = match window_type_choice.value() {
+                    0 => WindowType::Hann,
+                    1 => WindowType::Hamming,
+                    2 => WindowType::Blackman,
+                    3 => {
+                        let beta = parse_or_zero_f32(&input_kaiser_beta.value());
+                        WindowType::Kaiser(if beta > 0.0 { beta } else { 8.6 })
+                    }
+                    _ => WindowType::Hann,
+                };
+
+                // Update reconstruction params
+                let fc = parse_or_zero_usize(&input_freq_count.value()).max(1);
+                st.view.recon_freq_count = fc;
+                st.view.recon_freq_min_hz = parse_or_zero_f32(&input_recon_freq_min.value());
+                st.view.recon_freq_max_hz = parse_or_zero_f32(&input_recon_freq_max.value());
+                st.view.max_freq_bins = st.fft_params.num_frequency_bins();
+
                 st.is_processing = true;
                 st.spec_renderer.invalidate();
                 st.wave_renderer.invalidate();
             }
 
+            let (audio, params) = {
+                let st = state.borrow();
+                (st.audio_data.clone().unwrap(), st.fft_params.clone())
+            };
+
+            (update_info.borrow_mut())();
             status_bar.set_label("Processing FFT...");
             app::awake();
 
@@ -1151,54 +1248,8 @@ fn main() {
         });
     }
 
-    // Start time
-    {
-        let state = state.clone();
-        let update_info = update_info.clone();
-        input_start.set_callback(move |i| {
-            if let Ok(val) = i.value().parse::<f64>() {
-                state.borrow_mut().fft_params.start_time = val;
-                (update_info.borrow_mut())();
-            }
-        });
-    }
-
-    // Stop time
-    {
-        let state = state.clone();
-        let update_info = update_info.clone();
-        input_stop.set_callback(move |i| {
-            if let Ok(val) = i.value().parse::<f64>() {
-                state.borrow_mut().fft_params.stop_time = val;
-                (update_info.borrow_mut())();
-            }
-        });
-    }
-
-    // Window length
-    {
-        let state = state.clone();
-        let update_info = update_info.clone();
-        let mut input_freq_count = input_freq_count.clone();
-        let mut input_recon_freq_max = input_recon_freq_max.clone();
-
-        input_window_len.set_callback(move |i| {
-            if let Ok(val) = i.value().parse::<usize>() {
-                let mut st = state.borrow_mut();
-                let pow2 = val.max(2).next_power_of_two();
-                st.fft_params.window_length = pow2;
-                if pow2 != val {
-                    i.set_value(&pow2.to_string());
-                }
-                let new_bins = st.fft_params.num_frequency_bins();
-                st.view.max_freq_bins = new_bins;
-                st.view.recon_freq_count = new_bins;
-                input_freq_count.set_value(&new_bins.to_string());
-                drop(st);
-                (update_info.borrow_mut())();
-            }
-        });
-    }
+    // Field values are read at recompute time (btn_rerun callback).
+    // No individual callbacks needed for start/stop/window_len.
 
     // Overlap
     {
@@ -1214,7 +1265,7 @@ fn main() {
         });
     }
 
-    // Window type
+    // Window type (kaiser beta is read at recompute time from the field)
     {
         let state = state.clone();
         let mut input_kaiser_beta = input_kaiser_beta.clone();
@@ -1227,26 +1278,16 @@ fn main() {
                 2 => { input_kaiser_beta.deactivate(); WindowType::Blackman }
                 3 => {
                     input_kaiser_beta.activate();
-                    let beta: f32 = input_kaiser_beta.value().parse().unwrap_or(8.6);
-                    WindowType::Kaiser(beta)
+                    let beta = parse_or_zero_f32(&input_kaiser_beta.value());
+                    WindowType::Kaiser(if beta > 0.0 { beta } else { 8.6 })
                 }
                 _ => WindowType::Hann,
             };
         });
     }
 
-    // Kaiser beta
-    {
-        let state = state.clone();
-        input_kaiser_beta.set_callback(move |i| {
-            if let Ok(beta) = i.value().parse::<f32>() {
-                let mut st = state.borrow_mut();
-                if matches!(st.fft_params.window_type, WindowType::Kaiser(_)) {
-                    st.fft_params.window_type = WindowType::Kaiser(beta);
-                }
-            }
-        });
-    }
+    // Kaiser beta - read at recompute time, but also sync when window type changes
+    attach_float_validation(&mut input_kaiser_beta);
 
     // Center/Pad
     {
@@ -1345,62 +1386,36 @@ fn main() {
         });
     }
 
-    // ── Reconstruction callbacks ──
+    // Reconstruction field values are read at recompute time (btn_rerun callback)
+    // and reconstruct callback.
 
-    // Freq count
-    {
-        let state = state.clone();
-        input_freq_count.set_callback(move |i| {
-            if let Ok(val) = i.value().parse::<usize>() {
-                let mut st = state.borrow_mut();
-                st.view.recon_freq_count = val.max(1);
-            }
-        });
-    }
-
-    // Freq range min/max
-    {
-        let state = state.clone();
-        input_recon_freq_min.set_callback(move |i| {
-            if let Ok(val) = i.value().parse::<f32>() {
-                state.borrow_mut().view.recon_freq_min_hz = val;
-            }
-        });
-    }
-    {
-        let state = state.clone();
-        input_recon_freq_max.set_callback(move |i| {
-            if let Ok(val) = i.value().parse::<f32>() {
-                state.borrow_mut().view.recon_freq_max_hz = val;
-            }
-        });
-    }
-
-    // Reconstruct button
+    // Reconstruct button - reads freq count/range fields at click time
     {
         let state = state.clone();
         let mut status_bar = status_bar.clone();
-        let mut waveform_display = waveform_display.clone();
         let tx = tx.clone();
-        let enable_wav_export = enable_wav_export.clone();
+        let input_freq_count = input_freq_count.clone();
+        let input_recon_freq_min = input_recon_freq_min.clone();
+        let input_recon_freq_max = input_recon_freq_max.clone();
 
         btn_reconstruct.set_callback(move |_| {
             let (spec, params, view) = {
-                let st = state.borrow();
+                let mut st = state.borrow_mut();
                 if st.spectrogram.is_none() {
                     dialog::alert_default("No FFT data to reconstruct!\n\nLoad audio or import CSV first.");
                     return;
                 }
-                if st.is_processing {
-                    return;
-                }
+                if st.is_processing { return; }
+
+                // Read current field values
+                let fc = parse_or_zero_usize(&input_freq_count.value()).max(1);
+                st.view.recon_freq_count = fc;
+                st.view.recon_freq_min_hz = parse_or_zero_f32(&input_recon_freq_min.value());
+                st.view.recon_freq_max_hz = parse_or_zero_f32(&input_recon_freq_max.value());
+                st.is_processing = true;
+
                 (st.spectrogram.clone().unwrap(), st.fft_params.clone(), st.view.clone())
             };
-
-            {
-                let mut st = state.borrow_mut();
-                st.is_processing = true;
-            }
 
             status_bar.set_label("Reconstructing audio...");
             app::awake();
@@ -1849,14 +1864,19 @@ fn main() {
     //  GLOBAL SPACEBAR HANDLER
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Global spacebar handler - consumes space key to prevent insertion in text fields
+    // Global spacebar handler: consumes space KeyDown to block insertion in text
+    // fields, and uses KeyUp to set the flag (fires once per press, VNC-safe).
     app::add_handler(|ev| {
-        if ev == Event::KeyDown && app::event_key() == Key::from_char(' ') {
-            SPACE_PRESSED.store(true, Ordering::Relaxed);
-            true // consume the event
-        } else {
-            false
+        if app::event_key() == Key::from_char(' ') {
+            if ev == Event::KeyDown {
+                return true; // consume to prevent space insertion in fields
+            }
+            if ev == Event::KeyUp {
+                SPACE_PRESSED.store(true, Ordering::Relaxed);
+                return true;
+            }
         }
+        false
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1884,29 +1904,42 @@ fn main() {
             }
 
             // ── Sync scrollbars with view state ──
-            if let Ok(st) = state.try_borrow() {
+            // Extract scroll data first, then update widgets AFTER dropping borrow
+            let scroll_data = if let Ok(st) = state.try_borrow() {
                 let data_time_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
-                if data_time_range > 0.0 {
+                let data_freq_range = st.view.data_freq_max_hz - 20.0;
+
+                let x_data = if data_time_range > 0.0 {
                     let vis_time = st.view.visible_time_range();
                     let slider_sz = (vis_time / data_time_range).clamp(0.01, 1.0) as f32;
-                    x_scroll.set_slider_size(slider_sz);
                     let scroll_range = data_time_range - vis_time;
-                    if scroll_range > 0.0 {
-                        let pos = (st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range;
-                        x_scroll.set_value(pos.clamp(0.0, 1.0));
-                    }
-                }
+                    let pos = if scroll_range > 0.0 {
+                        (st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range
+                    } else { 0.0 };
+                    Some((slider_sz, pos.clamp(0.0, 1.0)))
+                } else { None };
 
-                let data_freq_range = st.view.data_freq_max_hz - 20.0;
-                if data_freq_range > 0.0 {
+                let y_data = if data_freq_range > 0.0 {
                     let vis_freq = st.view.visible_freq_range();
                     let slider_sz = (vis_freq / data_freq_range).clamp(0.01, 1.0);
-                    y_scroll.set_slider_size(slider_sz);
                     let scroll_range = data_freq_range - vis_freq;
-                    if scroll_range > 0.0 {
-                        let pos = (st.view.freq_min_hz - 20.0) / scroll_range;
-                        y_scroll.set_value((1.0 - pos).clamp(0.0, 1.0) as f64);
-                    }
+                    let pos = if scroll_range > 0.0 {
+                        (st.view.freq_min_hz - 20.0) / scroll_range
+                    } else { 0.0 };
+                    Some((slider_sz, (1.0 - pos).clamp(0.0, 1.0) as f64))
+                } else { None };
+
+                Some((x_data, y_data))
+            } else { None };
+            // Now update scrollbar widgets with borrow dropped
+            if let Some((x_data, y_data)) = scroll_data {
+                if let Some((sz, pos)) = x_data {
+                    x_scroll.set_slider_size(sz);
+                    x_scroll.set_value(pos);
+                }
+                if let Some((sz, pos)) = y_data {
+                    y_scroll.set_slider_size(sz);
+                    y_scroll.set_value(pos);
                 }
             }
 
@@ -2038,7 +2071,10 @@ fn main() {
 
             // ── Update transport position ──
             let transport_data = {
-                let mut st = state.borrow_mut();
+                let Ok(mut st) = state.try_borrow_mut() else {
+                    app::repeat_timeout3(0.016, handle);
+                    return;
+                };
                 if st.audio_player.has_audio() {
                     let pos = st.audio_player.get_position_seconds();
                     let playing = st.audio_player.get_state() == PlaybackState::Playing;
