@@ -23,7 +23,10 @@ use fltk::{
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+static SPACE_PRESSED: AtomicBool = AtomicBool::new(false);
 
 use data::{AudioData, FftParams, Spectrogram, ViewState, FreqScale, ColormapId, TransportState, WindowType, TimeUnit};
 use processing::fft_engine::FftEngine;
@@ -294,15 +297,13 @@ fn main() {
     left.fixed(&lbl_analysis, 18);
 
     // Time range
-    let mut time_unit_choice = Choice::default();
-    time_unit_choice.add_choice("Seconds");
-    time_unit_choice.add_choice("Samples");
-    time_unit_choice.set_value(0);
-    time_unit_choice.set_color(theme::color(theme::BG_WIDGET));
-    time_unit_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    time_unit_choice.deactivate();
-    set_tooltip(&mut time_unit_choice, "Unit for start/stop time fields.\nSeconds: decimal time values\nSamples: integer sample indices");
-    left.fixed(&time_unit_choice, 25);
+    let mut btn_time_unit = Button::default().with_label("Unit: Seconds");
+    btn_time_unit.set_color(theme::color(theme::BG_WIDGET));
+    btn_time_unit.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_time_unit.set_label_size(11);
+    btn_time_unit.deactivate();
+    set_tooltip(&mut btn_time_unit, "Toggle between Seconds and Samples.\nClicking converts the start/stop values.");
+    left.fixed(&btn_time_unit, 25);
 
     let mut input_start = Input::default().with_label("Start:");
     input_start.set_value("0.00000");
@@ -510,7 +511,13 @@ fn main() {
     left.fixed(&input_freq_count, 25);
 
     // Frequency range
-    let mut input_recon_freq_min = Input::default().with_label("Min Hz:");
+    let mut lbl_freq_min = Frame::default().with_label("Recon Min Freq (Hz):");
+    lbl_freq_min.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_freq_min.set_label_size(11);
+    lbl_freq_min.set_align(Align::Inside | Align::Left);
+    left.fixed(&lbl_freq_min, 16);
+
+    let mut input_recon_freq_min = Input::default();
     input_recon_freq_min.set_value("0");
     input_recon_freq_min.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_min.set_text_color(theme::color(theme::TEXT_PRIMARY));
@@ -519,7 +526,13 @@ fn main() {
     set_tooltip(&mut input_recon_freq_min, "Minimum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins below this frequency are zeroed out.");
     left.fixed(&input_recon_freq_min, 25);
 
-    let mut input_recon_freq_max = Input::default().with_label("Max Hz:");
+    let mut lbl_freq_max = Frame::default().with_label("Recon Max Freq (Hz):");
+    lbl_freq_max.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_freq_max.set_label_size(11);
+    lbl_freq_max.set_align(Align::Inside | Align::Left);
+    left.fixed(&lbl_freq_max, 16);
+
+    let mut input_recon_freq_max = Input::default();
     input_recon_freq_max.set_value("24000");
     input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_max.set_text_color(theme::color(theme::TEXT_PRIMARY));
@@ -773,7 +786,7 @@ fn main() {
 
     // Helper: enable widgets that require audio data
     let enable_audio_widgets: SharedCb = {
-        let mut time_unit_choice = time_unit_choice.clone();
+        let mut btn_time_unit = btn_time_unit.clone();
         let mut input_start = input_start.clone();
         let mut input_stop = input_stop.clone();
         let mut input_window_len = input_window_len.clone();
@@ -782,7 +795,7 @@ fn main() {
         let mut check_center = check_center.clone();
         let mut btn_rerun = btn_rerun.clone();
         Rc::new(RefCell::new(Box::new(move || {
-            time_unit_choice.activate();
+            btn_time_unit.activate();
             input_start.activate();
             input_stop.activate();
             input_window_len.activate();
@@ -1102,12 +1115,39 @@ fn main() {
 
     // ── Parameter callbacks ──
 
-    // Time unit
+    // Time unit toggle
     {
         let state = state.clone();
-        time_unit_choice.set_callback(move |c| {
+        let mut input_start = input_start.clone();
+        let mut input_stop = input_stop.clone();
+
+        btn_time_unit.set_callback(move |btn| {
             let mut st = state.borrow_mut();
-            st.fft_params.time_unit = if c.value() == 0 { TimeUnit::Seconds } else { TimeUnit::Samples };
+            let sr = st.fft_params.sample_rate as f64;
+            match st.fft_params.time_unit {
+                TimeUnit::Seconds => {
+                    // Convert seconds -> samples
+                    let start_samples = (st.fft_params.start_time * sr) as u64;
+                    let stop_samples = (st.fft_params.stop_time * sr) as u64;
+                    st.fft_params.time_unit = TimeUnit::Samples;
+                    st.fft_params.start_time = start_samples as f64;
+                    st.fft_params.stop_time = stop_samples as f64;
+                    input_start.set_value(&start_samples.to_string());
+                    input_stop.set_value(&stop_samples.to_string());
+                    btn.set_label("Unit: Samples");
+                }
+                TimeUnit::Samples => {
+                    // Convert samples -> seconds
+                    let start_secs = st.fft_params.start_time / sr;
+                    let stop_secs = st.fft_params.stop_time / sr;
+                    st.fft_params.time_unit = TimeUnit::Seconds;
+                    st.fft_params.start_time = start_secs;
+                    st.fft_params.stop_time = stop_secs;
+                    input_start.set_value(&format!("{:.5}", start_secs));
+                    input_stop.set_value(&format!("{:.5}", stop_secs));
+                    btn.set_label("Unit: Seconds");
+                }
+            }
         });
     }
 
@@ -1443,7 +1483,7 @@ fn main() {
                 return;
             }
 
-            let mut st = state.borrow_mut();
+            let Ok(mut st) = state.try_borrow_mut() else { return; };
 
             if let Some(spec) = st.spectrogram.clone() {
                 let view = st.view.clone();
@@ -1587,7 +1627,7 @@ fn main() {
                 return;
             }
 
-            let mut st = state.borrow_mut();
+            let Ok(mut st) = state.try_borrow_mut() else { return; };
 
             // Compute cursor position
             let cursor_x = if st.transport.duration_seconds > 0.0 {
@@ -1619,7 +1659,7 @@ fn main() {
             fltk::draw::set_draw_color(theme::color(theme::BG_DARK));
             fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
 
-            let st = state.borrow();
+            let Ok(st) = state.try_borrow() else { return; };
             if st.spectrogram.is_none() { return; }
 
             fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
@@ -1710,7 +1750,7 @@ fn main() {
             fltk::draw::set_draw_color(theme::color(theme::BG_DARK));
             fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
 
-            let st = state.borrow();
+            let Ok(st) = state.try_borrow() else { return; };
             if st.spectrogram.is_none() { return; }
 
             fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
@@ -1743,31 +1783,81 @@ fn main() {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  SCROLLBAR CALLBACKS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // X scrollbar: controls time panning (value = start of visible range, slider_size = visible fraction)
+    {
+        let state = state.clone();
+        let mut spec_display = spec_display.clone();
+        let mut waveform_display = waveform_display.clone();
+
+        // Initialize scrollbar range (will be updated when data changes)
+        x_scroll.set_minimum(0.0);
+        x_scroll.set_maximum(1.0);
+        x_scroll.set_slider_size(1.0); // full range visible initially
+        x_scroll.set_value(0.0);
+
+        x_scroll.set_callback(move |s| {
+            let Ok(mut st) = state.try_borrow_mut() else { return; };
+            let data_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
+            if data_range <= 0.0 { return; }
+
+            let vis_range = st.view.visible_time_range();
+            let scroll_pos = s.value(); // 0..1 normalized
+            let start = st.view.data_time_min_sec + scroll_pos * (data_range - vis_range);
+            st.view.time_min_sec = start.max(st.view.data_time_min_sec);
+            st.view.time_max_sec = (start + vis_range).min(st.view.data_time_max_sec);
+            st.spec_renderer.invalidate();
+            st.wave_renderer.invalidate();
+            drop(st);
+            spec_display.redraw();
+            waveform_display.redraw();
+        });
+    }
+
+    // Y scrollbar: controls frequency panning
+    {
+        let state = state.clone();
+        let mut spec_display = spec_display.clone();
+
+        y_scroll.set_minimum(0.0);
+        y_scroll.set_maximum(1.0);
+        y_scroll.set_slider_size(1.0);
+        y_scroll.set_value(0.0);
+
+        y_scroll.set_callback(move |s| {
+            let Ok(mut st) = state.try_borrow_mut() else { return; };
+            let data_max = st.view.data_freq_max_hz;
+            let data_min = 20.0_f32; // minimum freq
+            let data_range = data_max - data_min;
+            if data_range <= 0.0 { return; }
+
+            let vis_range = st.view.visible_freq_range();
+            // Scrollbar value is inverted (top=0) for vertical
+            let scroll_pos = 1.0 - s.value() as f32;
+            let start = data_min + scroll_pos * (data_range - vis_range);
+            st.view.freq_min_hz = start.max(data_min);
+            st.view.freq_max_hz = (start + vis_range).min(data_max);
+            st.spec_renderer.invalidate();
+            drop(st);
+            spec_display.redraw();
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  GLOBAL SPACEBAR HANDLER
     // ═══════════════════════════════════════════════════════════════════════════
 
     // Global spacebar handler - consumes space key to prevent insertion in text fields
-    // and triggers recompute. Uses add_handler with a non-capturing fn pointer.
     app::add_handler(|ev| {
         if ev == Event::KeyDown && app::event_key() == Key::from_char(' ') {
-            // Send a custom callback event to the app
-            app::handle_main(Event::from_i32(42)).ok();
-            return true; // consume the event — no space in text fields
-        }
-        false
-    });
-
-    // Handle the custom event by triggering the recompute button
-    {
-        let mut btn_rerun = btn_rerun.clone();
-        win.handle(move |_w, ev| {
-            if ev == Event::from_i32(42) {
-                btn_rerun.do_callback();
-                return true;
-            }
+            SPACE_PRESSED.store(true, Ordering::Relaxed);
+            true // consume the event
+        } else {
             false
-        });
-    }
+        }
+    });
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  MAIN POLL LOOP (16ms)
@@ -1783,8 +1873,43 @@ fn main() {
         let enable_spec_widgets = enable_spec_widgets.clone();
         let enable_wav_export = enable_wav_export.clone();
         let update_info = update_info.clone();
+        let mut btn_rerun = btn_rerun.clone();
+        let mut x_scroll = x_scroll.clone();
+        let mut y_scroll = y_scroll.clone();
 
         app::add_timeout3(0.016, move |handle| {
+            // ── Check spacebar flag ──
+            if SPACE_PRESSED.swap(false, Ordering::Relaxed) {
+                btn_rerun.do_callback();
+            }
+
+            // ── Sync scrollbars with view state ──
+            if let Ok(st) = state.try_borrow() {
+                let data_time_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
+                if data_time_range > 0.0 {
+                    let vis_time = st.view.visible_time_range();
+                    let slider_sz = (vis_time / data_time_range).clamp(0.01, 1.0) as f32;
+                    x_scroll.set_slider_size(slider_sz);
+                    let scroll_range = data_time_range - vis_time;
+                    if scroll_range > 0.0 {
+                        let pos = (st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range;
+                        x_scroll.set_value(pos.clamp(0.0, 1.0));
+                    }
+                }
+
+                let data_freq_range = st.view.data_freq_max_hz - 20.0;
+                if data_freq_range > 0.0 {
+                    let vis_freq = st.view.visible_freq_range();
+                    let slider_sz = (vis_freq / data_freq_range).clamp(0.01, 1.0);
+                    y_scroll.set_slider_size(slider_sz);
+                    let scroll_range = data_freq_range - vis_freq;
+                    if scroll_range > 0.0 {
+                        let pos = (st.view.freq_min_hz - 20.0) / scroll_range;
+                        y_scroll.set_value((1.0 - pos).clamp(0.0, 1.0) as f64);
+                    }
+                }
+            }
+
             // ── Process worker messages ──
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -1825,6 +1950,20 @@ fn main() {
                             st.view.recon_freq_count = st.fft_params.num_frequency_bins();
 
                             st.spectrogram = Some(Arc::new(spectrogram));
+
+                            // Update view to match spectrogram bounds
+                            if let Some(ref spec) = st.spectrogram {
+                                let (min_t, max_t, max_f) = (spec.min_time, spec.max_time, spec.max_freq);
+                                st.view.time_min_sec = min_t;
+                                st.view.time_max_sec = max_t;
+                                st.view.data_time_min_sec = min_t;
+                                st.view.data_time_max_sec = max_t;
+                                if max_f > 0.0 {
+                                    st.view.data_freq_max_hz = max_f;
+                                    st.view.freq_max_hz = max_f;
+                                }
+                            }
+
                             st.spec_renderer.invalidate();
                             st.is_processing = false;
                         }
@@ -1839,29 +1978,36 @@ fn main() {
                         waveform_display.redraw();
                     }
                     WorkerMessage::ReconstructionComplete(reconstructed) => {
-                        let mut st = state.borrow_mut();
+                        let recon_result = {
+                            let mut st = state.borrow_mut();
+                            match st.audio_player.load_audio(&reconstructed) {
+                                Ok(_) => {
+                                    let duration = reconstructed.duration_seconds;
+                                    let samples = reconstructed.num_samples();
+                                    st.transport.duration_seconds = duration;
 
-                        match st.audio_player.load_audio(&reconstructed) {
-                            Ok(_) => {
-                                let duration = reconstructed.duration_seconds;
-                                let samples = reconstructed.num_samples();
-                                st.transport.duration_seconds = duration;
+                                    let peaks = WaveformPeaks::compute(
+                                        &reconstructed.samples,
+                                        reconstructed.sample_rate,
+                                        st.view.time_min_sec,
+                                        st.view.time_max_sec,
+                                        800,
+                                    );
+                                    st.waveform_peaks = peaks;
+                                    st.wave_renderer.invalidate();
 
-                                // Build waveform peaks from reconstructed audio
-                                let peaks = WaveformPeaks::compute(
-                                    &reconstructed.samples,
-                                    reconstructed.sample_rate,
-                                    st.view.time_min_sec,
-                                    st.view.time_max_sec,
-                                    800,
-                                );
-                                st.waveform_peaks = peaks;
-                                st.wave_renderer.invalidate();
-
-                                st.reconstructed_audio = Some(reconstructed);
-                                st.is_processing = false;
-                                drop(st);
-
+                                    st.reconstructed_audio = Some(reconstructed);
+                                    st.is_processing = false;
+                                    Ok((duration, samples))
+                                }
+                                Err(e) => {
+                                    st.is_processing = false;
+                                    Err(e)
+                                }
+                            }
+                        };
+                        match recon_result {
+                            Ok((duration, samples)) => {
                                 (enable_wav_export.borrow_mut())();
                                 status_bar.set_label(&format!(
                                     "Reconstructed | {:.2}s | {} samples",
@@ -1870,8 +2016,6 @@ fn main() {
                                 waveform_display.redraw();
                             }
                             Err(e) => {
-                                st.is_processing = false;
-                                drop(st);
                                 status_bar.set_label(&format!("Reconstruction error: {}", e));
                                 dialog::alert_default(&format!("Failed to load reconstructed audio:\n{}", e));
                             }
@@ -1893,34 +2037,29 @@ fn main() {
             }
 
             // ── Update transport position ──
-            {
-                let st = state.borrow();
+            let transport_data = {
+                let mut st = state.borrow_mut();
                 if st.audio_player.has_audio() {
                     let pos = st.audio_player.get_position_seconds();
-                    let dur = st.transport.duration_seconds;
-
-                    // Update scrub slider (only if not being dragged)
-                    if dur > 0.0 {
-                        let t = pos / dur;
-                        scrub_slider.set_value(t.clamp(0.0, 1.0));
-                    }
-
-                    lbl_time.set_label(&format!(
-                        "{} / {}",
-                        format_time(pos),
-                        format_time(dur)
-                    ));
-
-                    // Redraw displays if playing (for cursor animation)
-                    if st.audio_player.get_state() == PlaybackState::Playing {
-                        drop(st);
-                        state.borrow_mut().transport.position_seconds = pos;
-                        spec_display.redraw();
-                        waveform_display.redraw();
-                    } else {
-                        drop(st);
-                        state.borrow_mut().transport.position_seconds = pos;
-                    }
+                    let playing = st.audio_player.get_state() == PlaybackState::Playing;
+                    st.transport.position_seconds = pos;
+                    Some((pos, st.transport.duration_seconds, playing))
+                } else {
+                    None
+                }
+            };
+            if let Some((pos, dur, playing)) = transport_data {
+                if dur > 0.0 {
+                    scrub_slider.set_value((pos / dur).clamp(0.0, 1.0));
+                }
+                lbl_time.set_label(&format!(
+                    "{} / {}",
+                    format_time(pos),
+                    format_time(dur)
+                ));
+                if playing {
+                    spec_display.redraw();
+                    waveform_display.redraw();
                 }
             }
 

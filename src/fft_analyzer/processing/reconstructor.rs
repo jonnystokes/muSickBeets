@@ -92,6 +92,12 @@ impl Reconstructor {
                 ifft.process(&mut spectrum, &mut time_buffer)
                     .expect("IFFT processing failed");
 
+                // Normalize IFFT output by FFT size
+                let norm = 1.0 / n_fft as f32;
+                for s in time_buffer.iter_mut() {
+                    *s *= norm;
+                }
+
                 // Apply synthesis window
                 let windowed: Vec<f32> = time_buffer.iter()
                     .zip(window.iter())
