@@ -1112,6 +1112,7 @@ fn main() {
     // ── Load FFT from CSV ──
     {
         let state = state.clone();
+        let tx = tx.clone();
         let mut status_bar = status_bar.clone();
         let mut spec_display = spec_display.clone();
         let mut input_start = input_start.clone();
@@ -1136,16 +1137,25 @@ fn main() {
             app::awake();
 
             match csv_export::import_from_csv(&filename) {
-                Ok((imported_spec, imported_params, recon_params)) => {
+                Ok((imported_spec, mut imported_params, recon_params)) => {
                     let num_frames = imported_spec.num_frames();
-                    {
+
+                    // Ensure proc_time covers the full spectrogram range
+                    // (avoids graying issues from integer sample roundtrip precision)
+                    let spec_min_time = imported_spec.min_time;
+                    let spec_max_time = imported_spec.max_time;
+                    imported_params.start_time = spec_min_time;
+                    imported_params.stop_time = spec_max_time;
+                    imported_params.time_unit = TimeUnit::Seconds;
+
+                    let recon_data = {
                         let mut st = state.borrow_mut();
                         st.fft_params = imported_params.clone();
 
-                        st.view.time_min_sec = imported_spec.min_time;
-                        st.view.time_max_sec = imported_spec.max_time;
-                        st.view.data_time_min_sec = imported_spec.min_time;
-                        st.view.data_time_max_sec = imported_spec.max_time;
+                        st.view.time_min_sec = spec_min_time;
+                        st.view.time_max_sec = spec_max_time;
+                        st.view.data_time_min_sec = spec_min_time;
+                        st.view.data_time_max_sec = spec_max_time;
                         st.view.freq_max_hz = imported_spec.max_freq;
                         st.view.data_freq_max_hz = imported_spec.max_freq;
 
@@ -1159,7 +1169,16 @@ fn main() {
                         st.spectrogram = Some(Arc::new(imported_spec));
                         st.spec_renderer.invalidate();
                         st.wave_renderer.invalidate();
-                    }
+                        st.recon_start_time = spec_min_time;
+                        st.is_processing = true;
+                        st.dirty = false;
+
+                        // Prepare reconstruction data
+                        let spec = st.spectrogram.clone().unwrap();
+                        let params = st.fft_params.clone();
+                        let view = st.view.clone();
+                        (spec, params, view, spec_min_time, spec_max_time)
+                    };
 
                     input_start.set_value(&format!("{:.5}", imported_params.start_time));
                     input_stop.set_value(&format!("{:.5}", imported_params.stop_time));
@@ -1170,8 +1189,24 @@ fn main() {
                     (update_info.borrow_mut())();
                     (update_seg_label.borrow_mut())();
 
-                    status_bar.set_label(&format!("Loaded {} frames from CSV", num_frames));
+                    status_bar.set_label(&format!(
+                        "Loaded {} frames from CSV | Reconstructing...",
+                        num_frames
+                    ));
                     spec_display.redraw();
+
+                    // Auto-trigger reconstruction so sound can play
+                    let tx_clone = tx.clone();
+                    let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
+                    std::thread::spawn(move || {
+                        let filtered_frames: Vec<_> = spec.frames.iter()
+                            .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
+                            .cloned()
+                            .collect();
+                        let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
+                        let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
+                        tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
+                    });
                 }
                 Err(e) => {
                     dialog::alert_default(&format!("Error loading CSV:\n{}", e));
@@ -1970,8 +2005,11 @@ fn main() {
             if data_range <= 0.0 { return; }
 
             let vis_range = st.view.visible_time_range().max(0.001);
-            let scroll_pos = s.value();
-            let start = st.view.data_time_min_sec + scroll_pos * (data_range - vis_range).max(0.0);
+            // FLTK Scrollbar value range is [min, max - slider_size*(max-min)]
+            // With min=0, max=1: value goes [0, 1-slider_size]
+            let max_val = (1.0 - s.slider_size() as f64).max(0.001);
+            let scroll_frac = (s.value() / max_val).clamp(0.0, 1.0);
+            let start = st.view.data_time_min_sec + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.time_min_sec = start.max(st.view.data_time_min_sec);
             st.view.time_max_sec = (start + vis_range).min(st.view.data_time_max_sec);
 
@@ -2001,8 +2039,10 @@ fn main() {
             if data_range <= 0.0 { return; }
 
             let vis_range = st.view.visible_freq_range().max(1.0);
-            let scroll_pos = 1.0 - s.value() as f32;
-            let start = data_min + scroll_pos * (data_range - vis_range).max(0.0);
+            // FLTK Scrollbar value range is [0, 1-slider_size]
+            let max_val = (1.0 - s.slider_size() as f32).max(0.001);
+            let scroll_frac = 1.0 - (s.value() as f32 / max_val).clamp(0.0, 1.0);  // inverted for vertical
+            let start = data_min + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.freq_min_hz = start.max(data_min);
             st.view.freq_max_hz = (start + vis_range).min(data_max);
 
@@ -2194,21 +2234,24 @@ fn main() {
                     let vis_time = st.view.visible_time_range();
                     let ratio = (vis_time / data_time_range).clamp(0.02, 1.0);
                     let scroll_range = (data_time_range - vis_time).max(0.0);
-                    let pos = if scroll_range > 0.001 {
+                    let frac = if scroll_range > 0.001 {
                         ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range).clamp(0.0, 1.0)
                     } else { 0.0 };
-                    Some((ratio as f32, pos))
+                    // FLTK value range is [0, 1-slider_size], so scale frac accordingly
+                    let max_val = (1.0 - ratio).max(0.0);
+                    Some((ratio as f32, frac * max_val))
                 } else { None };
 
                 let y_data = if data_freq_range > 1.0 {
                     let vis_freq = st.view.visible_freq_range();
                     let ratio = (vis_freq / data_freq_range).clamp(0.02, 1.0);
                     let scroll_range = (data_freq_range - vis_freq).max(0.0);
-                    let pos = if scroll_range > 0.1 {
+                    let frac = if scroll_range > 0.1 {
                         ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0)
                     } else { 0.0 };
-                    // Invert for vertical (higher freq at top)
-                    Some((ratio, (1.0 - pos).clamp(0.0, 1.0) as f64))
+                    // Invert for vertical (higher freq at top), scale to FLTK range
+                    let max_val = (1.0 - ratio as f64).max(0.0);
+                    Some((ratio, ((1.0 - frac as f64) * max_val).clamp(0.0, max_val)))
                 } else { None };
 
                 Some((x_data, y_data))
