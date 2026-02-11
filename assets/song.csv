@@ -1,85 +1,81 @@
 Voice0,Voice1,Voice2,Voice3,Voice4,Voice5,Voice6,Voice7,Voice8,Voice9,Voice10,Voice11
-config, title: Silicon Dreams, export_wav: true, tempo_bpm: 60
-// ============================================================================
-// SILICON DREAMS - A Tetris-Inspired Electronic Piece
-// Bass on channels 0-3 (creative walking pattern)
-// Flute melody on channels 4-5 (sine waves, 2 notes/second)
-// ============================================================================
+config,title: Silicon Dreams,export_wav: true,tempo_bpm: 60,,,,,,,,
+// ============================================================================,,,,,,,,,,,
+// SILICON DREAMS - A Tetris-Inspired Electronic Piece,,,,,,,,,,,
+// Bass on channels 0-3 (creative walking pattern),,,,,,,,,,,
+// Flute melody on channels 4-5 (sine waves,2 notes/second),,,,,,,,,,
+// ============================================================================,,,,,,,,,,,
 master reverb2:0.8'3.0'0.3'0.45'30.0,,,,,,,,,,,
-// [INTRO] C#2 root - establishing the key
-c#2 sine amplitude:0.35,c#2 sine amplitude:0.35,c#3 trisaw:0.0 amplitude:0.2,c#3 trisaw:0.0 amplitude:0.2,e5 sine amplitude:0.25,e5 sine amplitude:0.22,,,,,
+// [INTRO] C#2 root - establishing the key,,,,,,,,,,,
+c#2 sine amplitude:0.35,c#2 sine amplitude:0.35,c#3 trisaw:0.0 amplitude:0.2,c#3 trisaw:0.0 amplitude:0.2,e5 sine amplitude:0.25,e5 sine amplitude:0.22,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,d#5 sine transition:0.1,d#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// First melodic phrase
+// First melodic phrase,,,,,,,,,,,
 -,-,-,-,c#5 sine transition:0.1,c#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,b4 sine transition:0.1,b4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Bass slides DOWN to B1 (unexpected movement!)
+// Bass slides DOWN to B1 (unexpected movement!),,,,,,,,,,,
 b1 sine transition:0.4,b1 sine transition:0.4,b2 trisaw:0.0 transition:0.4,b2 trisaw:0.0 transition:0.4,c#5 sine transition:0.1,c#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,e5 sine transition:0.1,e5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Melody develops
+// Melody develops,,,,,,,,,,,
 -,-,-,-,f#5 sine transition:0.1,f#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,e5 sine transition:0.1,e5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Bass JUMPS to G#1 (tritone tension!)
+// Bass JUMPS to G#1 (tritone tension!),,,,,,,,,,,
 g#1 sine transition:0.3,g#1 sine transition:0.3,g#2 trisaw:0.0 transition:0.3,g#2 trisaw:0.0 transition:0.3,d#5 sine transition:0.1,d#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,c#5 sine transition:0.1,c#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Melody answer
+// Melody answer,,,,,,,,,,,
 -,-,-,-,b4 sine transition:0.1,b4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,a4 sine transition:0.1,a4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Bass RISES to A1 (relief moment)
+// Bass RISES to A1 (relief moment),,,,,,,,,,,
 a1 sine transition:0.4,a1 sine transition:0.4,a2 trisaw:0.0 transition:0.4,a2 trisaw:0.0 transition:0.4,b4 sine transition:0.1,b4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,c#5 sine transition:0.1,c#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Building energy
+// Building energy,,,,,,,,,,,
 -,-,-,-,e5 sine transition:0.1,e5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,f#5 sine transition:0.1,f#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Bass to F#1 (dominant - wants to resolve)
+// Bass to F#1 (dominant - wants to resolve),,,,,,,,,,,
 f#1 sine transition:0.4,f#1 sine transition:0.4,f#2 trisaw:0.0 transition:0.4,f#2 trisaw:0.0 transition:0.4,g#5 sine transition:0.1,g#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,f#5 sine transition:0.1,f#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Melody peak
+// Melody peak,,,,,,,,,,,
 -,-,-,-,e5 sine transition:0.1,e5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,d#5 sine transition:0.1,d#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Bass drops to E1 (more tension!)
+// Bass drops to E1 (more tension!),,,,,,,,,,,
 e1 sine transition:0.3,e1 sine transition:0.3,e2 trisaw:0.0 transition:0.3,e2 trisaw:0.0 transition:0.3,e5 sine transition:0.1,e5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,c#5 sine transition:0.1,c#5 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Descending to resolve
+// Descending to resolve,,,,,,,,,,,
 -,-,-,-,b4 sine transition:0.1,b4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,a4 sine transition:0.1,a4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Bass HOME to C#2 (full resolution!)
+// Bass HOME to C#2 (full resolution!),,,,,,,,,,,
 c#2 sine transition:0.5,c#2 sine transition:0.5,c#3 trisaw:0.0 transition:0.5,c#3 trisaw:0.0 transition:0.5,g#4 sine transition:0.1,g#4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,a4 sine transition:0.1,a4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
-// Final phrase
+// Final phrase,,,,,,,,,,,
 -,-,-,-,b4 sine transition:0.1,b4 sine transition:0.1,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,c#5 sine transition:0.2,c#5 sine transition:0.2,,,,,,
 -,-,-,-,-,-,,,,,,
-// Fade out
+// Fade out,,,,,,,,,,,
 -,-,-,-,-,-,,,,,,
 -,-,-,-,-,-,,,,,,
-,,,,,,,,,,,
-,,,,,,,,,,,
-,,,,,,,,,,,
-,,,,,,,,,,,

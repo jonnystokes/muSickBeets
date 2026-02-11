@@ -39,6 +39,15 @@ muSickBeets is two tools in one:
 
 ![FFT Analyzer Interface](assets/Screenshot_20260211-102627.png)
 
+### spreadsheet music tracker 
+
+![spreadsheet music tracker ](assets/Screenshot_20260211-110930.png)
+
+
+![spreadsheet music tracker ](assets/Screenshot_20260211-110243.png)
+
+
+
 
 ## Quick Start
 
