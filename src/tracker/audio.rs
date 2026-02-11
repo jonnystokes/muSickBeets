@@ -291,7 +291,6 @@ pub fn normalize_audio(samples: &mut [f32], target_peak: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_generate_wav_filename() {

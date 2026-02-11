@@ -213,17 +213,6 @@ impl ParseError {
         }
     }
 
-    /// Creates a new fatal error
-    pub fn fatal(line: usize, column: usize, cell: &str, message: String) -> Self {
-        Self {
-            line_number: line,
-            column_number: column,
-            cell_content: cell.to_string(),
-            message,
-            is_fatal: true,
-        }
-    }
-
     /// Formats the error for display
     pub fn format(&self) -> String {
         let error_type = if self.is_fatal { "ERROR" } else { "WARNING" };
@@ -247,9 +236,6 @@ impl ParseError {
 pub enum CellAction {
     /// Trigger a pitched note (e.g., "c4 sine")
     TriggerNote {
-        /// The pitch string (e.g., "c4", "f#3")
-        pitch: String,
-
         /// Frequency in Hz (pre-calculated for performance)
         frequency_hz: f32,
 
@@ -349,9 +335,6 @@ pub struct SongData {
     /// Any errors encountered during parsing
     pub errors: Vec<ParseError>,
 
-    /// Number of channels detected
-    pub channel_count: usize,
-
     /// Per-song configuration (from config row, if present)
     pub config: SongConfig,
 }
@@ -384,12 +367,6 @@ struct ParserContext<'a> {
     /// The frequency table for pitch lookups
     frequency_table: &'a FrequencyTable,
 
-    /// Number of channels to parse
-    channel_count: usize,
-
-    /// Debug level
-    debug_level: DebugLevel,
-
     /// Current line number (for error messages)
     current_line: usize,
 
@@ -406,9 +383,6 @@ struct ParserContext<'a> {
 /// What to do when a row has fewer cells than channels
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MissingCellBehavior {
-    /// Treat missing cells as sustain (keep playing)
-    Sustain,
-
     /// Treat missing cells as slow release (fade out)
     SlowRelease,
 }
@@ -438,8 +412,6 @@ pub fn parse_song(
 
     let mut context = ParserContext {
         frequency_table,
-        channel_count,
-        debug_level,
         current_line: 0,
         current_column: 0,
         errors: Vec::new(),
@@ -528,10 +500,6 @@ pub fn parse_song(
                     );
                 }
                 match context.missing_cell_behavior {
-                    MissingCellBehavior::Sustain => {
-                        row_actions.push(CellAction::Sustain);
-                        continue;
-                    }
                     MissingCellBehavior::SlowRelease => {
                         row_actions.push(CellAction::SlowRelease);
                         continue;
@@ -576,7 +544,6 @@ pub fn parse_song(
         rows,
         raw_lines,
         errors: context.errors,
-        channel_count,
         config: song_config,
     }
 }
@@ -819,7 +786,6 @@ fn parse_note_trigger(tokens: &[&str], context: &mut ParserContext) -> CellActio
     }
 
     CellAction::TriggerNote {
-        pitch,
         frequency_hz,
         instrument_id,
         instrument_parameters,
@@ -1131,8 +1097,6 @@ mod tests {
         let freq_table = FrequencyTable::new();
         let mut context = ParserContext {
             frequency_table: &freq_table,
-            channel_count: 1,
-            debug_level: DebugLevel::Off,
             current_line: 1,
             current_column: 0,
             errors: Vec::new(),

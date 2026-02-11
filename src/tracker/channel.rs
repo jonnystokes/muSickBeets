@@ -189,11 +189,6 @@ impl InstrumentCrossfade {
         (from_gain, to_gain)
     }
 
-    /// Returns true if the crossfade is complete
-    pub fn is_complete(&self) -> bool {
-        self.elapsed_seconds >= self.duration_seconds
-    }
-
     /// Advances the crossfade by one sample
     pub fn advance(&mut self, sample_rate: u32) {
         self.elapsed_seconds += 1.0 / sample_rate as f32;
@@ -600,10 +595,6 @@ impl Channel {
         self.is_active
     }
 
-    /// Gets the current envelope amplitude (useful for debugging/visualization)
-    pub fn get_envelope_level(&self) -> f32 {
-        self.envelope.current_amplitude
-    }
 }
 
 // ============================================================================

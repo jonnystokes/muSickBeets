@@ -25,7 +25,6 @@ impl Reconstructor {
             return AudioData {
                 samples: vec![],
                 sample_rate: params.sample_rate,
-                channels: 1,
                 duration_seconds: 0.0,
             };
         }
@@ -140,7 +139,6 @@ impl Reconstructor {
         AudioData {
             samples: output,
             sample_rate: params.sample_rate,
-            channels: 1,
             duration_seconds,
         }
     }

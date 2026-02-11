@@ -142,25 +142,7 @@ const TICK_DURATION_SECONDS: f32 = 0.25;
 /// For heavy reverb/delay, use 2048 or higher
 const AUDIO_BUFFER_SIZE: u32 = 4096;
 
-/// Number of audio buffers (periods) to use
-/// More buffers = smoother playback but higher latency
-/// 3-4 is good for heavy effects
-const AUDIO_BUFFER_COUNT: u32 = 3;
-
-// ---- Effect Buffer Settings ----
-
-/// Maximum reverb/delay time in seconds
-/// Larger = more memory but allows longer reverb tails
-const MAX_EFFECT_BUFFER_SECONDS: f32 = 4.0;
-
-/// Maximum chorus/flanger delay in milliseconds
-const MAX_MODULATION_DELAY_MS: f32 = 100.0;
-
 // ---- Envelope Settings ----
-
-/// Default attack time for new notes (seconds)
-/// How long it takes for a note to reach full volume
-const DEFAULT_ATTACK_SECONDS: f32 = 0.10;
 
 /// Default release time for slow release / empty cells (seconds)
 /// How long it takes for a note to fade to silence
@@ -330,7 +312,6 @@ fn main() {
         sample_rate: SAMPLE_RATE,
         channel_count: CHANNEL_COUNT,
         tick_duration_seconds: tick_duration,
-        default_attack_seconds: DEFAULT_ATTACK_SECONDS,
         default_release_seconds: DEFAULT_RELEASE_SECONDS,
         fast_release_seconds: FAST_RELEASE_SECONDS,
         debug_level: DEBUG_LEVEL,

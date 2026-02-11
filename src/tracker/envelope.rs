@@ -102,15 +102,6 @@ pub enum EnvelopeCurveType {
 /// This is the "blueprint" for how an envelope behaves
 #[derive(Clone, Debug)]
 pub struct EnvelopeDefinition {
-    /// Unique identifier for this envelope type
-    pub id: usize,
-
-    /// Human-readable name for this envelope
-    pub name: &'static str,
-
-    /// Short description of what this envelope sounds like
-    pub description: &'static str,
-
     /// Attack time in seconds (how long to reach peak volume)
     pub attack_time_seconds: f32,
 
@@ -120,9 +111,6 @@ pub struct EnvelopeDefinition {
     /// Sustain level from 0.0 to 1.0 (volume while note is held)
     /// Note: This is a LEVEL, not a time!
     pub sustain_level: f32,
-
-    /// Release time in seconds (how long to fade to silence)
-    pub release_time_seconds: f32,
 
     /// The curve type to use for the attack phase
     pub attack_curve: EnvelopeCurveType,
@@ -166,13 +154,9 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Quick attack, slight dip to sustain, 2-second release
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        id: 0,
-        name: "default",
-        description: "Natural envelope with quick attack and smooth 2-second release",
         attack_time_seconds: 0.01,           // 10ms attack - very quick, barely noticeable
         decay_time_seconds: 0.1,             // 100ms decay to sustain level
         sustain_level: 0.85,                 // Slight dip to 85% during sustain
-        release_time_seconds: 2.0,           // 2 second fade out - smooth and gradual
         attack_curve: EnvelopeCurveType::Logarithmic,  // Fast start for punchy attack
         attack_curve_strength: 2.0,
         decay_curve: EnvelopeCurveType::Exponential,   // Natural decay curve
@@ -186,13 +170,9 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Sharp attack with quick decay - good for plucked string sounds
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        id: 1,
-        name: "pluck",
-        description: "Sharp attack with fast decay, like a plucked string",
         attack_time_seconds: 0.005,          // 5ms - very snappy
         decay_time_seconds: 0.3,             // 300ms decay
         sustain_level: 0.3,                  // Low sustain for plucky sound
-        release_time_seconds: 0.5,           // 500ms release
         attack_curve: EnvelopeCurveType::Linear,
         attack_curve_strength: 1.0,
         decay_curve: EnvelopeCurveType::Exponential,
@@ -206,13 +186,9 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Slow attack and release - good for ambient pads and strings
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        id: 2,
-        name: "pad",
-        description: "Slow attack and release for ambient pads and strings",
         attack_time_seconds: 0.5,            // 500ms - slow fade in
         decay_time_seconds: 0.2,             // 200ms slight decay
         sustain_level: 0.9,                  // High sustain
-        release_time_seconds: 3.0,           // 3 second fade out
         attack_curve: EnvelopeCurveType::Logarithmic,
         attack_curve_strength: 1.5,
         decay_curve: EnvelopeCurveType::Linear,
@@ -226,13 +202,9 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Instant attack, no sustain - good for drums and hits
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        id: 3,
-        name: "percussion",
-        description: "Instant attack with no sustain, for drums and percussive sounds",
         attack_time_seconds: 0.001,          // 1ms - nearly instant
         decay_time_seconds: 0.0,             // No decay phase
         sustain_level: 1.0,                  // Full sustain (but release is fast)
-        release_time_seconds: 0.1,           // 100ms release
         attack_curve: EnvelopeCurveType::Linear,
         attack_curve_strength: 1.0,
         decay_curve: EnvelopeCurveType::Linear,
@@ -246,13 +218,9 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Instant on/off like a real organ - no attack or release
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        id: 4,
-        name: "organ",
-        description: "Instant on/off like a classic organ",
         attack_time_seconds: 0.005,          // 5ms to avoid clicks
         decay_time_seconds: 0.0,             // No decay
         sustain_level: 1.0,                  // Full sustain
-        release_time_seconds: 0.05,          // 50ms to avoid clicks
         attack_curve: EnvelopeCurveType::Linear,
         attack_curve_strength: 1.0,
         decay_curve: EnvelopeCurveType::Linear,
@@ -266,13 +234,9 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Very slow attack - good for swelling strings or crescendos
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        id: 5,
-        name: "swell",
-        description: "Very slow attack for dramatic swells and crescendos",
         attack_time_seconds: 2.0,            // 2 second swell
         decay_time_seconds: 0.0,             // No decay
         sustain_level: 1.0,                  // Full sustain
-        release_time_seconds: 2.0,           // 2 second fade
         attack_curve: EnvelopeCurveType::Logarithmic,
         attack_curve_strength: 1.2,
         decay_curve: EnvelopeCurveType::Linear,
@@ -362,31 +326,6 @@ impl EnvelopeState {
         if self.phase_total_samples == 0 {
             self.current_amplitude = 1.0;
             self.advance_to_decay();
-        }
-    }
-
-    /// Releases the envelope - starts the release phase
-    /// Call this when a note stops playing
-    pub fn release(&mut self) {
-        // Only start release if we're not already releasing or idle
-        if self.current_phase == EnvelopePhase::Release || self.current_phase == EnvelopePhase::Idle {
-            return;
-        }
-
-        let definition = self.get_definition();
-
-        self.current_phase = EnvelopePhase::Release;
-        self.phase_elapsed_samples = 0;
-        self.phase_start_amplitude = self.current_amplitude;
-        self.phase_target_amplitude = 0.0; // Release always goes to silence
-
-        // Calculate release time in samples
-        self.phase_total_samples = (definition.release_time_seconds * self.sample_rate as f32) as u64;
-
-        // If release time is 0, go straight to idle
-        if self.phase_total_samples == 0 {
-            self.current_amplitude = 0.0;
-            self.current_phase = EnvelopePhase::Idle;
         }
     }
 
@@ -539,10 +478,6 @@ impl EnvelopeState {
         self.current_phase == EnvelopePhase::Idle && self.current_amplitude < 0.001
     }
 
-    /// Returns true if the envelope is currently active (not idle)
-    pub fn is_active(&self) -> bool {
-        self.current_phase != EnvelopePhase::Idle
-    }
 }
 
 // ============================================================================
@@ -581,27 +516,6 @@ fn apply_curve(
 // HELPER FUNCTIONS
 // ============================================================================
 
-/// Finds an envelope definition by name (case-insensitive)
-/// Returns the envelope ID if found, or None if not found
-pub fn find_envelope_by_name(name: &str) -> Option<usize> {
-    let name_lower = name.to_lowercase();
-    ENVELOPE_REGISTRY
-        .iter()
-        .find(|envelope| envelope.name.to_lowercase() == name_lower)
-        .map(|envelope| envelope.id)
-}
-
-/// Gets the default envelope ID (always 0)
-pub fn get_default_envelope_id() -> usize {
-    0
-}
-
-/// Returns a list of all available envelope names
-/// Useful for displaying options to users or for help text
-pub fn get_all_envelope_names() -> Vec<&'static str> {
-    ENVELOPE_REGISTRY.iter().map(|e| e.name).collect()
-}
-
 // ============================================================================
 // UNIT TESTS
 // ============================================================================
@@ -630,14 +544,7 @@ mod tests {
         assert!(envelope.current_amplitude > 0.0);
 
         // Release should move to release phase
-        envelope.release();
+        envelope.release_with_time(2.0);
         assert_eq!(envelope.current_phase, EnvelopePhase::Release);
-    }
-
-    #[test]
-    fn test_find_envelope_by_name() {
-        assert_eq!(find_envelope_by_name("default"), Some(0));
-        assert_eq!(find_envelope_by_name("pluck"), Some(1));
-        assert_eq!(find_envelope_by_name("nonexistent"), None);
     }
 }

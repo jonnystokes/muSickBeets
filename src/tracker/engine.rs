@@ -40,9 +40,6 @@ pub struct EngineConfig {
     /// How long each row plays in seconds
     pub tick_duration_seconds: f32,
 
-    /// Default attack time for new notes (seconds)
-    pub default_attack_seconds: f32,
-
     /// Default release time for slow release (seconds)
     pub default_release_seconds: f32,
 
@@ -59,7 +56,6 @@ impl Default for EngineConfig {
             sample_rate: 48000,
             channel_count: 12,
             tick_duration_seconds: 0.25,
-            default_attack_seconds: 0.10,
             default_release_seconds: 2.0,
             fast_release_seconds: 0.05,
             debug_level: DebugLevel::Off,
@@ -175,7 +171,6 @@ impl PlaybackEngine {
     fn dispatch_action(&mut self, channel_index: usize, action: &CellAction) {
         match action {
             CellAction::TriggerNote {
-                pitch: _,
                 frequency_hz,
                 instrument_id,
                 instrument_parameters,
@@ -310,39 +305,9 @@ impl PlaybackEngine {
         }
     }
 
-    /// Returns true if playback has finished
-    pub fn is_finished(&self) -> bool {
-        self.playback_finished
-    }
-
-    /// Returns the current playback position in seconds
-    pub fn get_position_seconds(&self) -> f32 {
-        self.total_samples_rendered as f32 / self.config.sample_rate as f32
-    }
-
     /// Returns the total duration in seconds
     pub fn get_total_duration_seconds(&self) -> f32 {
         self.song.row_count() as f32 * self.config.tick_duration_seconds
-    }
-
-    /// Returns the current row number
-    pub fn get_current_row(&self) -> usize {
-        self.current_row
-    }
-
-    /// Returns the total number of rows
-    pub fn get_total_rows(&self) -> usize {
-        self.song.row_count()
-    }
-
-    /// Gets the sample rate
-    pub fn get_sample_rate(&self) -> u32 {
-        self.config.sample_rate
-    }
-
-    /// Gets the channel count
-    pub fn get_channel_count(&self) -> usize {
-        self.config.channel_count
     }
 
     /// Resets playback to the beginning
@@ -412,8 +377,8 @@ mod tests {
         let config = EngineConfig::default();
         let engine = PlaybackEngine::new(song, config);
 
-        assert_eq!(engine.get_current_row(), 0);
-        assert!(!engine.is_finished());
+        assert_eq!(engine.current_row, 0);
+        assert!(!engine.playback_finished);
     }
 
     #[test]

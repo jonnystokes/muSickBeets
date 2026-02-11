@@ -124,14 +124,6 @@ impl FrequencyTable {
         Some(self.frequencies[table_index])
     }
 
-    /// Looks up frequency by semitone offset from C0
-    /// This is useful when you've already calculated the total semitone offset
-    pub fn get_frequency_by_index(&self, semitone_index: usize) -> Option<f32> {
-        if semitone_index >= FREQUENCY_TABLE_SIZE {
-            return None;
-        }
-        Some(self.frequencies[semitone_index])
-    }
 }
 
 // Implement Default so we can easily create a frequency table

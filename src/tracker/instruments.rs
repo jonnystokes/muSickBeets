@@ -39,25 +39,6 @@ use crate::helper::{RandomNumberGenerator, TWO_PI};
 // what instruments are available and what parameters they accept.
 // ============================================================================
 
-/// Describes a single parameter that an instrument accepts
-#[derive(Clone, Debug)]
-pub struct InstrumentParameter {
-    /// Name of the parameter (shown in documentation and errors)
-    pub name: &'static str,
-
-    /// Minimum allowed value
-    pub min_value: f32,
-
-    /// Maximum allowed value
-    pub max_value: f32,
-
-    /// Default value if not specified
-    pub default_value: f32,
-
-    /// Description of what this parameter does
-    pub description: &'static str,
-}
-
 /// Defines an instrument type with all its properties
 #[derive(Clone)]
 pub struct InstrumentDefinition {
@@ -73,22 +54,6 @@ pub struct InstrumentDefinition {
     /// Whether this instrument requires a pitch/note
     /// Noise doesn't need pitch, but sine/square/etc. do
     pub requires_pitch: bool,
-
-    /// Whether this instrument can be used to play notes
-    /// "master" is special - it's only for master bus effects, not playable
-    pub is_playable: bool,
-
-    /// Default attack time for this instrument's envelope (in seconds)
-    pub default_attack_seconds: f32,
-
-    /// Default release time for this instrument's envelope (in seconds)
-    pub default_release_seconds: f32,
-
-    /// List of parameters this instrument accepts
-    pub parameters: &'static [InstrumentParameter],
-
-    /// Short description of the instrument
-    pub description: &'static str,
 
     /// The function that generates samples for this instrument
     /// This is a function pointer - it points to the actual code that makes sound
@@ -122,11 +87,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         name: "master",
         aliases: &[],
         requires_pitch: false,
-        is_playable: false,
-        default_attack_seconds: 0.0,
-        default_release_seconds: 0.0,
-        parameters: &[],
-        description: "Master bus - for effects only, cannot play notes",
         generate_sample_function: generate_silence,
     },
 
@@ -140,11 +100,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         name: "sine",
         aliases: &["sin"],
         requires_pitch: true,
-        is_playable: true,
-        default_attack_seconds: 0.01,
-        default_release_seconds: 0.5,
-        parameters: &[],
-        description: "Pure sine wave - smooth and mellow with no harmonics",
         generate_sample_function: generate_sine,
     },
 
@@ -158,19 +113,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         name: "trisaw",
         aliases: &["tri", "saw", "triangle", "sawtooth"],
         requires_pitch: true,
-        is_playable: true,
-        default_attack_seconds: 0.01,
-        default_release_seconds: 0.3,
-        parameters: &[
-            InstrumentParameter {
-                name: "shape",
-                min_value: -1.0,
-                max_value: 1.0,
-                default_value: 0.0,
-                description: "Waveform shape: -1.0 = saw down, 0.0 = triangle, 1.0 = saw up",
-            },
-        ],
-        description: "Morphable triangle/sawtooth wave - rich harmonics, shape-able timbre",
         generate_sample_function: generate_trisaw,
     },
 
@@ -185,11 +127,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         name: "square",
         aliases: &["sq"],
         requires_pitch: true,
-        is_playable: true,
-        default_attack_seconds: 0.005,
-        default_release_seconds: 0.2,
-        parameters: &[],
-        description: "Square wave - hollow sound with odd harmonics, anti-aliased",
         generate_sample_function: generate_square_antialiased,
     },
 
@@ -204,11 +141,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         name: "noise",
         aliases: &["white", "whitenoise"],
         requires_pitch: false,
-        is_playable: true,
-        default_attack_seconds: 0.001,
-        default_release_seconds: 0.1,
-        parameters: &[],
-        description: "White noise - random signal, good for percussion and effects",
         generate_sample_function: generate_noise,
     },
 
@@ -224,33 +156,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         name: "pulse",
         aliases: &["pwm"],
         requires_pitch: true,
-        is_playable: true,
-        default_attack_seconds: 0.005,
-        default_release_seconds: 0.3,
-        parameters: &[
-            InstrumentParameter {
-                name: "width",
-                min_value: 0.01,
-                max_value: 0.99,
-                default_value: 0.5,
-                description: "Pulse width: 0.5 = square wave, lower = thinner, higher = fatter",
-            },
-            InstrumentParameter {
-                name: "pwm_rate",
-                min_value: 0.0,
-                max_value: 20.0,
-                default_value: 0.0,
-                description: "Pulse width modulation rate in Hz (0 = no modulation)",
-            },
-            InstrumentParameter {
-                name: "pwm_depth",
-                min_value: 0.0,
-                max_value: 0.49,
-                default_value: 0.0,
-                description: "Pulse width modulation depth (how much the width varies)",
-            },
-        ],
-        description: "Pulse wave with variable width and optional PWM - classic synth sound",
         generate_sample_function: generate_pulse_antialiased,
     },
 ];
@@ -479,41 +384,6 @@ pub fn get_instrument_by_id(id: usize) -> Option<&'static InstrumentDefinition> 
     INSTRUMENT_REGISTRY.get(id)
 }
 
-/// Returns the default parameter values for an instrument
-/// This is used when an instrument is triggered without specifying all parameters
-pub fn get_default_parameters(instrument_id: usize) -> Vec<f32> {
-    if let Some(instrument) = get_instrument_by_id(instrument_id) {
-        instrument
-            .parameters
-            .iter()
-            .map(|param| param.default_value)
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
-/// Validates and clamps parameters for an instrument
-/// Ensures all parameters are within their valid ranges
-pub fn validate_parameters(instrument_id: usize, params: &[f32]) -> Vec<f32> {
-    if let Some(instrument) = get_instrument_by_id(instrument_id) {
-        let mut validated = Vec::with_capacity(instrument.parameters.len());
-
-        for (index, param_def) in instrument.parameters.iter().enumerate() {
-            let value = if index < params.len() {
-                params[index].clamp(param_def.min_value, param_def.max_value)
-            } else {
-                param_def.default_value
-            };
-            validated.push(value);
-        }
-
-        validated
-    } else {
-        params.to_vec()
-    }
-}
-
 /// Generates a sample for the given instrument
 /// This is the main entry point for sample generation
 pub fn generate_sample(
@@ -527,30 +397,6 @@ pub fn generate_sample(
     } else {
         0.0 // Unknown instrument - return silence
     }
-}
-
-/// Returns a list of all playable instrument names
-/// Useful for help text and validation messages
-pub fn get_playable_instrument_names() -> Vec<&'static str> {
-    INSTRUMENT_REGISTRY
-        .iter()
-        .filter(|inst| inst.is_playable)
-        .map(|inst| inst.name)
-        .collect()
-}
-
-/// Returns true if the instrument requires a pitch/note
-pub fn instrument_requires_pitch(instrument_id: usize) -> bool {
-    get_instrument_by_id(instrument_id)
-        .map(|inst| inst.requires_pitch)
-        .unwrap_or(true) // Default to requiring pitch for unknown instruments
-}
-
-/// Returns true if the instrument is playable (can make sound)
-pub fn is_instrument_playable(instrument_id: usize) -> bool {
-    get_instrument_by_id(instrument_id)
-        .map(|inst| inst.is_playable)
-        .unwrap_or(false)
 }
 
 // ============================================================================
@@ -573,8 +419,8 @@ mod tests {
 
     #[test]
     fn test_instrument_requires_pitch() {
-        assert!(instrument_requires_pitch(1)); // Sine requires pitch
-        assert!(!instrument_requires_pitch(4)); // Noise doesn't require pitch
+        assert!(get_instrument_by_id(1).unwrap().requires_pitch); // Sine requires pitch
+        assert!(!get_instrument_by_id(4).unwrap().requires_pitch); // Noise doesn't require pitch
     }
 
     #[test]

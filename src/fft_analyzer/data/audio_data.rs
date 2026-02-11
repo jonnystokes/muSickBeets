@@ -6,8 +6,6 @@ use std::path::Path;
 pub struct AudioData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
-    #[allow(dead_code)]
-    pub channels: u16,  // kept as metadata from original WAV file
     pub duration_seconds: f64,
 }
 
@@ -73,7 +71,6 @@ impl AudioData {
         Ok(AudioData {
             samples: mono_samples,
             sample_rate,
-            channels,
             duration_seconds,
         })
     }

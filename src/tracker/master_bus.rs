@@ -507,23 +507,6 @@ impl MasterBus {
         }
     }
 
-    /// Gets the current master amplitude
-    pub fn get_amplitude(&self) -> f32 {
-        self.effects.amplitude
-    }
-
-    /// Gets the current master pan position
-    pub fn get_pan(&self) -> f32 {
-        self.effects.pan
-    }
-
-    /// Returns true if any effects are currently enabled
-    pub fn has_active_effects(&self) -> bool {
-        self.effects.reverb1_enabled
-            || self.effects.reverb2_enabled
-            || self.effects.delay_enabled
-            || self.effects.chorus_enabled
-    }
 }
 
 // ============================================================================
