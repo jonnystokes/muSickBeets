@@ -1,34 +1,13 @@
 // ============================================================================
-// EFFECTS MODULE - Unified Audio Effects System
+// EFFECTS MODULE - Audio Effects System
 // ============================================================================
 //
-// This module provides a unified effects system where all effects can work
-// on both individual channels and the master bus.
+// Provides channel-level and master-bus audio effects processing.
 //
-// ARCHITECTURE:
-// - Each effect implements the Effect trait
-// - Effects process stereo sample pairs (left, right)
-// - Effects maintain their own state (buffers, phases, etc.)
-// - Effects can be chained in any order
-//
-// SUBMODULES:
-// - state: Effect parameter and state structures
-// - core: Basic effects (amplitude, pan)
-// - modulation: Time-based modulation (vibrato, tremolo, chorus, phaser)
-// - dynamics: Level processing (distortion, bitcrush, compressor)
-// - spatial: Space effects (reverb, delay)
-// - filters: Frequency filters (high-pass, low-pass, band-pass)
-// - processor: Effect chain processing
+// Channel effects: amplitude, pan, vibrato, tremolo, bitcrush, distortion, chorus
+// Master effects: reverb (simple + algorithmic), delay, chorus, amplitude, pan
 //
 // ============================================================================
-
-pub mod state;
-pub mod core;
-pub mod modulation;
-pub mod dynamics;
-pub mod spatial;
-pub mod filters;
-pub mod processor;
 
 use std::f32::consts::PI;
 
@@ -37,73 +16,6 @@ use std::f32::consts::PI;
 // ============================================================================
 
 pub const TWO_PI: f32 = std::f32::consts::TAU;
-
-// ============================================================================
-// STEREO SAMPLE
-// ============================================================================
-
-/// A stereo sample pair
-#[derive(Clone, Copy, Debug, Default)]
-pub struct StereoSample {
-    pub left: f32,
-    pub right: f32,
-}
-
-impl StereoSample {
-    pub fn new(left: f32, right: f32) -> Self {
-        Self { left, right }
-    }
-
-    pub fn mono(value: f32) -> Self {
-        Self { left: value, right: value }
-    }
-
-    pub fn to_mono(&self) -> f32 {
-        (self.left + self.right) * 0.5
-    }
-}
-
-// ============================================================================
-// EFFECT CONTEXT
-// ============================================================================
-
-/// Context provided to effects during processing
-#[derive(Clone, Debug)]
-pub struct EffectContext {
-    pub sample_rate: u32,
-    pub current_sample: u64,
-    pub max_buffer_samples: usize,
-    pub input_frequency: f32,
-}
-
-impl EffectContext {
-    pub fn new(sample_rate: u32, max_buffer_seconds: f32) -> Self {
-        Self {
-            sample_rate,
-            current_sample: 0,
-            max_buffer_samples: (sample_rate as f32 * max_buffer_seconds) as usize,
-            input_frequency: 0.0,
-        }
-    }
-
-    pub fn advance(&mut self) {
-        self.current_sample = self.current_sample.wrapping_add(1);
-    }
-}
-
-// ============================================================================
-// EFFECT TRAIT
-// ============================================================================
-
-/// The core trait that all effects implement
-pub trait Effect: Send + Sync {
-    fn process(&mut self, input: StereoSample, ctx: &EffectContext) -> StereoSample;
-    fn reset(&mut self);
-    fn name(&self) -> &'static str;
-    fn is_active(&self) -> bool;
-    fn set_mix(&mut self, mix: f32);
-    fn get_mix(&self) -> f32;
-}
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -115,7 +27,7 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
 }
 
 #[inline]
-pub fn soft_clip(x: f32) -> f32 {
+fn soft_clip(x: f32) -> f32 {
     if x.abs() < 1.0 {
         x - (x * x * x) / 3.0
     } else {
@@ -123,37 +35,8 @@ pub fn soft_clip(x: f32) -> f32 {
     }
 }
 
-#[inline]
-pub fn hard_clip(x: f32, min: f32, max: f32) -> f32 {
-    x.clamp(min, max)
-}
-
-#[inline]
-pub fn db_to_linear(db: f32) -> f32 {
-    10.0_f32.powf(db / 20.0)
-}
-
-#[inline]
-pub fn linear_to_db(linear: f32) -> f32 {
-    20.0 * linear.abs().max(1e-10).log10()
-}
-
-/// Calculate equal-power pan coefficients
-/// Returns (left_gain, right_gain)
-#[inline]
-pub fn pan_coefficients(pan: f32) -> (f32, f32) {
-    // pan: -1.0 = full left, 0.0 = center, 1.0 = full right
-    let pan_normalized = (pan + 1.0) * 0.5; // 0.0 to 1.0
-    let angle = pan_normalized * std::f32::consts::FRAC_PI_2; // 0 to PI/2
-    (angle.cos(), angle.sin())
-}
-
 // ============================================================================
 // CHANNEL EFFECT STATE
-// ============================================================================
-//
-// Per-channel effect state that stores all effect parameters and buffers.
-// Used by channels to process audio with effects.
 // ============================================================================
 
 /// Per-channel effect state
@@ -223,9 +106,6 @@ impl ChannelEffectState {
 
 // ============================================================================
 // MASTER EFFECT STATE
-// ============================================================================
-//
-// Master bus effect state with all reverb, delay, and chorus parameters.
 // ============================================================================
 
 /// Master bus effect state
@@ -747,41 +627,4 @@ fn apply_master_chorus(
         lerp(left, delayed_left, effects.chorus_mix),
         lerp(right, delayed_right, effects.chorus_mix),
     )
-}
-
-// ============================================================================
-// TESTS
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_channel_effects() {
-        let effects = ChannelEffectState::default();
-        assert_eq!(effects.amplitude, 1.0);
-        assert_eq!(effects.pan, 0.0);
-        assert_eq!(effects.bitcrush_bits, 16);
-    }
-
-    #[test]
-    fn test_channel_effects_processing() {
-        let mut effects = ChannelEffectState::default();
-        effects.amplitude = 0.5;
-        let (left, right) = apply_channel_effects(1.0, &mut effects, 48000);
-        // With center pan (0.0), both channels get sqrt(0.5) ≈ 0.707
-        // So 0.5 * 0.707 ≈ 0.354
-        let expected = 0.5 * (0.5_f32).sqrt();
-        assert!((left - expected).abs() < 0.01);
-        assert!((right - expected).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_master_effects_creation() {
-        let mut effects = MasterEffectState::new();
-        effects.initialize_buffers(48000);
-        assert!(!effects.reverb1_buffer.is_empty());
-        assert!(!effects.delay_buffer_left.is_empty());
-    }
 }

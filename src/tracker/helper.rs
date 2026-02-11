@@ -170,26 +170,6 @@ pub fn lerp(start_value: f32, end_value: f32, progress: f32) -> f32 {
     linear_interpolation(start_value, end_value, progress)
 }
 
-/// Smoothstep interpolation - starts slow, speeds up, then slows down at the end
-/// This creates more natural-sounding transitions than linear interpolation
-///
-/// Parameters:
-/// - start_value: The starting value
-/// - end_value: The ending value
-/// - progress: How far along the transition (0.0 to 1.0)
-///
-/// Formula: Uses 3t^2 - 2t^3 for the smoothing curve
-#[inline]
-pub fn smoothstep_interpolation(start_value: f32, end_value: f32, progress: f32) -> f32 {
-    // Clamp progress to 0-1 range to avoid overshooting
-    let clamped_progress = progress.clamp(0.0, 1.0);
-
-    // Apply smoothstep curve: 3t^2 - 2t^3
-    let smooth_progress = clamped_progress * clamped_progress * (3.0 - 2.0 * clamped_progress);
-
-    start_value + (end_value - start_value) * smooth_progress
-}
-
 /// Exponential interpolation - good for volume fades that sound natural to human ears
 /// Human hearing is logarithmic, so exponential fades sound more "linear" to us
 ///
@@ -233,98 +213,6 @@ pub fn logarithmic_interpolation(start_value: f32, end_value: f32, progress: f32
 // These functions handle common audio calculations like converting between
 // different units (decibels, linear amplitude, etc.) and audio-specific math.
 // ============================================================================
-
-/// Converts decibels to linear amplitude
-/// 0 dB = 1.0 (unity gain)
-/// -6 dB = ~0.5 (half amplitude)
-/// -20 dB = 0.1 (one tenth amplitude)
-/// -infinity dB = 0.0 (silence)
-///
-/// Formula: linear = 10^(dB / 20)
-#[inline]
-pub fn decibels_to_linear(decibels: f32) -> f32 {
-    if decibels <= -100.0 {
-        // Treat very low dB values as silence to avoid floating point issues
-        return 0.0;
-    }
-    10.0_f32.powf(decibels / 20.0)
-}
-
-/// Converts linear amplitude to decibels
-/// 1.0 = 0 dB
-/// 0.5 = ~-6 dB
-/// 0.1 = -20 dB
-/// 0.0 = -infinity dB (we return -100 to avoid actual infinity)
-///
-/// Formula: dB = 20 * log10(linear)
-#[inline]
-pub fn linear_to_decibels(linear_amplitude: f32) -> f32 {
-    if linear_amplitude <= 0.0 {
-        // Return a very low dB value instead of negative infinity
-        return -100.0;
-    }
-    20.0 * linear_amplitude.log10()
-}
-
-/// Calculates equal-power panning coefficients
-/// This ensures that the total perceived loudness stays constant as you pan
-///
-/// Parameters:
-/// - pan_position: -1.0 (full left) to 1.0 (full right), 0.0 is center
-///
-/// Returns: (left_gain, right_gain) where both are between 0.0 and 1.0
-///
-/// Uses the sine/cosine law for equal power panning
-#[inline]
-pub fn calculate_pan_coefficients(pan_position: f32) -> (f32, f32) {
-    let clamped_pan = pan_position.clamp(-1.0, 1.0);
-
-    // Convert pan position to an angle (0 to PI/2)
-    // -1.0 -> 0 (full left)
-    //  0.0 -> PI/4 (center)
-    //  1.0 -> PI/2 (full right)
-    let angle = (clamped_pan + 1.0) * PI / 4.0;
-
-    let left_gain = angle.cos();
-    let right_gain = angle.sin();
-
-    (left_gain, right_gain)
-}
-
-/// Simplified pan calculation using square root law
-/// Slightly less accurate than sine/cosine but faster to compute
-///
-/// Parameters:
-/// - pan_position: -1.0 (full left) to 1.0 (full right), 0.0 is center
-///
-/// Returns: (left_gain, right_gain)
-#[inline]
-pub fn calculate_pan_coefficients_fast(pan_position: f32) -> (f32, f32) {
-    let clamped_pan = pan_position.clamp(-1.0, 1.0);
-
-    // Square root panning law
-    let left_gain = ((1.0 - clamped_pan) * 0.5).sqrt();
-    let right_gain = ((1.0 + clamped_pan) * 0.5).sqrt();
-
-    (left_gain, right_gain)
-}
-
-/// Soft clipping function - limits the signal without harsh distortion
-/// This prevents the audio from exceeding the -1.0 to 1.0 range while
-/// adding a bit of pleasant saturation
-///
-/// Uses hyperbolic tangent (tanh) for smooth limiting
-#[inline]
-pub fn soft_clip(sample: f32) -> f32 {
-    sample.tanh()
-}
-
-/// Hard clipping - simply cuts off values outside the range
-/// This creates harsh distortion but is very fast
-#[inline]
-pub fn hard_clip(sample: f32, min_value: f32, max_value: f32) -> f32 {
-    sample.clamp(min_value, max_value)
-}
 
 // ============================================================================
 // RANDOM NUMBER GENERATION
@@ -483,47 +371,6 @@ pub fn parse_pitch_to_frequency(pitch_string: &str, frequency_table: &FrequencyT
 
     // Look up the frequency in the table
     frequency_table.get_frequency(adjusted_octave, semitone_in_octave)
-}
-
-/// Calculates frequency directly without using a lookup table
-/// This is a fallback for when the table isn't available or for frequencies
-/// outside the table's range
-///
-/// Parameters:
-/// - octave: The octave number
-/// - semitone: The semitone within the octave (0-11)
-///
-/// Returns: The frequency in Hz
-pub fn calculate_frequency_direct(octave: i32, semitone: i32) -> f32 {
-    // Calculate MIDI note number
-    // C4 is MIDI note 60, so C0 is MIDI note 12
-    let midi_note = (octave + 1) * 12 + semitone;
-
-    // Calculate frequency using the standard formula
-    let semitones_from_a4 = midi_note - A4_MIDI_NOTE;
-    A4_FREQUENCY_HZ * 2.0_f32.powf(semitones_from_a4 as f32 / 12.0)
-}
-
-// ============================================================================
-// TIME/SAMPLE CONVERSION UTILITIES
-// ============================================================================
-
-/// Converts seconds to samples at the given sample rate
-#[inline]
-pub fn seconds_to_samples(seconds: f32, sample_rate: u32) -> u32 {
-    (seconds * sample_rate as f32) as u32
-}
-
-/// Converts samples to seconds at the given sample rate
-#[inline]
-pub fn samples_to_seconds(samples: u32, sample_rate: u32) -> f32 {
-    samples as f32 / sample_rate as f32
-}
-
-/// Converts milliseconds to samples at the given sample rate
-#[inline]
-pub fn milliseconds_to_samples(milliseconds: f32, sample_rate: u32) -> u32 {
-    seconds_to_samples(milliseconds / 1000.0, sample_rate)
 }
 
 // ============================================================================
