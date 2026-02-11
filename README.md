@@ -9,6 +9,7 @@ muSickBeets is two tools in one:
 - **Tracker** - Compose music by writing simple CSV text files. Each row is a moment in time, each column is a voice/channel. No complex DAW required.
 - **FFT Analyzer** - Load WAV files, visualize their frequency content as a spectrogram, selectively reconstruct audio from chosen frequency ranges, and export the results.
 
+
 ## Features
 
 ### Tracker
@@ -29,6 +30,15 @@ muSickBeets is two tools in one:
 - CSV export/import of FFT data for external analysis
 - Waveform display with sample-level detail when zoomed in
 - Viewport controls: zoom, scroll, snap-to-view, lock-to-active
+
+## Screenshots
+
+### FFT Analyzer
+![FFT Analyzer Interface](assets/Screenshot_20260211-100628.png)
+
+
+![FFT Analyzer Interface](assets/Screenshot_20260211-102627.png)
+
 
 ## Quick Start
 
