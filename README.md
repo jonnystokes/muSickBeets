@@ -2,6 +2,9 @@
 
 A music toolkit written in Rust featuring a CSV-driven tracker synthesizer and a real-time FFT spectrogram analyzer.
 
+
+![MuSickBeest logo banner](assets/MuSickBeets.png)
+
 ## Overview
 
 muSickBeets is two tools in one:
@@ -34,17 +37,17 @@ muSickBeets is two tools in one:
 ## Screenshots
 
 ### FFT Analyzer
-![FFT Analyzer Interface](assets/Screenshot_20260211-100628.png)
+![FFT Analyzer Interface](assets/fft_screenshot_1.png)
 
 
-![FFT Analyzer Interface](assets/Screenshot_20260211-102627.png)
+![FFT Analyzer Interface](assets/fft_screenshot_2.png)
 
 ### spreadsheet music tracker 
 
-![spreadsheet music tracker ](assets/Screenshot_20260211-110930.png)
+![spreadsheet music tracker ](assets/tracker_screenshot_1.png)
 
 
-![spreadsheet music tracker ](assets/Screenshot_20260211-110243.png)
+![spreadsheet music tracker ](assets/tracker_screenshot_2.png)
 
 
 
