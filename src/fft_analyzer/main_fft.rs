@@ -34,6 +34,15 @@ use playback::audio_player::{AudioPlayer, PlaybackState};
 use ui::theme;
 use ui::tooltips::{TooltipManager, set_tooltip};
 
+// ─── Window Layout Constants ────────────────────────────────────────────────────
+const WIN_W: i32 = 1200;
+const WIN_H: i32 = 1200;
+const MENU_H: i32 = 25;
+const STATUS_H: i32 = 25;
+const SIDEBAR_W: i32 = 215;
+const SIDEBAR_INNER_W: i32 = 200;
+const SIDEBAR_INNER_H: i32 = 1100;
+
 // ─── Messages ──────────────────────────────────────────────────────────────────
 
 enum WorkerMessage {
@@ -242,7 +251,7 @@ fn main() {
     theme::apply_dark_theme();
     app::set_visual(fltk::enums::Mode::Rgb8).ok();
 
-    let mut win = Window::new(50, 50, 1400, 900, "muSickBeets FFT Analyzer");
+    let mut win = Window::new(50, 50, WIN_W, WIN_H, "muSickBeets FFT Analyzer");
     win.make_resizable(true);
     win.set_color(theme::color(theme::BG_DARK));
 
@@ -253,7 +262,7 @@ fn main() {
     //  MENU BAR
     // ═══════════════════════════════════════════════════════════════════════════
 
-    let mut menu = MenuBar::default().with_size(1400, 25);
+    let mut menu = MenuBar::default().with_size(WIN_W, MENU_H);
     menu.set_color(theme::color(theme::BG_PANEL));
     menu.set_text_color(theme::color(theme::TEXT_PRIMARY));
     menu.set_text_size(12);
@@ -265,18 +274,18 @@ fn main() {
     // ═══════════════════════════════════════════════════════════════════════════
 
     let mut root = Flex::default()
-        .with_pos(0, 25)
-        .with_size(1400, 850)
+        .with_pos(0, MENU_H)
+        .with_size(WIN_W, WIN_H - MENU_H - STATUS_H)
         .row();
 
     // ─── LEFT PANEL (Controls) ─────────────────────────────────────────────────
 
     let mut left_scroll = fltk::group::Scroll::default();
     left_scroll.set_color(theme::color(theme::BG_PANEL));
-    root.fixed(&left_scroll, 280);
+    root.fixed(&left_scroll, SIDEBAR_W);
 
     let mut left = Flex::default()
-        .with_size(275, 1200)  // tall enough for all controls
+        .with_size(SIDEBAR_INNER_W, SIDEBAR_INNER_H)  // tall enough for all controls
         .column();
     left.set_margin(5);
     left.set_pad(2);
@@ -815,8 +824,8 @@ fn main() {
     // ─── STATUS BAR ───────────────────────────────────────────────────────────
 
     let mut status_bar = Frame::default()
-        .with_pos(0, 875)
-        .with_size(1400, 25)
+        .with_pos(0, WIN_H - STATUS_H)
+        .with_size(WIN_W, STATUS_H)
         .with_label("Ready | Load an audio file to begin");
     status_bar.set_frame(FrameType::FlatBox);
     status_bar.set_color(theme::color(theme::BG_PANEL));
