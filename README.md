@@ -12,6 +12,11 @@ muSickBeets is two tools in one:
 - **Tracker** - Compose music by writing simple CSV text files. Each row is a moment in time, each column is a voice/channel. No complex DAW required.
 - **FFT Analyzer** - Load WAV files, visualize their frequency content as a spectrogram, selectively reconstruct audio from chosen frequency ranges, and export the results.
 
+## Setup
+
+follow this link to set up rust in order to compile this project. 
+
+https://rustup.rs
 
 ## Features
 
