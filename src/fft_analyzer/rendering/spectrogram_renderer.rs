@@ -123,7 +123,6 @@ impl SpectrogramRenderer {
             self.cached_buffer = vec![0u8; buffer_size];
         }
 
-        let num_frames = spec.num_frames();
         let num_bins = spec.num_bins();
 
         // Pre-compute active bins per frame based on freq range + freq count filtering
@@ -156,33 +155,38 @@ impl SpectrogramRenderer {
             })
             .collect();
 
-        // Pre-compute frequency bin for each pixel row
-        let row_bins: Vec<(usize, usize)> = (0..height)
+        // Pre-compute frequency bin for each pixel row (exact single bin, no blending)
+        let row_bins: Vec<usize> = (0..height)
             .map(|py| {
                 let flipped_py = height - 1 - py;
                 let t = flipped_py as f32 / height as f32;
                 let freq = view.y_to_freq(t);
 
                 if let Some(first_frame) = spec.frames.first() {
-                    let bin = first_frame.frequencies
-                        .iter()
-                        .position(|&f| f >= freq)
-                        .unwrap_or(num_bins.saturating_sub(1));
-                    let bin = bin.min(num_bins - 1);
-                    (bin, (bin + 1).min(num_bins))
+                    // Find nearest bin by frequency
+                    let mut best_bin = 0;
+                    let mut best_dist = f32::MAX;
+                    for (i, &f) in first_frame.frequencies.iter().enumerate() {
+                        let dist = (f - freq).abs();
+                        if dist < best_dist {
+                            best_dist = dist;
+                            best_bin = i;
+                        }
+                    }
+                    best_bin.min(num_bins - 1)
                 } else {
-                    (0, 1)
+                    0
                 }
             })
             .collect();
 
-        // Pre-compute frame index and time for each pixel column
-        let col_data: Vec<(usize, usize, f64)> = (0..width)
+        // Pre-compute frame index and time for each pixel column (exact single frame)
+        let col_data: Vec<(usize, f64)> = (0..width)
             .map(|px| {
                 let t = px as f64 / width.max(1) as f64;
                 let time = view.x_to_time(t);
                 let frame_idx = spec.frame_at_time(time).unwrap_or(0);
-                (frame_idx, (frame_idx + 1).min(num_frames), time)
+                (frame_idx, time)
             })
             .collect();
 
@@ -194,26 +198,21 @@ impl SpectrogramRenderer {
             .par_chunks_mut(row_size)
             .enumerate()
             .for_each(|(py, row)| {
-                let (bin_start, bin_end) = row_bins[py];
+                let bin = row_bins[py];
 
                 for px in 0..width {
-                    let (frame_start, frame_end, time) = col_data[px];
+                    let (frame_idx, time) = col_data[px];
 
-                    // Get max magnitude in the region, only from active bins
-                    let mut max_mag = 0.0f32;
-                    for fi in frame_start..frame_end {
-                        if let Some(frame) = spec.frames.get(fi) {
-                            for bi in bin_start..bin_end {
-                                if active_bins[fi].get(bi).copied().unwrap_or(false) {
-                                    if let Some(&mag) = frame.magnitudes.get(bi) {
-                                        if mag > max_mag {
-                                            max_mag = mag;
-                                        }
-                                    }
-                                }
-                            }
+                    // Get exact magnitude for this single bin/frame
+                    let max_mag = if let Some(frame) = spec.frames.get(frame_idx) {
+                        if active_bins[frame_idx].get(bin).copied().unwrap_or(false) {
+                            frame.magnitudes.get(bin).copied().unwrap_or(0.0)
+                        } else {
+                            0.0
                         }
-                    }
+                    } else {
+                        0.0
+                    };
 
                     let (r, g, b) = lut.lookup(max_mag);
 

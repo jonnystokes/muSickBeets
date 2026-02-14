@@ -12,7 +12,7 @@ mod callbacks_ui;
 mod callbacks_draw;
 mod callbacks_nav;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 
@@ -29,18 +29,35 @@ use processing::reconstructor::Reconstructor;
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> SharedCallbacks {
+    // Track whether the user has manually edited the freq count field.
+    // If not, it always syncs to max bins. If yes, it only clamps down.
+    let freq_count_user_adjusted = Rc::new(Cell::new(false));
+
+    // Set callback on the freq count input to detect manual edits
+    {
+        let flag = freq_count_user_adjusted.clone();
+        let mut input_freq_count = widgets.input_freq_count.clone();
+        input_freq_count.set_callback(move |_| {
+            flag.set(true);
+        });
+    }
+
     let update_info: SharedCb = {
         let state = state.clone();
         let mut lbl_info = widgets.lbl_info.clone();
         let mut input_freq_count = widgets.input_freq_count.clone();
+        let flag = freq_count_user_adjusted.clone();
         Rc::new(RefCell::new(Box::new(move || {
             let st = state.borrow();
             let info = st.derived_info();
             lbl_info.set_label(&info.format_info());
 
-            // Clamp freq count display to max
             let current: usize = input_freq_count.value().parse().unwrap_or(info.freq_bins);
-            if current > info.freq_bins {
+            if !flag.get() {
+                // User hasn't manually adjusted: always track max
+                input_freq_count.set_value(&info.freq_bins.to_string());
+            } else if current > info.freq_bins {
+                // User adjusted, but current exceeds new max: clamp down
                 input_freq_count.set_value(&info.freq_bins.to_string());
             }
         })))

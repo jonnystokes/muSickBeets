@@ -48,6 +48,15 @@ fn setup_open_callback(
 
     let mut btn_open = widgets.btn_open.clone();
     btn_open.set_callback(move |_| {
+        // Don't allow opening a new file while processing
+        {
+            let st = state.borrow();
+            if st.is_processing {
+                status_bar.set_label("Still processing... please wait.");
+                return;
+            }
+        }
+
         let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
         chooser.set_filter("*.wav");
         chooser.show();
