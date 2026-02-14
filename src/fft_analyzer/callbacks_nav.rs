@@ -167,7 +167,7 @@ pub fn setup_zoom_callbacks(
             let mut st = state.borrow_mut();
             let range = st.view.visible_time_range();
             let center = (st.view.time_min_sec + st.view.time_max_sec) / 2.0;
-            let new_range = (range / 1.5).max(0.001);
+            let new_range = (range / st.time_zoom_factor as f64).max(0.001);
             st.view.time_min_sec = (center - new_range / 2.0).max(st.view.data_time_min_sec);
             st.view.time_max_sec = st.view.time_min_sec + new_range;
             if st.view.time_max_sec > st.view.data_time_max_sec {
@@ -194,7 +194,7 @@ pub fn setup_zoom_callbacks(
             let range = st.view.visible_time_range();
             let data_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
             let center = (st.view.time_min_sec + st.view.time_max_sec) / 2.0;
-            let new_range = (range * 1.5).min(data_range);
+            let new_range = (range * st.time_zoom_factor as f64).min(data_range);
             st.view.time_min_sec = (center - new_range / 2.0).max(st.view.data_time_min_sec);
             st.view.time_max_sec = st.view.time_min_sec + new_range;
             if st.view.time_max_sec > st.view.data_time_max_sec {
@@ -219,7 +219,7 @@ pub fn setup_zoom_callbacks(
             let mut st = state.borrow_mut();
             let range = st.view.visible_freq_range();
             let center = (st.view.freq_min_hz + st.view.freq_max_hz) / 2.0;
-            let new_range = (range / 1.5).max(10.0);
+            let new_range = (range / st.freq_zoom_factor).max(10.0);
             st.view.freq_min_hz = (center - new_range / 2.0).max(1.0);
             st.view.freq_max_hz = (st.view.freq_min_hz + new_range).min(st.view.data_freq_max_hz);
             st.spec_renderer.invalidate();
@@ -237,7 +237,7 @@ pub fn setup_zoom_callbacks(
         btn.set_callback(move |_| {
             let mut st = state.borrow_mut();
             let range = st.view.visible_freq_range();
-            let new_range = (range * 1.5).min(st.view.data_freq_max_hz - 1.0);
+            let new_range = (range * st.freq_zoom_factor).min(st.view.data_freq_max_hz - 1.0);
             let center = (st.view.freq_min_hz + st.view.freq_max_hz) / 2.0;
             st.view.freq_min_hz = (center - new_range / 2.0).max(1.0);
             st.view.freq_max_hz = (st.view.freq_min_hz + new_range).min(st.view.data_freq_max_hz);

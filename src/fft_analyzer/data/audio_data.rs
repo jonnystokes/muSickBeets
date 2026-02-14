@@ -108,4 +108,22 @@ impl AudioData {
     pub fn nyquist_freq(&self) -> f32 {
         self.sample_rate as f32 / 2.0
     }
+
+    /// Peak-normalize audio so the loudest sample reaches `target_peak` (e.g. 0.97).
+    /// Returns the gain factor applied, or 1.0 if no normalization was needed.
+    pub fn normalize(&mut self, target_peak: f32) -> f32 {
+        let peak = self.samples.iter()
+            .map(|s| s.abs())
+            .fold(0.0_f32, f32::max);
+
+        if peak <= 0.0 || (peak - target_peak).abs() < 0.01 {
+            return 1.0;
+        }
+
+        let gain = target_peak / peak;
+        for s in &mut self.samples {
+            *s *= gain;
+        }
+        gain
+    }
 }

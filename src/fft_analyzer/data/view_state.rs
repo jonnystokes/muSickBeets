@@ -1,7 +1,9 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum FreqScale {
     Linear,
     Log,
+    Power(f32), // 0.0 = linear, 1.0 = log, anything between = blend
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,14 +78,14 @@ pub struct ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
-            freq_min_hz: 0.0,
-            freq_max_hz: 5000.0,
-            freq_scale: FreqScale::Log,
+            freq_min_hz: 100.0,
+            freq_max_hz: 2000.0,
+            freq_scale: FreqScale::Power(0.5),
 
             time_min_sec: 0.0,
             time_max_sec: 0.0,
 
-            threshold_db: -124.0,
+            threshold_db: -87.0,
             db_ceiling: 0.0,
             brightness: 1.0,
             gamma: 2.2,
@@ -102,33 +104,72 @@ impl Default for ViewState {
 }
 
 impl ViewState {
-    /// Map a normalized t (0..1, bottom to top) to frequency in Hz
+    /// Map a normalized t (0..1, bottom to top) to frequency in Hz.
+    /// Power(p) interpolates between linear (0.0) and log (1.0).
     pub fn y_to_freq(&self, t: f32) -> f32 {
+        let min = self.freq_min_hz.max(1.0);
+        let max = self.freq_max_hz.max(min + 1.0);
+
         match self.freq_scale {
             FreqScale::Linear => {
-                self.freq_min_hz + (self.freq_max_hz - self.freq_min_hz) * t
+                min + (max - min) * t
             }
             FreqScale::Log => {
-                let min = self.freq_min_hz.max(1.0);
-                let max = self.freq_max_hz.max(min + 1.0);
                 min * (max / min).powf(t)
+            }
+            FreqScale::Power(power) => {
+                let p = power.clamp(0.0, 1.0);
+                if p <= 0.001 {
+                    min + (max - min) * t
+                } else if p >= 0.999 {
+                    min * (max / min).powf(t)
+                } else {
+                    let linear_freq = min + (max - min) * t;
+                    let log_freq = min * (max / min).powf(t);
+                    // Geometric interpolation for smooth blending
+                    linear_freq.powf(1.0 - p) * log_freq.powf(p)
+                }
             }
         }
     }
 
     /// Map a frequency in Hz to normalized t (0..1, bottom to top)
     pub fn freq_to_y(&self, freq_hz: f32) -> f32 {
+        let min = self.freq_min_hz.max(1.0);
+        let max = self.freq_max_hz.max(min + 1.0);
+        if freq_hz <= min { return 0.0; }
+        if freq_hz >= max { return 1.0; }
+
         match self.freq_scale {
             FreqScale::Linear => {
-                let range = self.freq_max_hz - self.freq_min_hz;
-                if range <= 0.0 { return 0.0; }
-                ((freq_hz - self.freq_min_hz) / range).clamp(0.0, 1.0)
+                ((freq_hz - min) / (max - min)).clamp(0.0, 1.0)
             }
             FreqScale::Log => {
-                let min = self.freq_min_hz.max(1.0);
-                let max = self.freq_max_hz.max(min + 1.0);
-                if freq_hz <= min { return 0.0; }
                 ((freq_hz / min).ln() / (max / min).ln()).clamp(0.0, 1.0)
+            }
+            FreqScale::Power(power) => {
+                let p = power.clamp(0.0, 1.0);
+                if p <= 0.001 {
+                    ((freq_hz - min) / (max - min)).clamp(0.0, 1.0)
+                } else if p >= 0.999 {
+                    ((freq_hz / min).ln() / (max / min).ln()).clamp(0.0, 1.0)
+                } else {
+                    // Binary search for inverse of blended forward mapping
+                    let mut lo = 0.0_f32;
+                    let mut hi = 1.0_f32;
+                    for _ in 0..32 {
+                        let mid = (lo + hi) / 2.0;
+                        let linear_f = min + (max - min) * mid;
+                        let log_f = min * (max / min).powf(mid);
+                        let f = linear_f.powf(1.0 - p) * log_f.powf(p);
+                        if f < freq_hz {
+                            lo = mid;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    ((lo + hi) / 2.0).clamp(0.0, 1.0)
+                }
             }
         }
     }

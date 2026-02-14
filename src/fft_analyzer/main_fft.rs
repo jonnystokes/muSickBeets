@@ -11,6 +11,7 @@ mod callbacks_file;
 mod callbacks_ui;
 mod callbacks_draw;
 mod callbacks_nav;
+mod settings;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -144,6 +145,9 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn main() {
+    // Load settings from INI (or create default INI if missing)
+    let cfg = settings::Settings::load_or_create();
+
     let app = app::App::default();
 
     // Apply dark theme
@@ -151,7 +155,31 @@ fn main() {
     app::set_visual(fltk::enums::Mode::Rgb8).ok();
 
     let (mut win, widgets) = layout::build_ui();
-    let state = Rc::new(RefCell::new(AppState::new()));
+
+    // Apply settings to state
+    let state = {
+        let mut st = AppState::new();
+        st.fft_params.window_length = cfg.window_length;
+        st.fft_params.overlap_percent = cfg.overlap_percent;
+        st.fft_params.use_center = cfg.center_pad;
+        st.view.freq_min_hz = cfg.view_freq_min_hz;
+        st.view.freq_max_hz = cfg.view_freq_max_hz;
+        st.view.freq_scale = data::FreqScale::Power(cfg.freq_scale_power);
+        st.view.threshold_db = cfg.threshold_db;
+        st.view.brightness = cfg.brightness;
+        st.view.gamma = cfg.gamma;
+        st.view.colormap = data::ColormapId::from_index(cfg.colormap_index());
+        st.view.recon_freq_min_hz = cfg.recon_freq_min_hz;
+        st.view.recon_freq_max_hz = cfg.recon_freq_max_hz;
+        st.view.recon_freq_count = cfg.recon_freq_count;
+        st.lock_to_active = cfg.lock_to_active;
+        st.time_zoom_factor = cfg.time_zoom_factor;
+        st.freq_zoom_factor = cfg.freq_zoom_factor;
+        st.mouse_zoom_factor = cfg.mouse_zoom_factor;
+        st.normalize_audio = cfg.normalize_audio;
+        st.normalize_peak = cfg.normalize_peak;
+        Rc::new(RefCell::new(st))
+    };
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
 
     // Create shared callbacks
@@ -329,7 +357,14 @@ fn main() {
                             tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
                         });
                     }
-                    WorkerMessage::ReconstructionComplete(reconstructed) => {
+                    WorkerMessage::ReconstructionComplete(mut reconstructed) => {
+                        // Normalize reconstructed audio for proper playback volume
+                        {
+                            let st = state.borrow();
+                            if st.normalize_audio {
+                                reconstructed.normalize(st.normalize_peak);
+                            }
+                        }
                         let recon_result = {
                             let mut st = state.borrow_mut();
                             match st.audio_player.load_audio(&reconstructed) {

@@ -32,7 +32,7 @@ impl Default for FftParams {
             window_length: 8192,
             overlap_percent: 75.0,
             window_type: WindowType::Hann,
-            use_center: true,
+            use_center: false,
             start_time: 0.0,
             stop_time: 0.0,
             time_unit: TimeUnit::Seconds,
