@@ -229,7 +229,7 @@ pub fn build_ui() -> (Window, Widgets) {
     set_tooltip(&mut btn_seg_plus, "Double the segment size.\nLarger segments = better frequency resolution, worse time resolution.");
     seg_row.fixed(&btn_seg_plus, 30);
 
-    let mut lbl_seg_value = Frame::default().with_label("2048 smp / 42.67 ms");
+    let mut lbl_seg_value = Frame::default().with_label("8192 smp / 170.67 ms");
     lbl_seg_value.set_label_color(theme::color(theme::TEXT_PRIMARY));
     lbl_seg_value.set_label_size(10);
     lbl_seg_value.set_align(Align::Inside | Align::Left);
@@ -399,7 +399,7 @@ pub fn build_ui() -> (Window, Widgets) {
     left.fixed(&lbl_fc, 16);
 
     let mut input_freq_count = Input::default();
-    input_freq_count.set_value("513");
+    input_freq_count.set_value("4097");
     input_freq_count.set_color(theme::color(theme::BG_WIDGET));
     input_freq_count.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_freq_count.deactivate();

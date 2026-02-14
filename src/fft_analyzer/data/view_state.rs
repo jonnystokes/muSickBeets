@@ -89,14 +89,14 @@ impl Default for ViewState {
             gamma: 2.2,
             colormap: ColormapId::Classic,
 
-            recon_freq_count: 513,
+            recon_freq_count: 4097,
             recon_freq_min_hz: 0.0,
             recon_freq_max_hz: 5000.0,
 
             data_freq_max_hz: 5000.0,
             data_time_min_sec: 0.0,
             data_time_max_sec: 0.0,
-            max_freq_bins: 513,
+            max_freq_bins: 4097,
         }
     }
 }

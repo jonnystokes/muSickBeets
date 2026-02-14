@@ -115,7 +115,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
 
     // Read optional reconstruction params (fields 9-11, backward-compatible)
     let recon_params = if metadata.len() >= 12 {
-        let freq_count: usize = metadata[9].parse().unwrap_or(513);
+        let freq_count: usize = metadata[9].parse().unwrap_or(4097);
         let freq_min: f32 = metadata[10].parse().unwrap_or(0.0);
         let freq_max: f32 = metadata[11].parse().unwrap_or(5000.0);
         Some((freq_count, freq_min, freq_max))
