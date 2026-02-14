@@ -56,6 +56,7 @@ pub struct ViewState {
 
     // Display parameters
     pub threshold_db: f32,
+    pub db_ceiling: f32,
     pub brightness: f32,
     pub gamma: f32,
     pub colormap: ColormapId,
@@ -75,26 +76,27 @@ pub struct ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
-            freq_min_hz: 20.0,
-            freq_max_hz: 24000.0,
+            freq_min_hz: 0.0,
+            freq_max_hz: 5000.0,
             freq_scale: FreqScale::Log,
 
             time_min_sec: 0.0,
             time_max_sec: 0.0,
 
             threshold_db: -124.0,
+            db_ceiling: 0.0,
             brightness: 1.0,
             gamma: 2.2,
             colormap: ColormapId::Classic,
 
-            recon_freq_count: 1025,
+            recon_freq_count: 513,
             recon_freq_min_hz: 0.0,
-            recon_freq_max_hz: 24000.0,
+            recon_freq_max_hz: 5000.0,
 
-            data_freq_max_hz: 24000.0,
+            data_freq_max_hz: 5000.0,
             data_time_min_sec: 0.0,
             data_time_max_sec: 0.0,
-            max_freq_bins: 1025,
+            max_freq_bins: 513,
         }
     }
 }
@@ -144,7 +146,7 @@ impl ViewState {
     }
 
     pub fn reset_zoom(&mut self) {
-        self.freq_min_hz = 20.0;
+        self.freq_min_hz = 0.0;
         self.freq_max_hz = self.data_freq_max_hz;
         self.time_min_sec = self.data_time_min_sec;
         self.time_max_sec = self.data_time_max_sec;

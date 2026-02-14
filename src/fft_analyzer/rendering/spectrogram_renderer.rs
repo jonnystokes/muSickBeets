@@ -31,7 +31,7 @@ impl SpectrogramRenderer {
     }
 
     pub fn update_lut(&mut self, view: &ViewState) {
-        if self.color_lut.set_params(view.threshold_db, view.brightness, view.gamma, view.colormap) {
+        if self.color_lut.set_params(view.threshold_db, view.db_ceiling, view.brightness, view.gamma, view.colormap) {
             self.cache_valid = false;
         }
     }
@@ -44,6 +44,7 @@ impl SpectrogramRenderer {
         hash = hash.wrapping_mul(31).wrapping_add((view.time_max_sec * 10000.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add(view.freq_scale as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.threshold_db * 100.0) as u64);
+        hash = hash.wrapping_mul(31).wrapping_add((view.db_ceiling * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.brightness * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.gamma * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add(view.colormap as u64);

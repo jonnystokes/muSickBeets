@@ -329,12 +329,12 @@ pub fn build_ui() -> (Window, Widgets) {
 
     // Threshold
     let mut slider_threshold = HorNiceSlider::default();
-    slider_threshold.set_minimum(-120.0);
+    slider_threshold.set_minimum(-200.0);
     slider_threshold.set_maximum(0.0);
-    slider_threshold.set_value(-80.0);
+    slider_threshold.set_value(-124.0);
     slider_threshold.set_color(theme::color(theme::BG_WIDGET));
     slider_threshold.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_threshold, "Minimum dB level to display.\nFunctional range: -120 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.");
+    set_tooltip(&mut slider_threshold, "Minimum dB level to display.\nFunctional range: -200 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.");
     left.fixed(&slider_threshold, 22);
 
     let mut lbl_threshold_val = Frame::default().with_label("Threshold: -124 dB");
@@ -399,7 +399,7 @@ pub fn build_ui() -> (Window, Widgets) {
     left.fixed(&lbl_fc, 16);
 
     let mut input_freq_count = Input::default();
-    input_freq_count.set_value("1025");
+    input_freq_count.set_value("513");
     input_freq_count.set_color(theme::color(theme::BG_WIDGET));
     input_freq_count.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_freq_count.deactivate();
@@ -430,7 +430,7 @@ pub fn build_ui() -> (Window, Widgets) {
     left.fixed(&lbl_freq_max, 16);
 
     let mut input_recon_freq_max = FloatInput::default();
-    input_recon_freq_max.set_value("24000");
+    input_recon_freq_max.set_value("5000");
     input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_max.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_recon_freq_max.deactivate();

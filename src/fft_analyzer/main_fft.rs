@@ -242,6 +242,12 @@ fn main() {
 
                             st.view.max_freq_bins = st.fft_params.num_frequency_bins();
 
+                            // Compute adaptive dB ceiling from actual data max amplitude
+                            let max_mag = spectrogram.max_magnitude();
+                            if max_mag > 0.0 {
+                                st.view.db_ceiling = 20.0 * max_mag.log10();
+                            }
+
                             let spec_arc = Arc::new(spectrogram);
                             let (min_t, max_t, max_f) = (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
 
