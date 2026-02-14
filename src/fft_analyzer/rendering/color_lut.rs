@@ -182,6 +182,6 @@ impl ColorLUT {
 
 impl Default for ColorLUT {
     fn default() -> Self {
-        Self::new(-80.0, 1.0, 2.2, ColormapId::Classic)
+        Self::new(-124.0, 1.0, 2.2, ColormapId::Viridis)
     }
 }

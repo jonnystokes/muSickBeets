@@ -72,10 +72,14 @@ impl FftEngine {
                 let mut phases = Vec::with_capacity(num_bins);
 
                 for (bin_idx, complex_val) in spectrum.iter().enumerate() {
-                    frequencies.push(bin_idx as f32 * freq_resolution);
-                    magnitudes.push(complex_val.norm());
-                    phases.push(complex_val.arg());
-                }
+    frequencies.push(bin_idx as f32 * freq_resolution);
+    
+    // Normalize magnitude by FFT size and scale by 2 for non-DC/Nyquist bins
+    let amplitude_scale = if bin_idx == 0 || bin_idx == num_bins - 1 { 1.0 } else { 2.0 };
+    magnitudes.push((complex_val.norm() / n_fft as f32) * amplitude_scale);
+    
+    phases.push(complex_val.arg());
+}
 
                 FftFrame {
                     time_seconds,
@@ -89,3 +93,4 @@ impl FftEngine {
         Spectrogram::from_frames(frames)
     }
 }
+

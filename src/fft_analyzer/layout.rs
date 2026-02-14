@@ -337,7 +337,7 @@ pub fn build_ui() -> (Window, Widgets) {
     set_tooltip(&mut slider_threshold, "Minimum dB level to display.\nFunctional range: -120 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.");
     left.fixed(&slider_threshold, 22);
 
-    let mut lbl_threshold_val = Frame::default().with_label("Threshold: -80 dB");
+    let mut lbl_threshold_val = Frame::default().with_label("Threshold: -124 dB");
     lbl_threshold_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
     lbl_threshold_val.set_label_size(11);
     lbl_threshold_val.set_align(Align::Inside | Align::Right);

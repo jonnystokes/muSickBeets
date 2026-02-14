@@ -82,7 +82,7 @@ impl Default for ViewState {
             time_min_sec: 0.0,
             time_max_sec: 0.0,
 
-            threshold_db: -80.0,
+            threshold_db: -124.0,
             brightness: 1.0,
             gamma: 2.2,
             colormap: ColormapId::Classic,
