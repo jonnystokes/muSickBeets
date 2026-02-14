@@ -42,7 +42,11 @@ impl SpectrogramRenderer {
         hash = hash.wrapping_mul(31).wrapping_add((view.freq_max_hz * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.time_min_sec * 10000.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.time_max_sec * 10000.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(view.freq_scale as u64);
+        hash = hash.wrapping_mul(31).wrapping_add(match view.freq_scale {
+            crate::data::FreqScale::Linear => 0,
+            crate::data::FreqScale::Log => 1,
+            crate::data::FreqScale::Power(p) => (p * 10000.0) as u64 + 2,
+        });
         hash = hash.wrapping_mul(31).wrapping_add((view.threshold_db * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.db_ceiling * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.brightness * 100.0) as u64);
