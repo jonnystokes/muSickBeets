@@ -18,8 +18,15 @@
 - [ ] Clearer segmentation controls UI (show total segments, samples/segment, bins/segment more prominently)
 - [ ] More prominent display of derived values (freq resolution, time resolution, etc.)
 - [ ] Gradient/color ramp editing from SebLague (custom gradient support)
+
 - [ ] Save settings back to INI when changed in UI (currently only loads on startup)
-- [ ] Auto-regenerate mode (like SebLague's autoRegenerate)
+    #  no don't do this one. Don't automatically change the settings file. instead you would have a safe as default button.
+    
+- [ ] Auto-regenerate mode (like SebLague's autoRegenerate) 
+# we have to be careful about regenerating too often because I don't have GPU hardware access and everything must be software rendered. 
+
+fix bugs. 
+
 
 ## Settings File Location
 `muSickBeets.ini` in the working directory (created on first run)
@@ -30,3 +37,12 @@
 - Audio normalization happens both on file load AND after reconstruction
 - Zoom factors stored in AppState, read from settings
 - Freq axis labels now use smart adaptive spacing with "nice number" candidates
+
+
+
+## bugs to fix .
+if I'm currently dragging the audio player cursor around back and forth with my mouse and it touches the end it stops playing so it should only stop playing if it touches the end and I'm not holding the mouse button down on the spectrogram or time slider. 
+
+I tried opening an audio file while an audio file was already open and it froze the program. 
+
+
