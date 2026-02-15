@@ -41,8 +41,23 @@ fix bugs.
 
 
 ## bugs to fix .
+
 if I'm currently dragging the audio player cursor around back and forth with my mouse and it touches the end it stops playing so it should only stop playing if it touches the end and I'm not holding the mouse button down on the spectrogram or time slider. 
 
 I tried opening an audio file while an audio file was already open and it froze the program. 
+sometimes it works smoothly and I can open a different audio file while one is currently open and sometimes it just freezes. 
+maybe some debugging. 
+when I click the Open wave button it should trigger writing to the terminal all of the current statuses of all the threads so we know what they're doing. 
+how do you come up with the most efficient way of doing that while getting the most information for the state of our whole program. 
+
+
+
+## features to add
+
+file name of currently open sound file should be added to the title of the window.
+
+
+
+
 
 
