@@ -48,6 +48,15 @@ fn setup_open_callback(
 
     let mut btn_open = widgets.btn_open.clone();
     btn_open.set_callback(move |_| {
+        // Don't allow opening a new file while processing
+        {
+            let st = state.borrow();
+            if st.is_processing {
+                status_bar.set_label("Still processing... please wait.");
+                return;
+            }
+        }
+
         let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
         chooser.set_filter("*.wav");
         chooser.show();
@@ -61,7 +70,18 @@ fn setup_open_callback(
         app::awake();
 
         match AudioData::from_wav_file(&filename) {
-            Ok(audio) => {
+            Ok(mut audio) => {
+                // Peak normalize audio to fix quiet playback
+                {
+                    let st = state.borrow();
+                    if st.normalize_audio {
+                        let gain = audio.normalize(st.normalize_peak);
+                        if gain != 1.0 {
+                            eprintln!("Audio normalized: gain = {:.3}x", gain);
+                        }
+                    }
+                }
+
                 let duration = audio.duration_seconds;
                 let nyquist = audio.nyquist_freq();
                 let sample_rate = audio.sample_rate;
@@ -81,8 +101,9 @@ fn setup_open_callback(
                     st.view.time_min_sec = 0.0;
                     st.view.time_max_sec = duration;
                     st.view.data_freq_max_hz = nyquist;
-                    st.view.freq_max_hz = nyquist;
-                    st.view.recon_freq_max_hz = nyquist;
+                    st.view.freq_min_hz = 100.0_f32.min(nyquist);
+                    st.view.freq_max_hz = 2000.0_f32.min(nyquist);
+                    st.view.recon_freq_max_hz = 5000.0_f32.min(nyquist);
                     st.view.max_freq_bins = st.fft_params.num_frequency_bins();
                     st.view.recon_freq_count = st.fft_params.num_frequency_bins();
 
@@ -97,7 +118,7 @@ fn setup_open_callback(
                 }
 
                 input_stop.set_value(&format!("{:.5}", duration));
-                input_recon_freq_max.set_value(&format!("{:.0}", nyquist));
+                input_recon_freq_max.set_value(&format!("{:.0}", 5000.0_f32.min(nyquist)));
 
                 (enable_audio_widgets.borrow_mut())();
                 (update_info.borrow_mut())();
@@ -233,11 +254,17 @@ fn setup_load_fft_callback(
                     let mut st = state.borrow_mut();
                     st.fft_params = imported_params.clone();
 
+                    // Compute adaptive dB ceiling from actual data max amplitude
+                    let max_mag = imported_spec.max_magnitude();
+                    if max_mag > 0.0 {
+                        st.view.db_ceiling = 20.0 * max_mag.log10();
+                    }
+
                     st.view.time_min_sec = spec_min_time;
                     st.view.time_max_sec = spec_max_time;
                     st.view.data_time_min_sec = spec_min_time;
                     st.view.data_time_max_sec = spec_max_time;
-                    st.view.freq_max_hz = imported_spec.max_freq;
+                    st.view.freq_max_hz = 5000.0_f32.min(imported_spec.max_freq);
                     st.view.data_freq_max_hz = imported_spec.max_freq;
 
                     // Restore reconstruction params if present

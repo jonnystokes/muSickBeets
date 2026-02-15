@@ -59,6 +59,14 @@ impl Spectrogram {
             .position(|&f| f >= freq_hz)
     }
 
+    /// Find the maximum magnitude across all frames and bins
+    pub fn max_magnitude(&self) -> f32 {
+        self.frames.iter()
+            .flat_map(|f| f.magnitudes.iter())
+            .copied()
+            .fold(0.0f32, f32::max)
+    }
+
     /// Find the frame index closest to the given time
     pub fn frame_at_time(&self, time_seconds: f64) -> Option<usize> {
         if self.frames.is_empty() {

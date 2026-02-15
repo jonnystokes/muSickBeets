@@ -165,18 +165,28 @@ pub fn setup_display_callbacks(
         });
     }
 
-    // Scale
+    // Freq Scale Power slider (0.0 = linear, 1.0 = log)
     {
+        let mut lbl = widgets.lbl_scale_val.clone();
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
+        let throttle = Rc::new(RefCell::new(UpdateThrottle::new(50)));
 
-        let mut scale_choice = widgets.scale_choice.clone();
-        scale_choice.set_callback(move |c| {
-            let mut st = state.borrow_mut();
-            st.view.freq_scale = if c.value() == 0 { FreqScale::Log } else { FreqScale::Linear };
-            st.spec_renderer.invalidate();
-            drop(st);
-            spec_display.redraw();
+        let mut slider_scale = widgets.slider_scale.clone();
+        slider_scale.set_callback(move |s| {
+            let val = s.value() as f32;
+            let label = if val <= 0.01 { "Scale: Linear".to_string() }
+                       else if val >= 0.99 { "Scale: Log".to_string() }
+                       else { format!("Scale: {:.0}%", val * 100.0) };
+            lbl.set_label(&label);
+            state.borrow_mut().view.freq_scale = FreqScale::Power(val);
+
+            if throttle.borrow_mut().should_update() {
+                state.borrow_mut().spec_renderer.invalidate();
+                spec_display.redraw();
+                freq_axis.redraw();
+            }
         });
     }
 

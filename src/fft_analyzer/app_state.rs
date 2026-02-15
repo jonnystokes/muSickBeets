@@ -37,6 +37,15 @@ pub struct AppState {
     pub has_audio: bool,
 
     pub tooltip_mgr: TooltipManager,
+
+    // Zoom factors (configurable via INI)
+    pub time_zoom_factor: f32,
+    pub freq_zoom_factor: f32,
+    pub mouse_zoom_factor: f32,
+
+    // Audio normalization settings
+    pub normalize_audio: bool,
+    pub normalize_peak: f32,
 }
 
 impl AppState {
@@ -60,6 +69,13 @@ impl AppState {
             has_audio: false,
 
             tooltip_mgr: TooltipManager::new(),
+
+            time_zoom_factor: 1.5,
+            freq_zoom_factor: 1.5,
+            mouse_zoom_factor: 1.2,
+
+            normalize_audio: true,
+            normalize_peak: 0.97,
         }
     }
 

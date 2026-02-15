@@ -11,8 +11,9 @@ mod callbacks_file;
 mod callbacks_ui;
 mod callbacks_draw;
 mod callbacks_nav;
+mod settings;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 
@@ -29,18 +30,35 @@ use processing::reconstructor::Reconstructor;
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> SharedCallbacks {
+    // Track whether the user has manually edited the freq count field.
+    // If not, it always syncs to max bins. If yes, it only clamps down.
+    let freq_count_user_adjusted = Rc::new(Cell::new(false));
+
+    // Set callback on the freq count input to detect manual edits
+    {
+        let flag = freq_count_user_adjusted.clone();
+        let mut input_freq_count = widgets.input_freq_count.clone();
+        input_freq_count.set_callback(move |_| {
+            flag.set(true);
+        });
+    }
+
     let update_info: SharedCb = {
         let state = state.clone();
         let mut lbl_info = widgets.lbl_info.clone();
         let mut input_freq_count = widgets.input_freq_count.clone();
+        let flag = freq_count_user_adjusted.clone();
         Rc::new(RefCell::new(Box::new(move || {
             let st = state.borrow();
             let info = st.derived_info();
             lbl_info.set_label(&info.format_info());
 
-            // Clamp freq count display to max
             let current: usize = input_freq_count.value().parse().unwrap_or(info.freq_bins);
-            if current > info.freq_bins {
+            if !flag.get() {
+                // User hasn't manually adjusted: always track max
+                input_freq_count.set_value(&info.freq_bins.to_string());
+            } else if current > info.freq_bins {
+                // User adjusted, but current exceeds new max: clamp down
                 input_freq_count.set_value(&info.freq_bins.to_string());
             }
         })))
@@ -127,6 +145,9 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn main() {
+    // Load settings from INI (or create default INI if missing)
+    let cfg = settings::Settings::load_or_create();
+
     let app = app::App::default();
 
     // Apply dark theme
@@ -134,7 +155,31 @@ fn main() {
     app::set_visual(fltk::enums::Mode::Rgb8).ok();
 
     let (mut win, widgets) = layout::build_ui();
-    let state = Rc::new(RefCell::new(AppState::new()));
+
+    // Apply settings to state
+    let state = {
+        let mut st = AppState::new();
+        st.fft_params.window_length = cfg.window_length;
+        st.fft_params.overlap_percent = cfg.overlap_percent;
+        st.fft_params.use_center = cfg.center_pad;
+        st.view.freq_min_hz = cfg.view_freq_min_hz;
+        st.view.freq_max_hz = cfg.view_freq_max_hz;
+        st.view.freq_scale = data::FreqScale::Power(cfg.freq_scale_power);
+        st.view.threshold_db = cfg.threshold_db;
+        st.view.brightness = cfg.brightness;
+        st.view.gamma = cfg.gamma;
+        st.view.colormap = data::ColormapId::from_index(cfg.colormap_index());
+        st.view.recon_freq_min_hz = cfg.recon_freq_min_hz;
+        st.view.recon_freq_max_hz = cfg.recon_freq_max_hz;
+        st.view.recon_freq_count = cfg.recon_freq_count;
+        st.lock_to_active = cfg.lock_to_active;
+        st.time_zoom_factor = cfg.time_zoom_factor;
+        st.freq_zoom_factor = cfg.freq_zoom_factor;
+        st.mouse_zoom_factor = cfg.mouse_zoom_factor;
+        st.normalize_audio = cfg.normalize_audio;
+        st.normalize_peak = cfg.normalize_peak;
+        Rc::new(RefCell::new(st))
+    };
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
 
     // Create shared callbacks
@@ -242,6 +287,12 @@ fn main() {
 
                             st.view.max_freq_bins = st.fft_params.num_frequency_bins();
 
+                            // Compute adaptive dB ceiling from actual data max amplitude
+                            let max_mag = spectrogram.max_magnitude();
+                            if max_mag > 0.0 {
+                                st.view.db_ceiling = 20.0 * max_mag.log10();
+                            }
+
                             let spec_arc = Arc::new(spectrogram);
                             let (min_t, max_t, max_f) = (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
 
@@ -306,7 +357,14 @@ fn main() {
                             tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
                         });
                     }
-                    WorkerMessage::ReconstructionComplete(reconstructed) => {
+                    WorkerMessage::ReconstructionComplete(mut reconstructed) => {
+                        // Normalize reconstructed audio for proper playback volume
+                        {
+                            let st = state.borrow();
+                            if st.normalize_audio {
+                                reconstructed.normalize(st.normalize_peak);
+                            }
+                        }
                         let recon_result = {
                             let mut st = state.borrow_mut();
                             match st.audio_player.load_audio(&reconstructed) {

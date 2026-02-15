@@ -47,7 +47,8 @@ pub struct Widgets {
     pub check_center: fltk::button::CheckButton,
     pub btn_rerun: Button,
     pub colormap_choice: Choice,
-    pub scale_choice: Choice,
+    pub slider_scale: HorNiceSlider,
+    pub lbl_scale_val: Frame,
     pub slider_threshold: HorNiceSlider,
     pub lbl_threshold_val: Frame,
     pub slider_brightness: HorNiceSlider,
@@ -229,7 +230,7 @@ pub fn build_ui() -> (Window, Widgets) {
     set_tooltip(&mut btn_seg_plus, "Double the segment size.\nLarger segments = better frequency resolution, worse time resolution.");
     seg_row.fixed(&btn_seg_plus, 30);
 
-    let mut lbl_seg_value = Frame::default().with_label("2048 smp / 42.67 ms");
+    let mut lbl_seg_value = Frame::default().with_label("8192 smp / 170.67 ms");
     lbl_seg_value.set_label_color(theme::color(theme::TEXT_PRIMARY));
     lbl_seg_value.set_label_size(10);
     lbl_seg_value.set_align(Align::Inside | Align::Left);
@@ -276,7 +277,7 @@ pub fn build_ui() -> (Window, Widgets) {
     left.fixed(&input_kaiser_beta, 25);
 
     let mut check_center = fltk::button::CheckButton::default().with_label(" Center/Pad");
-    check_center.set_checked(true);
+    check_center.set_checked(false);
     check_center.set_label_color(theme::color(theme::TEXT_PRIMARY));
     check_center.deactivate();
     set_tooltip(&mut check_center, "Add zero-padding around signal for symmetric analysis.\nRecommended: ON for most use cases.");
@@ -317,27 +318,34 @@ pub fn build_ui() -> (Window, Widgets) {
     set_tooltip(&mut colormap_choice, "Color scheme for the spectrogram display.\nClassic: blue-cyan-green-yellow-red (rainbow)\nViridis/Magma/Inferno: perceptually uniform scientific colormaps\nGreyscale: black to white\nInverted Grey: white to black (print-friendly)");
     left.fixed(&colormap_choice, 25);
 
-    // Scale toggle
-    let mut scale_choice = Choice::default();
-    scale_choice.add_choice("Log Frequency");
-    scale_choice.add_choice("Linear Frequency");
-    scale_choice.set_value(0);
-    scale_choice.set_color(theme::color(theme::BG_WIDGET));
-    scale_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(&mut scale_choice, "Frequency axis scaling.\nLog: musical/perceptual spacing (recommended).\n  Octaves get equal visual space.\nLinear: uniform Hz spacing.\n  High frequencies dominate the display.");
-    left.fixed(&scale_choice, 25);
+    // Freq Scale Power slider (0.0 = linear, 1.0 = log, anything between)
+    let mut slider_scale = HorNiceSlider::default();
+    slider_scale.set_minimum(0.0);
+    slider_scale.set_maximum(1.0);
+    slider_scale.set_value(0.5);
+    slider_scale.set_step(0.01, 1);
+    slider_scale.set_color(theme::color(theme::BG_WIDGET));
+    slider_scale.set_selection_color(theme::accent_color());
+    set_tooltip(&mut slider_scale, "Frequency axis scaling power.\nLeft (0.0) = Linear: uniform Hz spacing.\nRight (1.0) = Log: octave-based spacing.\nMiddle = blend between both.\nAdjust to taste.");
+    left.fixed(&slider_scale, 22);
+
+    let mut lbl_scale_val = Frame::default().with_label("Scale: 50%");
+    lbl_scale_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_scale_val.set_label_size(11);
+    lbl_scale_val.set_align(Align::Inside | Align::Right);
+    left.fixed(&lbl_scale_val, 14);
 
     // Threshold
     let mut slider_threshold = HorNiceSlider::default();
-    slider_threshold.set_minimum(-120.0);
+    slider_threshold.set_minimum(-200.0);
     slider_threshold.set_maximum(0.0);
-    slider_threshold.set_value(-80.0);
+    slider_threshold.set_value(-87.0);
     slider_threshold.set_color(theme::color(theme::BG_WIDGET));
     slider_threshold.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_threshold, "Minimum dB level to display.\nFunctional range: -120 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.");
+    set_tooltip(&mut slider_threshold, "Minimum dB level to display.\nFunctional range: -200 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.");
     left.fixed(&slider_threshold, 22);
 
-    let mut lbl_threshold_val = Frame::default().with_label("Threshold: -124 dB");
+    let mut lbl_threshold_val = Frame::default().with_label("Threshold: -87 dB");
     lbl_threshold_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
     lbl_threshold_val.set_label_size(11);
     lbl_threshold_val.set_align(Align::Inside | Align::Right);
@@ -399,7 +407,7 @@ pub fn build_ui() -> (Window, Widgets) {
     left.fixed(&lbl_fc, 16);
 
     let mut input_freq_count = Input::default();
-    input_freq_count.set_value("1025");
+    input_freq_count.set_value("4097");
     input_freq_count.set_color(theme::color(theme::BG_WIDGET));
     input_freq_count.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_freq_count.deactivate();
@@ -430,7 +438,7 @@ pub fn build_ui() -> (Window, Widgets) {
     left.fixed(&lbl_freq_max, 16);
 
     let mut input_recon_freq_max = FloatInput::default();
-    input_recon_freq_max.set_value("24000");
+    input_recon_freq_max.set_value("5000");
     input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_max.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_recon_freq_max.deactivate();
@@ -685,7 +693,8 @@ pub fn build_ui() -> (Window, Widgets) {
         check_center,
         btn_rerun,
         colormap_choice,
-        scale_choice,
+        slider_scale,
+        lbl_scale_val,
         slider_threshold,
         lbl_threshold_val,
         slider_brightness,

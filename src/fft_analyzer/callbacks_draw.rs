@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use fltk::{app, enums::{Event, Font}, prelude::*};
 
 use crate::app_state::AppState;
-use crate::data::{self, FreqScale, TimeUnit};
+use crate::data::{self, TimeUnit};
 use crate::app_state::format_time;
 use crate::layout::Widgets;
 use crate::ui::theme;
@@ -139,7 +139,8 @@ fn setup_spectrogram_mouse(
                     let focus_t = 1.0 - (my as f32 / w.h() as f32);
                     let focus_freq = st.view.y_to_freq(focus_t);
 
-                    let zoom_factor = if zoom_in { 1.0 / 1.2 } else { 1.2 };
+                    let mzf = st.mouse_zoom_factor;
+                    let zoom_factor = if zoom_in { 1.0 / mzf } else { mzf };
                     let range = st.view.visible_freq_range();
                     let new_range = (range * zoom_factor).clamp(10.0, st.view.data_freq_max_hz);
 
@@ -151,7 +152,8 @@ fn setup_spectrogram_mouse(
                     let focus_t = mx as f64 / w.w() as f64;
                     let focus_time = st.view.x_to_time(focus_t);
 
-                    let zoom_factor = if zoom_in { 1.0 / 1.2 } else { 1.2 };
+                    let mzf = st.mouse_zoom_factor as f64;
+                    let zoom_factor = if zoom_in { 1.0 / mzf } else { mzf };
                     let range = st.view.visible_time_range();
                     let new_range = (range * zoom_factor).clamp(
                         0.001,
@@ -252,37 +254,54 @@ fn setup_freq_axis_draw(
         fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
         fltk::draw::set_font(Font::Helvetica, 9);
 
-        // Generate frequency labels
-        let labels: Vec<(f32, &str)> = match st.view.freq_scale {
-            FreqScale::Log => vec![
-                (20.0, "20"), (50.0, "50"), (100.0, "100"),
-                (200.0, "200"), (500.0, "500"), (1000.0, "1k"),
-                (2000.0, "2k"), (5000.0, "5k"), (10000.0, "10k"),
-                (20000.0, "20k"),
-            ],
-            FreqScale::Linear => {
-                vec![] // Handled below with dynamic formatting
-            }
-        };
+        // Smart adaptive frequency labels that work for any scale mode.
+        // Target: ~1 label per 40 pixels of height, minimum spacing 25px.
+        let min_spacing_px = 25;
+        let target_labels = (w.h() / 40).max(3).min(20) as usize;
 
-        if !labels.is_empty() {
-            for (freq, label) in &labels {
-                if *freq < st.view.freq_min_hz || *freq > st.view.freq_max_hz {
-                    continue;
-                }
-                let t = st.view.freq_to_y(*freq);
+        // Generate candidate frequencies using "nice" numbers
+        let nice_freqs: Vec<f32> = vec![
+            10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0,
+            100.0, 125.0, 150.0, 175.0, 200.0, 250.0, 300.0, 350.0, 400.0, 450.0, 500.0,
+            600.0, 700.0, 800.0, 900.0,
+            1000.0, 1250.0, 1500.0, 1750.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0,
+            6000.0, 7000.0, 8000.0, 9000.0,
+            10000.0, 12000.0, 14000.0, 16000.0, 18000.0, 20000.0, 22000.0, 24000.0,
+        ];
+
+        // Filter to visible range and convert to pixel positions
+        let candidates: Vec<(f32, i32)> = nice_freqs.iter()
+            .filter(|&&f| f >= st.view.freq_min_hz && f <= st.view.freq_max_hz)
+            .map(|&f| {
+                let t = st.view.freq_to_y(f);
                 let py = w.y() + w.h() - (t * w.h() as f32) as i32;
-                fltk::draw::draw_text(label, w.x() + 2, py + 3);
+                (f, py)
+            })
+            .collect();
 
-                // Tick mark
-                fltk::draw::set_draw_color(theme::color(theme::BORDER));
-                fltk::draw::draw_line(w.x() + w.w() - 4, py, w.x() + w.w(), py);
-                fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
+        // Greedily select labels with minimum spacing
+        let mut selected: Vec<(f32, i32)> = Vec::new();
+        for &(freq, py) in &candidates {
+            let too_close = selected.iter().any(|&(_, spy)| (py - spy).abs() < min_spacing_px);
+            if !too_close {
+                selected.push((freq, py));
             }
+            if selected.len() >= target_labels { break; }
+        }
+
+        // Draw the selected labels
+        for &(freq, py) in &selected {
+            let label = format_freq_label(freq);
+            fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
+            fltk::draw::draw_text(&label, w.x() + 2, py + 3);
+
+            // Tick mark
+            fltk::draw::set_draw_color(theme::color(theme::BORDER));
+            fltk::draw::draw_line(w.x() + w.w() - 4, py, w.x() + w.w(), py);
         }
 
         // Draw boundary lines for recon freq range
-        fltk::draw::set_draw_color(fltk::enums::Color::from_hex(0xf9e2af)); // accent yellow
+        fltk::draw::set_draw_color(fltk::enums::Color::from_hex(0xf9e2af));
         let recon_min_t = st.view.freq_to_y(st.view.recon_freq_min_hz);
         if recon_min_t > 0.01 && recon_min_t < 0.99 {
             let py = w.y() + w.h() - (recon_min_t * w.h() as f32) as i32;
@@ -296,34 +315,6 @@ fn setup_freq_axis_draw(
             fltk::draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
             fltk::draw::draw_line(w.x(), py, w.x() + w.w(), py);
             fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
-        }
-
-        if labels.is_empty() {
-            // Linear mode: format numbers dynamically
-            let range = st.view.visible_freq_range();
-            let step = if range > 10000.0 { 5000.0 }
-                      else if range > 5000.0 { 2000.0 }
-                      else if range > 2000.0 { 1000.0 }
-                      else if range > 500.0 { 200.0 }
-                      else { 100.0 };
-
-            let mut f = (st.view.freq_min_hz / step).ceil() * step;
-            while f <= st.view.freq_max_hz {
-                let t = st.view.freq_to_y(f);
-                let py = w.y() + w.h() - (t * w.h() as f32) as i32;
-                let label = if f >= 1000.0 {
-                    format!("{}k", (f / 1000.0) as i32)
-                } else {
-                    format!("{}", f as i32)
-                };
-                fltk::draw::draw_text(&label, w.x() + 2, py + 3);
-
-                fltk::draw::set_draw_color(theme::color(theme::BORDER));
-                fltk::draw::draw_line(w.x() + w.w() - 4, py, w.x() + w.w(), py);
-                fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
-
-                f += step;
-            }
         }
     });
 }
@@ -350,20 +341,31 @@ fn setup_time_axis_draw(
         fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
         fltk::draw::set_font(Font::Helvetica, 9);
 
+        // Smart adaptive time labels: target ~1 label per 80px, find a nice step
         let range = st.view.visible_time_range();
-        let step = if range > 60.0 { 10.0 }
-                  else if range > 30.0 { 5.0 }
-                  else if range > 10.0 { 2.0 }
-                  else if range > 5.0 { 1.0 }
-                  else if range > 2.0 { 0.5 }
-                  else if range > 1.0 { 0.2 }
-                  else { 0.1 };
+        let target_labels = ((w.w() - 50) as f64 / 80.0).max(2.0);
+        let raw_step = range / target_labels;
+        // Snap to nice step values
+        let nice_steps = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5,
+                         1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0];
+        let step = nice_steps.iter()
+            .find(|&&s| s >= raw_step)
+            .copied()
+            .unwrap_or(raw_step);
 
         let mut t = (st.view.time_min_sec / step).ceil() * step;
         while t <= st.view.time_max_sec {
             let x_norm = st.view.time_to_x(t);
             let px = w.x() + 50 + ((x_norm * (w.w() - 50) as f64) as i32);  // offset for freq axis
-            let label = format_time(t);
+            let label = if step < 0.01 {
+                format!("{:.3}s", t)
+            } else if step < 0.1 {
+                format!("{:.2}s", t)
+            } else if step < 1.0 {
+                format!("{:.1}s", t)
+            } else {
+                format_time(t)
+            };
             fltk::draw::draw_text(&label, px - 15, w.y() + 14);
 
             // Tick mark
@@ -399,4 +401,22 @@ fn setup_time_axis_draw(
             fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
         }
     });
+}
+
+/// Format a frequency value as a readable label.
+fn format_freq_label(freq: f32) -> String {
+    if freq >= 1000.0 {
+        let k = freq / 1000.0;
+        if k == k.floor() {
+            format!("{}k", k as i32)
+        } else {
+            format!("{:.1}k", k)
+        }
+    } else if freq >= 100.0 {
+        format!("{}", freq as i32)
+    } else if freq == freq.floor() {
+        format!("{}", freq as i32)
+    } else {
+        format!("{:.1}", freq)
+    }
 }
