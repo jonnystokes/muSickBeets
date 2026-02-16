@@ -20,10 +20,10 @@
 - [ ] Gradient/color ramp editing from SebLague (custom gradient support)
 
 - [ ] Save settings back to INI when changed in UI (currently only loads on startup)
-    #  no don't do this one. Don't automatically change the settings file. instead you would have a safe as default button.
+    //  no don't do this one. Don't automatically change the settings file. instead you would have a safe as default button.
     
 - [ ] Auto-regenerate mode (like SebLague's autoRegenerate) 
-# we have to be careful about regenerating too often because I don't have GPU hardware access and everything must be software rendered. 
+// we have to be careful about regenerating too often because I don't have GPU hardware access and everything must be software rendered. 
 
 fix bugs. 
 
