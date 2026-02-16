@@ -35,6 +35,7 @@ pub struct AppState {
     pub dirty: bool,
     pub lock_to_active: bool,
     pub has_audio: bool,
+    pub current_filename: String,
 
     pub tooltip_mgr: TooltipManager,
 
@@ -67,6 +68,7 @@ impl AppState {
             dirty: false,
             lock_to_active: false,
             has_audio: false,
+            current_filename: String::new(),
 
             tooltip_mgr: TooltipManager::new(),
 
@@ -103,6 +105,7 @@ impl AppState {
             segments,
             bin_duration_ms,
             window_length: self.fft_params.window_length,
+            sample_rate: self.fft_params.sample_rate,
         }
     }
 }
@@ -115,15 +118,25 @@ pub struct DerivedInfo {
     pub segments: usize,
     pub bin_duration_ms: f64,
     pub window_length: usize,
+    pub sample_rate: u32,
 }
 
 impl DerivedInfo {
     pub fn format_info(&self) -> String {
         format!(
-            "Segments: {}\nSamples: {}\nFreq bins: {}\nFreq res: {:.2} Hz\nHop: {} smp\nBin dur: {:.2} ms\nWindow: {} smp",
-            self.segments, self.total_samples, self.freq_bins,
-            self.freq_resolution, self.hop_length, self.bin_duration_ms,
-            self.window_length
+            "Segments: {} x {} smp\n\
+             Total samples: {}\n\
+             Freq bins: {} / segment\n\
+             Freq res: {:.2} Hz/bin\n\
+             Time res: {:.2} ms/frame\n\
+             Hop: {} smp ({:.1}ms)",
+            self.segments, self.window_length,
+            self.total_samples,
+            self.freq_bins,
+            self.freq_resolution,
+            self.bin_duration_ms,
+            self.hop_length,
+            self.hop_length as f64 / self.sample_rate.max(1) as f64 * 1000.0,
         )
     }
 }

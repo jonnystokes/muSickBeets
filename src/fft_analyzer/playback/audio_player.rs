@@ -22,6 +22,7 @@ struct PlaybackData {
     state: PlaybackState,
     repeat: bool,
     end_sample: usize,
+    is_seeking: bool,
 }
 
 impl AudioPlayer {
@@ -35,6 +36,7 @@ impl AudioPlayer {
                 state: PlaybackState::Stopped,
                 repeat: false,
                 end_sample: 0,
+                is_seeking: false,
             })),
         }
     }
@@ -81,6 +83,10 @@ impl AudioPlayer {
                 if data.position >= data.end_sample {
                     if data.repeat {
                         data.position = 0;
+                    } else if data.is_seeking {
+                        // User is dragging cursor near end - don't auto-pause
+                        *sample = 0.0;
+                        continue;
                     } else {
                         data.position = 0;
                         data.state = PlaybackState::Paused;
@@ -129,6 +135,11 @@ impl AudioPlayer {
         let mut data = self.playback_data.lock().unwrap();
         let sample = (seconds * data.sample_rate as f64) as usize;
         data.position = sample.min(data.end_sample);
+    }
+
+    pub fn set_seeking(&self, seeking: bool) {
+        let mut data = self.playback_data.lock().unwrap();
+        data.is_seeking = seeking;
     }
 
     pub fn set_repeat(&mut self, repeat: bool) {

@@ -93,6 +93,7 @@ fn setup_spectrogram_mouse(
                 let time = st.view.x_to_time(t);
                 // Seek is relative to recon_start_time
                 let audio_pos = (time - st.recon_start_time).max(0.0);
+                st.audio_player.set_seeking(true);
                 st.audio_player.seek_to(audio_pos);
                 true
             }
@@ -184,6 +185,12 @@ fn setup_spectrogram_mouse(
                 let time = st.view.x_to_time(t);
                 let audio_pos = (time - st.recon_start_time).max(0.0);
                 st.audio_player.seek_to(audio_pos);
+                true
+            }
+            Event::Released => {
+                // End seeking - allow normal end-of-track behavior
+                let st = state.borrow();
+                st.audio_player.set_seeking(false);
                 true
             }
             _ => false,

@@ -21,8 +21,9 @@ pub fn setup_file_callbacks(
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
     shared: &SharedCallbacks,
+    win: &fltk::window::Window,
 ) {
-    setup_open_callback(widgets, state, tx, shared);
+    setup_open_callback(widgets, state, tx, shared, win);
     setup_save_fft_callback(widgets, state);
     setup_load_fft_callback(widgets, state, tx, shared);
     setup_save_wav_callback(widgets, state);
@@ -34,6 +35,7 @@ fn setup_open_callback(
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
     shared: &SharedCallbacks,
+    win: &fltk::window::Window,
 ) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
@@ -46,13 +48,28 @@ fn setup_open_callback(
     let update_seg_label = shared.update_seg_label.clone();
     let enable_audio_widgets = shared.enable_audio_widgets.clone();
 
+    let mut win = win.clone();
+
     let mut btn_open = widgets.btn_open.clone();
     btn_open.set_callback(move |_| {
+        // Debug: log thread state when Open is clicked
+        {
+            let st = state.borrow();
+            eprintln!("[Open] is_processing={}, has_audio={}, has_spectrogram={}, has_recon_audio={}, playback_state={:?}",
+                st.is_processing,
+                st.has_audio,
+                st.spectrogram.is_some(),
+                st.reconstructed_audio.is_some(),
+                st.audio_player.get_state(),
+            );
+        }
+
         // Don't allow opening a new file while processing
         {
             let st = state.borrow();
             if st.is_processing {
                 status_bar.set_label("Still processing... please wait.");
+                eprintln!("[Open] Blocked: still processing");
                 return;
             }
         }
@@ -69,15 +86,19 @@ fn setup_open_callback(
         status_bar.set_label("Loading audio...");
         app::awake();
 
+        eprintln!("[Open] Loading file: {:?}", filename);
         match AudioData::from_wav_file(&filename) {
             Ok(mut audio) => {
+                eprintln!("[Open] File loaded: {} samples, {} Hz, {:.2}s",
+                    audio.num_samples(), audio.sample_rate, audio.duration_seconds);
+
                 // Peak normalize audio to fix quiet playback
                 {
                     let st = state.borrow();
                     if st.normalize_audio {
                         let gain = audio.normalize(st.normalize_peak);
                         if gain != 1.0 {
-                            eprintln!("Audio normalized: gain = {:.3}x", gain);
+                            eprintln!("[Open] Audio normalized: gain = {:.3}x", gain);
                         }
                     }
                 }
@@ -90,6 +111,9 @@ fn setup_open_callback(
                 let params_clone;
                 {
                     let mut st = state.borrow_mut();
+
+                    // Stop any current playback before loading new audio
+                    st.audio_player.stop();
                     st.fft_params.sample_rate = sample_rate;
                     st.fft_params.stop_time = duration;
                     st.audio_data = Some(audio.clone());
@@ -115,6 +139,15 @@ fn setup_open_callback(
 
                     params_clone = st.fft_params.clone();
                     st.is_processing = true;
+
+                    // Store filename for window title
+                    let fname = filename.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    st.current_filename = fname.clone();
+                    drop(st);
+                    win.set_label(&format!("muSickBeets - {}", fname));
                 }
 
                 input_stop.set_value(&format!("{:.5}", duration));
@@ -125,10 +158,14 @@ fn setup_open_callback(
                 (update_seg_label.borrow_mut())();
 
                 // Launch background FFT (reconstruction auto-follows via FftComplete handler)
+                eprintln!("[Open] Spawning FFT thread (window={}, overlap={}%)",
+                    params_clone.window_length, params_clone.overlap_percent);
                 let tx_clone = tx.clone();
                 let audio_for_fft = audio.clone();
                 std::thread::spawn(move || {
+                    eprintln!("[FFT thread] Started");
                     let spectrogram = FftEngine::process(&audio_for_fft, &params_clone);
+                    eprintln!("[FFT thread] Complete: {} frames", spectrogram.num_frames());
                     tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
                 });
 

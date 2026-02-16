@@ -139,6 +139,9 @@ impl Default for Settings {
     }
 }
 
+use crate::app_state::AppState;
+use crate::data::FreqScale;
+
 #[allow(dead_code)]
 impl Settings {
     const FILE_NAME: &'static str = "muSickBeets.ini";
@@ -165,6 +168,56 @@ impl Settings {
             settings.save();
             settings
         }
+    }
+
+    /// Create Settings from current AppState (for Save As Default)
+    pub fn from_app_state(st: &AppState) -> Self {
+        let mut cfg = Self::default();
+
+        // Analysis
+        cfg.window_length = st.fft_params.window_length;
+        cfg.overlap_percent = st.fft_params.overlap_percent;
+        cfg.window_type = match st.fft_params.window_type {
+            crate::data::WindowType::Hann => "Hann".to_string(),
+            crate::data::WindowType::Hamming => "Hamming".to_string(),
+            crate::data::WindowType::Blackman => "Blackman".to_string(),
+            crate::data::WindowType::Kaiser(b) => { cfg.kaiser_beta = b; "Kaiser".to_string() }
+        };
+        cfg.center_pad = st.fft_params.use_center;
+
+        // View
+        cfg.view_freq_min_hz = st.view.freq_min_hz;
+        cfg.view_freq_max_hz = st.view.freq_max_hz;
+        cfg.freq_scale_power = match st.view.freq_scale {
+            FreqScale::Linear => 0.0,
+            FreqScale::Log => 1.0,
+            FreqScale::Power(p) => p,
+        };
+
+        // Display
+        cfg.colormap = st.view.colormap.name().to_string();
+        cfg.threshold_db = st.view.threshold_db;
+        cfg.brightness = st.view.brightness;
+        cfg.gamma = st.view.gamma;
+
+        // Reconstruction
+        cfg.recon_freq_min_hz = st.view.recon_freq_min_hz;
+        cfg.recon_freq_max_hz = st.view.recon_freq_max_hz;
+        cfg.recon_freq_count = st.view.recon_freq_count;
+
+        // Audio
+        cfg.normalize_audio = st.normalize_audio;
+        cfg.normalize_peak = st.normalize_peak;
+
+        // Zoom
+        cfg.time_zoom_factor = st.time_zoom_factor;
+        cfg.freq_zoom_factor = st.freq_zoom_factor;
+        cfg.mouse_zoom_factor = st.mouse_zoom_factor;
+
+        // UI
+        cfg.lock_to_active = st.lock_to_active;
+
+        cfg
     }
 
     /// Save current settings to INI file.

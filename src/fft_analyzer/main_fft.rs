@@ -71,8 +71,9 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
             let st = state.borrow();
             let wl = st.fft_params.window_length;
             let sr = st.fft_params.sample_rate;
-            let ms = wl as f64 / sr as f64 * 1000.0;
-            lbl_seg_value.set_label(&format!("{} smp / {:.2} ms", wl, ms));
+            let ms = wl as f64 / sr.max(1) as f64 * 1000.0;
+            let bins = wl / 2 + 1;
+            lbl_seg_value.set_label(&format!("{} smp / {:.1}ms / {} bins", wl, ms, bins));
         })))
     };
 
@@ -187,7 +188,7 @@ fn main() {
 
     // Wire up all callbacks
     callbacks_nav::setup_menu_callbacks(&widgets, &state);
-    callbacks_file::setup_file_callbacks(&widgets, &state, &tx, &shared);
+    callbacks_file::setup_file_callbacks(&widgets, &state, &tx, &shared, &win);
     callbacks_file::setup_rerun_callback(&widgets, &state, &tx, &shared);
     callbacks_ui::setup_parameter_callbacks(&widgets, &state, &shared);
     callbacks_ui::setup_display_callbacks(&widgets, &state);

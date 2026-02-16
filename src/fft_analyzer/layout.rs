@@ -63,6 +63,7 @@ pub struct Widgets {
     pub btn_tooltips: fltk::button::CheckButton,
     pub check_lock_active: fltk::button::CheckButton,
     pub btn_home: Button,
+    pub btn_save_defaults: Button,
     pub spec_display: Widget,
     pub waveform_display: Widget,
     pub freq_axis: Widget,
@@ -507,6 +508,14 @@ pub fn build_ui() -> (Window, Widgets) {
     set_tooltip(&mut btn_home, "Snap viewport to the active processing\ntime range (sidebar Start/Stop).");
     left.fixed(&btn_home, 25);
 
+    // Save As Default button
+    let mut btn_save_defaults = Button::default().with_label("Save As Default");
+    btn_save_defaults.set_color(theme::color(theme::BG_WIDGET));
+    btn_save_defaults.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_save_defaults.set_label_size(11);
+    set_tooltip(&mut btn_save_defaults, "Save current settings to muSickBeets.ini.\nThese become the defaults on next launch.");
+    left.fixed(&btn_save_defaults, 25);
+
     // Spacer to push everything up
     Frame::default();
 
@@ -709,6 +718,7 @@ pub fn build_ui() -> (Window, Widgets) {
         btn_tooltips,
         check_lock_active,
         btn_home,
+        btn_save_defaults,
         spec_display,
         waveform_display,
         freq_axis,

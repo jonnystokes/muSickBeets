@@ -6,6 +6,7 @@ use fltk::prelude::*;
 use crate::app_state::{AppState, SharedCallbacks, UpdateThrottle};
 use crate::data::{ColormapId, FreqScale, TimeUnit, WindowType};
 use crate::layout::Widgets;
+use crate::settings::Settings;
 use crate::validation::{attach_float_validation, parse_or_zero_f32};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -303,10 +304,28 @@ pub fn setup_playback_callbacks(
         let state = state.clone();
 
         let mut scrub_slider = widgets.scrub_slider.clone();
-        scrub_slider.set_callback(move |s| {
-            let st = state.borrow();
-            let audio_position = s.value() * st.transport.duration_seconds;
-            st.audio_player.seek_to(audio_position);
+        scrub_slider.handle(move |s, ev| {
+            match ev {
+                fltk::enums::Event::Push => {
+                    let st = state.borrow();
+                    st.audio_player.set_seeking(true);
+                    let audio_position = s.value() * st.transport.duration_seconds;
+                    st.audio_player.seek_to(audio_position);
+                    true
+                }
+                fltk::enums::Event::Drag => {
+                    let st = state.borrow();
+                    let audio_position = s.value() * st.transport.duration_seconds;
+                    st.audio_player.seek_to(audio_position);
+                    true
+                }
+                fltk::enums::Event::Released => {
+                    let st = state.borrow();
+                    st.audio_player.set_seeking(false);
+                    true
+                }
+                _ => false,
+            }
         });
     }
 
@@ -377,6 +396,19 @@ pub fn setup_misc_callbacks(
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
+        });
+    }
+
+    // Save As Default — write current settings to INI
+    {
+        let state = state.clone();
+
+        let mut btn_save_defaults = widgets.btn_save_defaults.clone();
+        btn_save_defaults.set_callback(move |_| {
+            let st = state.borrow();
+            let cfg = Settings::from_app_state(&st);
+            cfg.save();
+            eprintln!("[Settings] Saved current settings to muSickBeets.ini");
         });
     }
 }
