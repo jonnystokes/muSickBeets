@@ -349,6 +349,7 @@ pub fn setup_playback_callbacks(
 pub fn setup_misc_callbacks(
     widgets: &Widgets,
     state: &Rc<RefCell<AppState>>,
+    win: &fltk::window::Window,
 ) {
     // Tooltip toggle
     {
@@ -370,11 +371,12 @@ pub fn setup_misc_callbacks(
         });
     }
 
-    // Home button — snap viewport to processing time range
+    // Home button — snap viewport to processing time range + full freq range
     {
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
 
         let mut btn_home = widgets.btn_home.clone();
         btn_home.set_callback(move |_| {
@@ -390,25 +392,35 @@ pub fn setup_misc_callbacks(
             if proc_max > proc_min {
                 st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
                 st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
-                st.spec_renderer.invalidate();
-                st.wave_renderer.invalidate();
             }
+            // Also reset frequency to full data range
+            if st.view.data_freq_max_hz > 1.0 {
+                st.view.freq_min_hz = 1.0;
+                st.view.freq_max_hz = st.view.data_freq_max_hz;
+            }
+            st.spec_renderer.invalidate();
+            st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
+            freq_axis.redraw();
         });
     }
 
     // Save As Default — write current settings to INI
     {
         let state = state.clone();
+        let win = win.clone();
 
         let mut btn_save_defaults = widgets.btn_save_defaults.clone();
         btn_save_defaults.set_callback(move |_| {
             let st = state.borrow();
-            let cfg = Settings::from_app_state(&st);
+            let mut cfg = Settings::from_app_state(&st);
+            // Also capture current window dimensions
+            cfg.window_width = win.w();
+            cfg.window_height = win.h();
             cfg.save();
-            eprintln!("[Settings] Saved current settings to muSickBeets.ini");
+            eprintln!("[Settings] Saved current settings to settings.ini");
         });
     }
 }

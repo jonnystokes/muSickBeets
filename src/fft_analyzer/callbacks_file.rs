@@ -119,15 +119,15 @@ fn setup_open_callback(
                     st.audio_data = Some(audio.clone());
                     st.has_audio = true;
 
-                    // Set view bounds
+                    // Set view bounds — clamp existing values to nyquist, don't override saved settings
                     st.view.data_time_min_sec = 0.0;
                     st.view.data_time_max_sec = duration;
                     st.view.time_min_sec = 0.0;
                     st.view.time_max_sec = duration;
                     st.view.data_freq_max_hz = nyquist;
-                    st.view.freq_min_hz = 100.0_f32.min(nyquist);
-                    st.view.freq_max_hz = 2000.0_f32.min(nyquist);
-                    st.view.recon_freq_max_hz = 5000.0_f32.min(nyquist);
+                    st.view.freq_min_hz = st.view.freq_min_hz.min(nyquist);
+                    st.view.freq_max_hz = st.view.freq_max_hz.min(nyquist);
+                    st.view.recon_freq_max_hz = st.view.recon_freq_max_hz.min(nyquist);
                     st.view.max_freq_bins = st.fft_params.num_frequency_bins();
                     st.view.recon_freq_count = st.fft_params.num_frequency_bins();
 
@@ -151,7 +151,10 @@ fn setup_open_callback(
                 }
 
                 input_stop.set_value(&format!("{:.5}", duration));
-                input_recon_freq_max.set_value(&format!("{:.0}", 5000.0_f32.min(nyquist)));
+                {
+                    let st = state.borrow();
+                    input_recon_freq_max.set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
+                }
 
                 (enable_audio_widgets.borrow_mut())();
                 (update_info.borrow_mut())();

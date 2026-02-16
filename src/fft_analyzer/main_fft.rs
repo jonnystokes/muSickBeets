@@ -148,6 +148,9 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
 fn main() {
     // Load settings from INI (or create default INI if missing)
     let cfg = settings::Settings::load_or_create();
+    eprintln!("[Settings] Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
+        cfg.recon_freq_max_hz, cfg.view_freq_min_hz, cfg.view_freq_max_hz,
+        cfg.window_width, cfg.window_height);
 
     let app = app::App::default();
 
@@ -156,6 +159,9 @@ fn main() {
     app::set_visual(fltk::enums::Mode::Rgb8).ok();
 
     let (mut win, widgets) = layout::build_ui();
+
+    // Apply window size from settings
+    win.set_size(cfg.window_width, cfg.window_height);
 
     // Apply settings to state
     let state = {
@@ -193,7 +199,7 @@ fn main() {
     callbacks_ui::setup_parameter_callbacks(&widgets, &state, &shared);
     callbacks_ui::setup_display_callbacks(&widgets, &state);
     callbacks_ui::setup_playback_callbacks(&widgets, &state);
-    callbacks_ui::setup_misc_callbacks(&widgets, &state);
+    callbacks_ui::setup_misc_callbacks(&widgets, &state, &win);
     callbacks_draw::setup_draw_callbacks(&widgets, &state);
     let (x_scroll_gen, y_scroll_gen) = callbacks_nav::setup_scrollbar_callbacks(&widgets, &state);
     callbacks_nav::setup_zoom_callbacks(&widgets, &state);

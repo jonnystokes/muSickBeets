@@ -144,11 +144,17 @@ use crate::data::FreqScale;
 
 #[allow(dead_code)]
 impl Settings {
-    const FILE_NAME: &'static str = "muSickBeets.ini";
+    const FILE_NAME: &'static str = "settings.ini";
 
     /// Load settings from INI file, or create it with defaults if it doesn't exist.
     pub fn load_or_create() -> Self {
+        // Migrate from old filename if needed
+        let old_path = Path::new("muSickBeets.ini");
         let path = Path::new(Self::FILE_NAME);
+        if !path.exists() && old_path.exists() {
+            eprintln!("[Settings] Migrating muSickBeets.ini -> settings.ini");
+            let _ = fs::rename(old_path, path);
+        }
         if path.exists() {
             match fs::read_to_string(path) {
                 Ok(content) => {

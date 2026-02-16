@@ -28,6 +28,14 @@
     - Does NOT auto-save - only saves when button is clicked
 - [x] 17. Clearer segmentation controls (segment label now shows: smp / ms / bins)
 - [x] 18. More prominent derived values (freq res Hz/bin, time res ms/frame, hop ms)
+- [x] 19. Home button now resets BOTH time AND frequency to full data range
+- [x] 20. FIX: Settings were not loading on startup
+    - Window size from settings.ini now applied after build_ui()
+    - File open no longer hardcodes view freq (100-2000) or recon_freq_max (5000)
+    - Now clamps existing state values to nyquist instead of overwriting
+    - Save As Default now also captures current window dimensions
+    - Debug log on startup shows loaded settings values
+- [x] 21. Renamed muSickBeets.ini -> settings.ini (auto-migrates old file)
 
 ## Still TODO
 - [ ] Gradient/color ramp editing from SebLague (custom gradient support)
@@ -35,7 +43,7 @@
     // we have to be careful about regenerating too often because I don't have GPU hardware access and everything must be software rendered.
 
 ## Settings File Location
-`muSickBeets.ini` in the working directory (created on first run)
+`settings.ini` in the working directory (created on first run, auto-migrates from muSickBeets.ini)
 
 ## Key Architecture Notes
 - Settings loaded in main() before UI, applied to AppState
