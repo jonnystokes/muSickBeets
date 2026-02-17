@@ -281,53 +281,29 @@ fn setup_freq_axis_draw(
         let Ok(st) = state.try_borrow() else { return; };
         if st.spectrogram.is_none() { return; }
 
-        fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
+        // Generate evenly-spaced nice ticks adapted to the current scale.
+        // This works in display space so ticks appear visually uniform
+        // regardless of linear, log, or power-blend frequency scale.
+        let ticks = generate_freq_ticks(
+            st.view.freq_min_hz,
+            st.view.freq_max_hz,
+            &|f| st.view.freq_to_y(f),
+            &|t| st.view.y_to_freq(t),
+            w.h(),
+        );
+
         fltk::draw::set_font(Font::Helvetica, 9);
+        for &(freq, y_norm) in &ticks {
+            let py = w.y() + w.h() - (y_norm * w.h() as f32) as i32;
 
-        // Smart adaptive frequency labels that work for any scale mode.
-        // Target: ~1 label per 40 pixels of height, minimum spacing 25px.
-        let min_spacing_px = 25;
-        let target_labels = (w.h() / 40).max(3).min(20) as usize;
+            // Notch tick mark (right-aligned, pointing toward spectrogram)
+            fltk::draw::set_draw_color(theme::color(theme::BORDER));
+            fltk::draw::draw_line(w.x() + w.w() - 6, py, w.x() + w.w(), py);
 
-        // Generate candidate frequencies using "nice" numbers
-        let nice_freqs: Vec<f32> = vec![
-            10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0,
-            100.0, 125.0, 150.0, 175.0, 200.0, 250.0, 300.0, 350.0, 400.0, 450.0, 500.0,
-            600.0, 700.0, 800.0, 900.0,
-            1000.0, 1250.0, 1500.0, 1750.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0,
-            6000.0, 7000.0, 8000.0, 9000.0,
-            10000.0, 12000.0, 14000.0, 16000.0, 18000.0, 20000.0, 22000.0, 24000.0,
-        ];
-
-        // Filter to visible range and convert to pixel positions
-        let candidates: Vec<(f32, i32)> = nice_freqs.iter()
-            .filter(|&&f| f >= st.view.freq_min_hz && f <= st.view.freq_max_hz)
-            .map(|&f| {
-                let t = st.view.freq_to_y(f);
-                let py = w.y() + w.h() - (t * w.h() as f32) as i32;
-                (f, py)
-            })
-            .collect();
-
-        // Greedily select labels with minimum spacing
-        let mut selected: Vec<(f32, i32)> = Vec::new();
-        for &(freq, py) in &candidates {
-            let too_close = selected.iter().any(|&(_, spy)| (py - spy).abs() < min_spacing_px);
-            if !too_close {
-                selected.push((freq, py));
-            }
-            if selected.len() >= target_labels { break; }
-        }
-
-        // Draw the selected labels
-        for &(freq, py) in &selected {
+            // Label text
             let label = format_freq_label(freq);
             fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
             fltk::draw::draw_text(&label, w.x() + 2, py + 3);
-
-            // Tick mark
-            fltk::draw::set_draw_color(theme::color(theme::BORDER));
-            fltk::draw::draw_line(w.x() + w.w() - 4, py, w.x() + w.w(), py);
         }
 
         // Draw boundary lines for recon freq range
@@ -449,4 +425,107 @@ fn format_freq_label(freq: f32) -> String {
     } else {
         format!("{:.1}", freq)
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DISPLAY-SPACE FREQUENCY TICK GENERATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Generate frequency axis ticks that are evenly spaced in display space
+/// and snapped to "nice" rounded numbers.
+///
+/// Algorithm:
+///  1. Compute ideal evenly-spaced positions in normalized display space [0,1]
+///  2. Map each to frequency via the view's inverse transform (y_to_freq)
+///  3. Snap each to the nearest "nice" round number
+///  4. Map back to display position via freq_to_y
+///  5. Deduplicate and enforce minimum pixel spacing
+///
+/// This works with any frequency scale (linear, log, Power blend) because
+/// the even spacing is computed in display space, not frequency space.
+fn generate_freq_ticks(
+    freq_min_hz: f32,
+    freq_max_hz: f32,
+    freq_to_y: &dyn Fn(f32) -> f32,
+    y_to_freq: &dyn Fn(f32) -> f32,
+    widget_h: i32,
+) -> Vec<(f32, f32)> {
+    let target_count = (widget_h / 45).max(3).min(20) as usize;
+    let min_spacing_norm = 22.0 / widget_h.max(1) as f32;
+    let range_ratio = freq_max_hz / freq_min_hz.max(1.0);
+
+    // Step 1-3: evenly-spaced display positions → frequency → snap to nice
+    let margin = 0.04;
+    let usable = 1.0 - 2.0 * margin;
+    let step = if target_count <= 1 { usable } else { usable / (target_count - 1) as f32 };
+
+    let mut raw: Vec<(f32, f32)> = Vec::new();
+    for i in 0..target_count {
+        let y_norm = margin + i as f32 * step;
+        let freq = y_to_freq(y_norm);
+        let nice = snap_freq_to_nice(freq, range_ratio);
+
+        // Only include if within visible range and not a duplicate
+        if nice >= freq_min_hz && nice <= freq_max_hz {
+            if !raw.iter().any(|&(f, _)| (f - nice).abs() < 0.5) {
+                let actual_y = freq_to_y(nice);
+                raw.push((nice, actual_y));
+            }
+        }
+    }
+
+    // Step 4: sort by frequency (should already be, but ensure after snapping)
+    raw.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+    // Step 5: enforce minimum display-space spacing (greedy bottom-to-top)
+    let mut selected: Vec<(f32, f32)> = Vec::new();
+    for &(freq, y) in &raw {
+        let too_close = selected.iter()
+            .any(|&(_, sy)| (sy - y).abs() < min_spacing_norm);
+        if !too_close {
+            selected.push((freq, y));
+        }
+    }
+
+    selected
+}
+
+/// Snap a frequency to the nearest "nice" rounded number.
+/// Adapts granularity based on the visible range ratio (freq_max / freq_min).
+fn snap_freq_to_nice(freq: f32, range_ratio: f32) -> f32 {
+    if freq <= 0.0 { return 1.0; }
+
+    let exp = freq.log10().floor() as i32;
+    let mag = 10f32.powi(exp);
+    let mantissa = freq / mag;
+
+    let closest = if range_ratio < 2.0 {
+        // Ultra fine: round mantissa to nearest 0.1
+        (mantissa * 10.0).round() / 10.0
+    } else if range_ratio < 5.0 {
+        // Fine granularity
+        nearest_in_set(mantissa, &[
+            1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5,
+            5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
+        ])
+    } else if range_ratio < 50.0 {
+        // Medium granularity
+        nearest_in_set(mantissa, &[
+            1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
+        ])
+    } else {
+        // Coarse: classic 1-2-5 pattern for very wide ranges
+        nearest_in_set(mantissa, &[1.0, 2.0, 5.0, 10.0])
+    };
+
+    closest * mag
+}
+
+/// Find the value in `set` that is closest to `value`.
+fn nearest_in_set(value: f32, set: &[f32]) -> f32 {
+    *set.iter()
+        .min_by(|&&a, &&b|
+            (a - value).abs().partial_cmp(&(b - value).abs()).unwrap()
+        )
+        .unwrap()
 }
