@@ -371,12 +371,13 @@ pub fn setup_misc_callbacks(
         });
     }
 
-    // Home button — snap viewport to processing time range + full freq range
+    // Home button — snap viewport to reconstruction time + freq range
     {
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut freq_axis = widgets.freq_axis.clone();
+        let mut time_axis = widgets.time_axis.clone();
 
         let mut btn_home = widgets.btn_home.clone();
         btn_home.set_callback(move |_| {
@@ -393,17 +394,16 @@ pub fn setup_misc_callbacks(
                 st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
                 st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
             }
-            // Also reset frequency to full data range
-            if st.view.data_freq_max_hz > 1.0 {
-                st.view.freq_min_hz = 1.0;
-                st.view.freq_max_hz = st.view.data_freq_max_hz;
-            }
+            // Snap frequency to reconstruction range
+            st.view.freq_min_hz = st.view.recon_freq_min_hz.max(1.0);
+            st.view.freq_max_hz = st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
             st.spec_renderer.invalidate();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             freq_axis.redraw();
+            time_axis.redraw();
         });
     }
 

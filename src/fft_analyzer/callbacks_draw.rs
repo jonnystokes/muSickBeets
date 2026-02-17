@@ -81,6 +81,8 @@ fn setup_spectrogram_mouse(
     let mut status_bar = widgets.status_bar.clone();
     let mut spec_display_c = widgets.spec_display.clone();
     let mut waveform_display_c = widgets.waveform_display.clone();
+    let mut freq_axis_c = widgets.freq_axis.clone();
+    let mut time_axis_c = widgets.time_axis.clone();
 
     let mut spec_display = widgets.spec_display.clone();
     spec_display.handle(move |w, ev| {
@@ -175,6 +177,8 @@ fn setup_spectrogram_mouse(
                 drop(st);
                 spec_display_c.redraw();
                 waveform_display_c.redraw();
+                freq_axis_c.redraw();
+                time_axis_c.redraw();
                 true
             }
             Event::Drag => {

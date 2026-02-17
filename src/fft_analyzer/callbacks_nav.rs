@@ -55,6 +55,9 @@ pub fn setup_menu_callbacks(
     {
         let state_c = state.clone();
         let mut spec_display_c = widgets.spec_display.clone();
+        let mut freq_axis_c = widgets.freq_axis.clone();
+        let mut time_axis_c = widgets.time_axis.clone();
+        let mut waveform_c = widgets.waveform_display.clone();
         menu.add("&Display/Reset Zoom\t", Shortcut::None, MenuFlag::Normal,
             move |_| {
                 let mut st = state_c.borrow_mut();
@@ -63,6 +66,9 @@ pub fn setup_menu_callbacks(
                 st.wave_renderer.invalidate();
                 drop(st);
                 spec_display_c.redraw();
+                waveform_c.redraw();
+                freq_axis_c.redraw();
+                time_axis_c.redraw();
             });
     }
 }
@@ -85,6 +91,7 @@ pub fn setup_scrollbar_callbacks(
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
+        let mut time_axis = widgets.time_axis.clone();
         let x_scroll_gen = x_scroll_gen.clone();
 
         let mut x_scroll = widgets.x_scroll.clone();
@@ -110,6 +117,7 @@ pub fn setup_scrollbar_callbacks(
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
+            time_axis.redraw();
         });
     }
 
@@ -117,6 +125,7 @@ pub fn setup_scrollbar_callbacks(
     {
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
         let y_scroll_gen = y_scroll_gen.clone();
 
         let mut y_scroll = widgets.y_scroll.clone();
@@ -142,6 +151,7 @@ pub fn setup_scrollbar_callbacks(
             st.spec_renderer.invalidate();
             drop(st);
             spec_display.redraw();
+            freq_axis.redraw();
         });
     }
 
@@ -161,6 +171,7 @@ pub fn setup_zoom_callbacks(
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
+        let mut time_axis = widgets.time_axis.clone();
 
         let mut btn = widgets.btn_time_zoom_in.clone();
         btn.set_callback(move |_| {
@@ -179,6 +190,7 @@ pub fn setup_zoom_callbacks(
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
+            time_axis.redraw();
         });
     }
 
@@ -187,6 +199,7 @@ pub fn setup_zoom_callbacks(
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
+        let mut time_axis = widgets.time_axis.clone();
 
         let mut btn = widgets.btn_time_zoom_out.clone();
         btn.set_callback(move |_| {
@@ -206,6 +219,7 @@ pub fn setup_zoom_callbacks(
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
+            time_axis.redraw();
         });
     }
 
@@ -213,6 +227,7 @@ pub fn setup_zoom_callbacks(
     {
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
 
         let mut btn = widgets.btn_freq_zoom_in.clone();
         btn.set_callback(move |_| {
@@ -225,6 +240,7 @@ pub fn setup_zoom_callbacks(
             st.spec_renderer.invalidate();
             drop(st);
             spec_display.redraw();
+            freq_axis.redraw();
         });
     }
 
@@ -232,6 +248,7 @@ pub fn setup_zoom_callbacks(
     {
         let state = state.clone();
         let mut spec_display = widgets.spec_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
 
         let mut btn = widgets.btn_freq_zoom_out.clone();
         btn.set_callback(move |_| {
@@ -244,6 +261,7 @@ pub fn setup_zoom_callbacks(
             st.spec_renderer.invalidate();
             drop(st);
             spec_display.redraw();
+            freq_axis.redraw();
         });
     }
 }
