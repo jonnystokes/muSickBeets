@@ -215,6 +215,8 @@ fn main() {
         let mut status_bar = widgets.status_bar.clone();
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
+        let mut time_axis = widgets.time_axis.clone();
         let mut scrub_slider = widgets.scrub_slider.clone();
         let mut lbl_time = widgets.lbl_time.clone();
         let enable_spec_widgets = shared.enable_spec_widgets.clone();
@@ -350,6 +352,8 @@ fn main() {
                             num_frames
                         ));
                         spec_display.redraw();
+                        freq_axis.redraw();
+                        time_axis.redraw();
 
                         // Auto-trigger reconstruction with time-filtered spectrogram
                         let tx_clone = tx.clone();
@@ -413,6 +417,8 @@ fn main() {
                                 ));
                                 spec_display.redraw();
                                 waveform_display.redraw();
+                                freq_axis.redraw();
+                                time_axis.redraw();
                             }
                             Err(e) => {
                                 status_bar.set_label(&format!("Reconstruction error: {}", e));

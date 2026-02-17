@@ -37,37 +37,52 @@ fn setup_spectrogram_draw(
             return;
         }
 
-        let Ok(mut st) = state.try_borrow_mut() else { return; };
+        // Extract everything we need from state, then DROP the borrow immediately.
+        // This is critical: axis draw callbacks also need to borrow state in the
+        // same paint cycle, and holding borrow_mut here blocks them.
+        let draw_data = {
+            let Ok(mut st) = state.try_borrow_mut() else { return; };
+            if let Some(spec) = st.spectrogram.clone() {
+                let view = st.view.clone();
+                let proc_time_min = match st.fft_params.time_unit {
+                    TimeUnit::Seconds => st.fft_params.start_time,
+                    TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
+                };
+                let proc_time_max = match st.fft_params.time_unit {
+                    TimeUnit::Seconds => st.fft_params.stop_time,
+                    TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
+                };
+                st.spec_renderer.draw(&spec, &view, proc_time_min, proc_time_max, w.x(), w.y(), w.w(), w.h());
 
-        if let Some(spec) = st.spectrogram.clone() {
-            let view = st.view.clone();
-            // Get processing time range from fft_params (sidebar Start/Stop)
-            let proc_time_min = match st.fft_params.time_unit {
-                TimeUnit::Seconds => st.fft_params.start_time,
-                TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
-            };
-            let proc_time_max = match st.fft_params.time_unit {
-                TimeUnit::Seconds => st.fft_params.stop_time,
-                TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
-            };
-            st.spec_renderer.draw(&spec, &view, proc_time_min, proc_time_max, w.x(), w.y(), w.w(), w.h());
+                let cursor_cx = if st.transport.duration_seconds > 0.0 {
+                    let playback_time = st.recon_start_time + st.audio_player.get_position_seconds();
+                    let cursor_t = st.view.time_to_x(playback_time);
+                    if cursor_t >= 0.0 && cursor_t <= 1.0 {
+                        Some(w.x() + (cursor_t * w.w() as f64) as i32)
+                    } else { None }
+                } else { None };
+                // borrow_mut dropped here at end of block
+                Some(cursor_cx)
+            } else {
+                None
+            }
+        };
+        // State borrow is now released — axis callbacks can borrow freely.
 
-            // Draw playback cursor (playback position is relative to recon_start_time)
-            if st.transport.duration_seconds > 0.0 {
-                let playback_time = st.recon_start_time + st.audio_player.get_position_seconds();
-                let cursor_t = st.view.time_to_x(playback_time);
-                if cursor_t >= 0.0 && cursor_t <= 1.0 {
-                    let cx = w.x() + (cursor_t * w.w() as f64) as i32;
+        match draw_data {
+            Some(cursor_cx) => {
+                if let Some(cx) = cursor_cx {
                     fltk::draw::set_draw_color(theme::color(theme::ACCENT_RED));
                     fltk::draw::draw_line(cx, w.y(), cx, w.y() + w.h());
                 }
             }
-        } else {
-            fltk::draw::set_draw_color(theme::color(theme::BG_DARK));
-            fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
-            fltk::draw::set_draw_color(theme::color(theme::TEXT_DISABLED));
-            fltk::draw::set_font(Font::Helvetica, 14);
-            fltk::draw::draw_text("Load an audio file to begin", w.x() + 10, w.y() + w.h() / 2);
+            None => {
+                fltk::draw::set_draw_color(theme::color(theme::BG_DARK));
+                fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
+                fltk::draw::set_draw_color(theme::color(theme::TEXT_DISABLED));
+                fltk::draw::set_font(Font::Helvetica, 14);
+                fltk::draw::draw_text("Load an audio file to begin", w.x() + 10, w.y() + w.h() / 2);
+            }
         }
     });
 }
@@ -215,31 +230,35 @@ fn setup_waveform_draw(
             return;
         }
 
-        let Ok(mut st) = state.try_borrow_mut() else { return; };
+        // Borrow mut, do all work, then release borrow before returning.
+        // This is critical: axis draw callbacks also need to borrow state in the
+        // same paint cycle, and holding borrow_mut here blocks them.
+        {
+            let Ok(mut st) = state.try_borrow_mut() else { return; };
 
-        // Compute cursor position: playback is relative to recon_start_time
-        let cursor_x = if st.transport.duration_seconds > 0.0 {
-            let playback_time = st.recon_start_time + st.audio_player.get_position_seconds();
-            let t = st.view.time_to_x(playback_time);
-            if t >= 0.0 && t <= 1.0 {
-                Some((t * w.w() as f64) as i32)
+            let cursor_x = if st.transport.duration_seconds > 0.0 {
+                let playback_time = st.recon_start_time + st.audio_player.get_position_seconds();
+                let t = st.view.time_to_x(playback_time);
+                if t >= 0.0 && t <= 1.0 {
+                    Some((t * w.w() as f64) as i32)
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
-        // Clone view and take audio out temporarily to avoid simultaneous mut/immut borrow
-        let view = st.view.clone();
-        let audio_opt = st.reconstructed_audio.take();
-        let recon_start = st.recon_start_time;
-        if let Some(ref audio) = audio_opt {
-            st.wave_renderer.draw(&audio.samples, audio.sample_rate, recon_start, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
-        } else {
-            st.wave_renderer.draw(&[], 44100, 0.0, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
+            let view = st.view.clone();
+            let audio_opt = st.reconstructed_audio.take();
+            let recon_start = st.recon_start_time;
+            if let Some(ref audio) = audio_opt {
+                st.wave_renderer.draw(&audio.samples, audio.sample_rate, recon_start, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
+            } else {
+                st.wave_renderer.draw(&[], 44100, 0.0, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
+            }
+            st.reconstructed_audio = audio_opt;
         }
-        st.reconstructed_audio = audio_opt;
+        // State borrow released — axis callbacks can borrow freely.
     });
 }
 
