@@ -288,7 +288,6 @@ fn setup_freq_axis_draw(
             st.view.freq_min_hz,
             st.view.freq_max_hz,
             &|f| st.view.freq_to_y(f),
-            &|t| st.view.y_to_freq(t),
             w.h(),
         );
 
@@ -432,100 +431,123 @@ fn format_freq_label(freq: f32) -> String {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Generate frequency axis ticks that are evenly spaced in display space
-/// and snapped to "nice" rounded numbers.
+/// with "nice" rounded frequency values.
 ///
 /// Algorithm:
-///  1. Compute ideal evenly-spaced positions in normalized display space [0,1]
-///  2. Map each to frequency via the view's inverse transform (y_to_freq)
-///  3. Snap each to the nearest "nice" round number
-///  4. Map back to display position via freq_to_y
-///  5. Deduplicate and enforce minimum pixel spacing
-///
-/// This works with any frequency scale (linear, log, Power blend) because
-/// the even spacing is computed in display space, not frequency space.
+///  1. Generate ALL nice candidate frequencies in [freq_min, freq_max]
+///     using mantissa-based candidates (log-distributed) with a linear-step
+///     fallback for very narrow ranges.
+///  2. Convert every candidate to a normalized display-space Y position
+///     via freq_to_y (handles linear, log, Power blend automatically).
+///  3. Compute ideal evenly-spaced target positions in display space.
+///  4. For each target, claim the nearest UNCLAIMED candidate.
+///     This avoids the old snap-and-collapse bug where multiple targets
+///     snapped to the same nice number and got deduplicated.
+///  5. Enforce minimum pixel spacing between selected ticks.
 fn generate_freq_ticks(
     freq_min_hz: f32,
     freq_max_hz: f32,
     freq_to_y: &dyn Fn(f32) -> f32,
-    y_to_freq: &dyn Fn(f32) -> f32,
     widget_h: i32,
 ) -> Vec<(f32, f32)> {
     let target_count = (widget_h / 45).max(3).min(20) as usize;
-    let min_spacing_norm = 22.0 / widget_h.max(1) as f32;
-    let range_ratio = freq_max_hz / freq_min_hz.max(1.0);
+    let min_spacing_norm = 28.0 / widget_h.max(1) as f32;
 
-    // Step 1-3: evenly-spaced display positions → frequency → snap to nice
-    let margin = 0.04;
+    // Step 1: generate all nice candidates in the visible range
+    let candidates = generate_nice_candidates(freq_min_hz, freq_max_hz, target_count);
+
+    // Step 2: convert to (freq, y_norm) pairs
+    let cand_pos: Vec<(f32, f32)> = candidates.iter()
+        .map(|&f| (f, freq_to_y(f)))
+        .collect();
+
+    if cand_pos.is_empty() { return vec![]; }
+
+    // Step 3-4: for each ideal position, claim nearest unclaimed candidate
+    let margin = 0.03;
     let usable = 1.0 - 2.0 * margin;
-    let step = if target_count <= 1 { usable } else { usable / (target_count - 1) as f32 };
+    let step = if target_count <= 1 { usable }
+               else { usable / (target_count - 1) as f32 };
 
-    let mut raw: Vec<(f32, f32)> = Vec::new();
+    let mut used = vec![false; cand_pos.len()];
+    let mut selected: Vec<(f32, f32)> = Vec::new();
+
     for i in 0..target_count {
-        let y_norm = margin + i as f32 * step;
-        let freq = y_to_freq(y_norm);
-        let nice = snap_freq_to_nice(freq, range_ratio);
+        let ideal_y = margin + i as f32 * step;
 
-        // Only include if within visible range and not a duplicate
-        if nice >= freq_min_hz && nice <= freq_max_hz {
-            if !raw.iter().any(|&(f, _)| (f - nice).abs() < 0.5) {
-                let actual_y = freq_to_y(nice);
-                raw.push((nice, actual_y));
+        // Find nearest unclaimed candidate
+        let best = cand_pos.iter().enumerate()
+            .filter(|(idx, _)| !used[*idx])
+            .min_by(|(_, (_, y1)), (_, (_, y2))|
+                (*y1 - ideal_y).abs().partial_cmp(&(*y2 - ideal_y).abs()).unwrap()
+            );
+
+        if let Some((idx, &(freq, y_norm))) = best {
+            // Step 5: enforce minimum spacing from already-selected ticks
+            let too_close = selected.iter()
+                .any(|&(_, sy)| (sy - y_norm).abs() < min_spacing_norm);
+            if !too_close {
+                used[idx] = true;
+                selected.push((freq, y_norm));
             }
         }
     }
 
-    // Step 4: sort by frequency (should already be, but ensure after snapping)
-    raw.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-    // Step 5: enforce minimum display-space spacing (greedy bottom-to-top)
-    let mut selected: Vec<(f32, f32)> = Vec::new();
-    for &(freq, y) in &raw {
-        let too_close = selected.iter()
-            .any(|&(_, sy)| (sy - y).abs() < min_spacing_norm);
-        if !too_close {
-            selected.push((freq, y));
-        }
-    }
-
+    selected.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     selected
 }
 
-/// Snap a frequency to the nearest "nice" rounded number.
-/// Adapts granularity based on the visible range ratio (freq_max / freq_min).
-fn snap_freq_to_nice(freq: f32, range_ratio: f32) -> f32 {
-    if freq <= 0.0 { return 1.0; }
+/// Generate all "nice" candidate frequencies in [f_min, f_max].
+///
+/// Two layers of candidates ensure density at every zoom level:
+///  - Mantissa-based: every 0.1 mantissa per decade (1.0, 1.1, 1.2 … 9.9 × 10^n).
+///    This gives ~90 candidates per decade, naturally log-distributed.
+///  - Linear-step fallback: for very narrow ranges where a single decade doesn't
+///    span enough mantissa values, fills in with multiples of a nice linear step.
+fn generate_nice_candidates(f_min: f32, f_max: f32, target_count: usize) -> Vec<f32> {
+    let mut candidates = Vec::new();
+    let desired = target_count * 2;
 
-    let exp = freq.log10().floor() as i32;
-    let mag = 10f32.powi(exp);
-    let mantissa = freq / mag;
+    // ── Mantissa-based candidates (log-distributed) ──
+    let exp_min = (f_min.max(1.0).log10().floor() as i32).max(0);
+    let exp_max = (f_max.log10().ceil() as i32).min(6);
 
-    let closest = if range_ratio < 2.0 {
-        // Ultra fine: round mantissa to nearest 0.1
-        (mantissa * 10.0).round() / 10.0
-    } else if range_ratio < 5.0 {
-        // Fine granularity
-        nearest_in_set(mantissa, &[
-            1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5,
-            5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-        ])
-    } else if range_ratio < 50.0 {
-        // Medium granularity
-        nearest_in_set(mantissa, &[
-            1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
-        ])
-    } else {
-        // Coarse: classic 1-2-5 pattern for very wide ranges
-        nearest_in_set(mantissa, &[1.0, 2.0, 5.0, 10.0])
-    };
+    for exp in exp_min..=exp_max {
+        let mag = 10f32.powi(exp);
+        for mi in 10..100 {
+            let f = mi as f32 / 10.0 * mag;
+            if f >= f_min && f <= f_max {
+                candidates.push(f);
+            }
+        }
+    }
 
-    closest * mag
+    // ── Linear-step fallback (for very narrow ranges) ──
+    if candidates.len() < desired {
+        let range = f_max - f_min;
+        let nice_step = nice_step_value(range / desired.max(1) as f32);
+        let start = (f_min / nice_step).ceil() * nice_step;
+        let mut f = start;
+        while f <= f_max + nice_step * 0.01 {
+            candidates.push(f);
+            f += nice_step;
+        }
+        candidates.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        candidates.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    }
+
+    candidates
 }
 
-/// Find the value in `set` that is closest to `value`.
-fn nearest_in_set(value: f32, set: &[f32]) -> f32 {
-    *set.iter()
-        .min_by(|&&a, &&b|
-            (a - value).abs().partial_cmp(&(b - value).abs()).unwrap()
-        )
-        .unwrap()
+/// Compute a "nice" step value (1, 2, 5 × 10^n) for linear tick spacing.
+fn nice_step_value(raw: f32) -> f32 {
+    if raw <= 0.0 { return 1.0; }
+    let exp = raw.log10().floor();
+    let mag = 10f32.powf(exp);
+    let m = raw / mag;
+    let nice = if m <= 1.0 { 1.0 }
+        else if m <= 2.0 { 2.0 }
+        else if m <= 5.0 { 5.0 }
+        else { 10.0 };
+    nice * mag
 }
