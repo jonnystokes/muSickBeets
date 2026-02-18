@@ -23,7 +23,7 @@ const MENU_H: i32 = 25;
 const STATUS_H: i32 = 25;
 const SIDEBAR_W: i32 = 215;
 const SIDEBAR_INNER_W: i32 = 200;
-const SIDEBAR_INNER_H: i32 = 1100;
+const SIDEBAR_INNER_H: i32 = 1200;
 
 // ─── Widgets struct ─────────────────────────────────────────────────────────────
 // Holds cloneable handles to every widget that callbacks need to access.
