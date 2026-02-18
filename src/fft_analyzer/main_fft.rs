@@ -176,6 +176,7 @@ fn main() {
         st.view.brightness = cfg.brightness;
         st.view.gamma = cfg.gamma;
         st.view.colormap = data::ColormapId::from_index(cfg.colormap_index());
+        st.view.custom_gradient = cfg.parse_custom_gradient();
         st.view.recon_freq_min_hz = cfg.recon_freq_min_hz;
         st.view.recon_freq_max_hz = cfg.recon_freq_max_hz;
         st.view.recon_freq_count = cfg.recon_freq_count;
@@ -198,6 +199,7 @@ fn main() {
     callbacks_file::setup_rerun_callback(&widgets, &state, &tx, &shared);
     callbacks_ui::setup_parameter_callbacks(&widgets, &state, &shared);
     callbacks_ui::setup_display_callbacks(&widgets, &state);
+    callbacks_ui::setup_gradient_editor(&widgets, &state);
     callbacks_ui::setup_playback_callbacks(&widgets, &state);
     callbacks_ui::setup_misc_callbacks(&widgets, &state, &win);
     callbacks_draw::setup_draw_callbacks(&widgets, &state);

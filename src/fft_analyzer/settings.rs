@@ -58,6 +58,10 @@ pub struct Settings {
     // ── Playback ──
     pub repeat_playback: bool,
 
+    // ── Custom Gradient ──
+    /// Serialized as "pos:r:g:b|pos:r:g:b|..." (all floats 0..1)
+    pub custom_gradient: String,
+
     // ── Colors (hex) ──
     pub color_background: u32,
     pub color_panel: u32,
@@ -125,6 +129,9 @@ impl Default for Settings {
             // Playback
             repeat_playback: false,
 
+            // Custom Gradient (default: SebLague classic)
+            custom_gradient: String::new(),
+
             // Colors
             color_background: 0x1e1e2e,
             color_panel: 0x313244,
@@ -140,7 +147,7 @@ impl Default for Settings {
 }
 
 use crate::app_state::AppState;
-use crate::data::FreqScale;
+use crate::data::{FreqScale, GradientStop, default_custom_gradient};
 
 #[allow(dead_code)]
 impl Settings {
@@ -223,6 +230,9 @@ impl Settings {
         // UI
         cfg.lock_to_active = st.lock_to_active;
 
+        // Custom Gradient
+        cfg.custom_gradient = serialize_gradient(&st.view.custom_gradient);
+
         cfg
     }
 
@@ -303,6 +313,13 @@ impl Settings {
         s.push_str(&format!("repeat_playback = {}\n", self.repeat_playback));
         s.push('\n');
 
+        if !self.custom_gradient.is_empty() {
+            s.push_str("[CustomGradient]\n");
+            s.push_str("# Format: pos:r:g:b|pos:r:g:b|... (floats 0-1)\n");
+            s.push_str(&format!("custom_gradient = {}\n", self.custom_gradient));
+            s.push('\n');
+        }
+
         s.push_str("[Colors]\n");
         s.push_str("# Colors are in hex (0xRRGGBB)\n");
         s.push_str(&format!("color_background = 0x{:06x}\n", self.color_background));
@@ -371,6 +388,9 @@ impl Settings {
         if let Some(v) = map.get("lock_to_active") { self.lock_to_active = v == "true"; }
         if let Some(v) = map.get("repeat_playback") { self.repeat_playback = v == "true"; }
 
+        // Custom Gradient
+        if let Some(v) = map.get("custom_gradient") { self.custom_gradient = v.clone(); }
+
         // Colors
         if let Some(v) = map.get("color_background") { if let Some(n) = parse_hex(v) { self.color_background = n; } }
         if let Some(v) = map.get("color_panel") { if let Some(n) = parse_hex(v) { self.color_panel = n; } }
@@ -404,8 +424,15 @@ impl Settings {
             "Greyscale" => 4,
             "Inverted Grey" => 5,
             "Geek" => 6,
+            "Custom" => 7,
             _ => 0,
         }
+    }
+
+    /// Parse the custom gradient string into GradientStop vec.
+    /// Returns default gradient if string is empty or invalid.
+    pub fn parse_custom_gradient(&self) -> Vec<GradientStop> {
+        deserialize_gradient(&self.custom_gradient)
     }
 }
 
@@ -431,4 +458,33 @@ fn parse_ini_to_map(content: &str) -> HashMap<String, String> {
 fn parse_hex(s: &str) -> Option<u32> {
     let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
     u32::from_str_radix(s, 16).ok()
+}
+
+/// Serialize gradient stops to string: "pos:r:g:b|pos:r:g:b|..."
+fn serialize_gradient(stops: &[GradientStop]) -> String {
+    stops.iter()
+        .map(|s| format!("{:.4}:{:.4}:{:.4}:{:.4}", s.position, s.r, s.g, s.b))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// Deserialize gradient stops from string. Returns default gradient on failure.
+fn deserialize_gradient(s: &str) -> Vec<GradientStop> {
+    if s.trim().is_empty() {
+        return default_custom_gradient();
+    }
+    let mut stops = Vec::new();
+    for part in s.split('|') {
+        let vals: Vec<f32> = part.split(':')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect();
+        if vals.len() == 4 {
+            stops.push(GradientStop::new(vals[0], vals[1], vals[2], vals[3]));
+        }
+    }
+    if stops.len() < 2 {
+        return default_custom_gradient();
+    }
+    stops.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+    stops
 }

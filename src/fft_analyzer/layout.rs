@@ -47,6 +47,7 @@ pub struct Widgets {
     pub check_center: fltk::button::CheckButton,
     pub btn_rerun: Button,
     pub colormap_choice: Choice,
+    pub gradient_preview: Widget,
     pub slider_scale: HorNiceSlider,
     pub lbl_scale_val: Frame,
     pub slider_threshold: HorNiceSlider,
@@ -316,8 +317,16 @@ pub fn build_ui() -> (Window, Widgets) {
     colormap_choice.set_value(0);
     colormap_choice.set_color(theme::color(theme::BG_WIDGET));
     colormap_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(&mut colormap_choice, "Color scheme for the spectrogram display.\nClassic: blue-cyan-green-yellow-red (rainbow)\nViridis/Magma/Inferno: perceptually uniform scientific colormaps\nGreyscale: black to white\nInverted Grey: white to black (print-friendly)");
+    set_tooltip(&mut colormap_choice, "Color scheme for the spectrogram display.\nClassic: blue-cyan-green-yellow-red (rainbow)\nViridis/Magma/Inferno: perceptually uniform scientific colormaps\nGreyscale: black to white\nInverted Grey: white to black (print-friendly)\nCustom: editable gradient with draggable color stops");
     left.fixed(&colormap_choice, 25);
+
+    // Gradient editor area (preview bar + interactive stop handles)
+    // Visible for all colormaps as a preview, interactive only when Custom selected
+    let mut gradient_preview = Widget::default();
+    gradient_preview.set_frame(FrameType::BorderBox);
+    gradient_preview.set_color(theme::color(theme::BG_WIDGET));
+    set_tooltip(&mut gradient_preview, "Custom gradient editor.\nClick: add a color stop\nDrag: move a stop\nRight-click: delete a stop\nDouble-click a stop: change its color\nSelect 'Custom' colormap to edit.");
+    left.fixed(&gradient_preview, 30);
 
     // Freq Scale Power slider (0.0 = linear, 1.0 = log, anything between)
     let mut slider_scale = HorNiceSlider::default();
@@ -702,6 +711,7 @@ pub fn build_ui() -> (Window, Widgets) {
         check_center,
         btn_rerun,
         colormap_choice,
+        gradient_preview,
         slider_scale,
         lbl_scale_val,
         slider_threshold,
