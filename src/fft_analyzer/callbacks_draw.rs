@@ -1,3 +1,4 @@
+
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -281,26 +282,13 @@ fn setup_freq_axis_draw(
         let Ok(st) = state.try_borrow() else { return; };
         if st.spectrogram.is_none() { return; }
 
-        // Generate evenly-spaced nice ticks adapted to the current scale.
-        // This works in display space so ticks appear visually uniform
-        // regardless of linear, log, or power-blend frequency scale.
+        // Generate frequency ticks locked to Hz values (stable during scrolling)
         let ticks = generate_freq_ticks(
             st.view.freq_min_hz,
             st.view.freq_max_hz,
             &|f| st.view.freq_to_y(f),
             w.h(),
         );
-
-        // Compute label precision from minimum spacing between adjacent ticks.
-        // This ensures labels like "21.10k" vs "21.12k" when zoomed in,
-        // and clean "18k" vs "19k" when zoomed out.
-        let min_diff = if ticks.len() >= 2 {
-            ticks.windows(2)
-                .map(|pair| (pair[1].0 - pair[0].0).abs())
-                .fold(f32::MAX, f32::min)
-        } else {
-            st.view.freq_max_hz - st.view.freq_min_hz
-        };
 
         fltk::draw::set_font(Font::Helvetica, 9);
         for &(freq, y_norm) in &ticks {
@@ -310,8 +298,8 @@ fn setup_freq_axis_draw(
             fltk::draw::set_draw_color(theme::color(theme::BORDER));
             fltk::draw::draw_line(w.x() + w.w() - 6, py, w.x() + w.w(), py);
 
-            // Label text with adaptive precision
-            let label = format_freq_label(freq, min_diff);
+            // Label text - always integers with commas
+            let label = format_freq_label(freq);
             fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
             fltk::draw::draw_text(&label, w.x() + 2, py + 3);
         }
@@ -419,173 +407,164 @@ fn setup_time_axis_draw(
     });
 }
 
-/// Format a frequency value as a readable label.
-/// `min_diff` is the minimum Hz difference between adjacent ticks,
-/// used to compute enough decimal precision so labels are distinguishable.
-fn format_freq_label(freq: f32, min_diff: f32) -> String {
-    if freq >= 1000.0 {
-        let k = freq / 1000.0;
-        let k_diff = min_diff / 1000.0;
-        // Enough decimals of kHz to distinguish adjacent ticks
-        let prec = if k_diff >= 1.0 { 0 }
-            else { ((-k_diff.log10()).ceil() as usize).clamp(1, 3) };
-        if prec == 0 {
-            format!("{}k", k.round() as i32)
-        } else {
-            format!("{:.prec$}k", k, prec = prec)
-        }
-    } else {
-        let prec = if min_diff >= 1.0 { 0 }
-            else { ((-min_diff.log10()).ceil() as usize).clamp(1, 2) };
-        if prec == 0 {
-            format!("{}", freq.round() as i32)
-        } else {
-            format!("{:.prec$}", freq, prec = prec)
-        }
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-//  DISPLAY-SPACE FREQUENCY TICK GENERATION
+//  FREQUENCY TICK GENERATION (PIXEL-SPACE-FIRST)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Generate frequency axis ticks that are evenly spaced in display space
-/// with preference for "nice" rounded frequency values.
-///
+/// Generate frequency axis ticks by working BACKWARDS from evenly-spaced pixels.
+/// 
+/// This approach works universally for Linear, Log, and Power-blended scales without
+/// any mode-specific logic. The key insight: start with even pixel spacing, convert
+/// to frequencies using the inverse mapping, then round to nice values.
+/// 
 /// Algorithm:
-///  1. Generate ALL nice candidate frequencies in [freq_min, freq_max]
-///     using mantissa-based candidates (log-distributed) with a linear-step
-///     fallback for very narrow ranges.
-///  2. Convert every candidate to a normalized display-space Y position
-///     via freq_to_y (handles linear, log, Power blend automatically).
-///  3. Compute ideal evenly-spaced target positions in display space.
-///  4. For each target, claim the best candidate using NICENESS-WEIGHTED
-///     distance: `|y - ideal| + niceness_penalty * weight`.
-///     This prefers round numbers (1000, 5000, 20000) over ugly ones
-///     (19200, 17300) when both are near an ideal position.
-///  5. Enforce minimum pixel spacing between selected ticks.
+/// 1. Generate evenly-spaced Y positions in normalized space (0.0 to 1.0)
+/// 2. Convert each Y to frequency using y_to_freq() - handles ALL scaling modes
+/// 3. Round each frequency to a nearby "nice" value
+/// 4. Remove duplicates that may arise from rounding
+/// 5. Convert back to Y positions for final rendering via freq_to_y()
+/// 
+/// Ticks are LOCKED to frequency values - scrolling moves them smoothly in pixel space.
+/// Recalculation happens when: zoom changes, window resizes, or scale slider moves.
 fn generate_freq_ticks(
     freq_min_hz: f32,
     freq_max_hz: f32,
     freq_to_y: &dyn Fn(f32) -> f32,
     widget_h: i32,
 ) -> Vec<(f32, f32)> {
-    let target_count = (widget_h / 45).max(3).min(20) as usize;
-    let min_spacing_norm = 28.0 / widget_h.max(1) as f32;
-
-    // Step 1: generate all nice candidates in the visible range
-    let candidates = generate_nice_candidates(freq_min_hz, freq_max_hz, target_count);
-
-    // Step 2: convert to (freq, y_norm, niceness_penalty) triples
-    let cand_pos: Vec<(f32, f32, f32)> = candidates.iter()
-        .map(|&f| (f, freq_to_y(f), niceness_penalty(f)))
-        .collect();
-
-    if cand_pos.is_empty() { return vec![]; }
-
-    // Step 3: compute ideal evenly-spaced positions
-    let margin = 0.03;
+    // Target spacing: approximately 45 pixels between ticks
+    let desired_pixel_gap = 45.0;
+    let target_count = (widget_h as f32 / desired_pixel_gap).max(3.0).min(20.0) as usize;
+    
+    if target_count == 0 {
+        return vec![];
+    }
+    
+    // Step 1: Generate evenly-spaced Y positions (normalized 0.0 to 1.0, bottom to top)
+    let margin = 0.03; // 3% margin top and bottom
     let usable = 1.0 - 2.0 * margin;
-    let step = if target_count <= 1 { usable }
-               else { usable / (target_count - 1) as f32 };
-
-    // Niceness weight: how much "ugliness" inflates the effective distance.
-    // At 0.5 × step, a maximally-ugly candidate (penalty 1.0) is penalized
-    // by half a step, letting a nicer candidate ~half a step further away win.
-    let penalty_weight = step * 0.5;
-
-    // Step 4: for each ideal position, claim best candidate (niceness-weighted)
-    let mut used = vec![false; cand_pos.len()];
-    let mut selected: Vec<(f32, f32)> = Vec::new();
-
-    for i in 0..target_count {
-        let ideal_y = margin + i as f32 * step;
-
-        let best = cand_pos.iter().enumerate()
-            .filter(|(idx, _)| !used[*idx])
-            .min_by(|(_, (_, y1, p1)), (_, (_, y2, p2))| {
-                let d1 = (*y1 - ideal_y).abs() + p1 * penalty_weight;
-                let d2 = (*y2 - ideal_y).abs() + p2 * penalty_weight;
-                d1.partial_cmp(&d2).unwrap()
-            });
-
-        if let Some((idx, &(freq, y_norm, _))) = best {
-            // Step 5: enforce minimum spacing from already-selected ticks
-            let too_close = selected.iter()
-                .any(|&(_, sy)| (sy - y_norm).abs() < min_spacing_norm);
-            if !too_close {
-                used[idx] = true;
-                selected.push((freq, y_norm));
-            }
+    let y_step = if target_count <= 1 { usable } else { usable / (target_count - 1) as f32 };
+    
+    let y_positions: Vec<f32> = (0..target_count)
+        .map(|i| margin + i as f32 * y_step)
+        .collect();
+    
+    // Step 2: Convert Y positions to raw frequencies using INVERSE mapping
+    // This is where the magic happens - binary search inversion handles all scaling modes
+    let raw_freqs: Vec<f32> = y_positions.iter()
+        .map(|&y| y_to_freq_inverse(y, freq_min_hz, freq_max_hz, freq_to_y))
+        .collect();
+    
+    // Step 3: Round each frequency to a nice value
+    // Calculate local step size to determine appropriate rounding
+    let nice_freqs: Vec<f32> = raw_freqs.iter().enumerate()
+        .map(|(i, &freq)| {
+            // Determine local step by looking at neighbors
+            let local_step = if i + 1 < raw_freqs.len() {
+                raw_freqs[i + 1] - freq
+            } else if i > 0 {
+                freq - raw_freqs[i - 1]
+            } else {
+                (freq_max_hz - freq_min_hz) / target_count as f32
+            };
+            
+            round_to_nice_freq(freq, local_step)
+        })
+        .collect();
+    
+    // Step 4: Remove duplicates that may have resulted from rounding
+    let mut unique_freqs: Vec<f32> = Vec::new();
+    for &freq in &nice_freqs {
+        if unique_freqs.is_empty() || (freq - *unique_freqs.last().unwrap()).abs() > 0.5 {
+            unique_freqs.push(freq);
         }
     }
-
-    selected.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    selected
+    
+    // Step 5: Convert back to Y positions for rendering
+    let final_ticks: Vec<(f32, f32)> = unique_freqs.iter()
+        .map(|&freq| (freq, freq_to_y(freq)))
+        .collect();
+    
+    final_ticks
 }
 
-/// How "ugly" is a frequency value? 0.0 = very round, 1.0 = least round.
-/// Tests absolute divisibility by decreasing "nice" factors.
-fn niceness_penalty(freq: f32) -> f32 {
-    let f = freq.round();
-    let check = |d: f32| -> bool { f % d < 0.5 || (d - f % d) < 0.5 };
-
-    if check(10000.0) { return 0.0; }
-    if check(5000.0)  { return 0.1; }
-    if check(2000.0)  { return 0.2; }
-    if check(1000.0)  { return 0.3; }
-    if check(500.0)   { return 0.4; }
-    if check(200.0)   { return 0.5; }
-    if check(100.0)   { return 0.6; }
-    if check(50.0)    { return 0.7; }
-    if check(20.0)    { return 0.8; }
-    if check(10.0)    { return 0.9; }
-    1.0
-}
-
-/// Generate all "nice" candidate frequencies in [f_min, f_max].
-///
-/// Two layers of candidates ensure density at every zoom level:
-///  - Mantissa-based: every 0.1 mantissa per decade (1.0, 1.1, 1.2 … 9.9 × 10^n).
-///    This gives ~90 candidates per decade, naturally log-distributed.
-///  - Linear-step fallback: for very narrow ranges where a single decade doesn't
-///    span enough mantissa values, fills in with multiples of a nice linear step.
-fn generate_nice_candidates(f_min: f32, f_max: f32, target_count: usize) -> Vec<f32> {
-    let mut candidates = Vec::new();
-    let desired = target_count * 2;
-
-    // ── Mantissa-based candidates (log-distributed) ──
-    let exp_min = (f_min.max(1.0).log10().floor() as i32).max(0);
-    let exp_max = (f_max.log10().ceil() as i32).min(6);
-
-    for exp in exp_min..=exp_max {
-        let mag = 10f32.powi(exp);
-        for mi in 10..100 {
-            let f = mi as f32 / 10.0 * mag;
-            if f >= f_min && f <= f_max {
-                candidates.push(f);
-            }
+/// Inverse mapping from normalized Y (0.0 to 1.0, bottom to top) to frequency.
+/// Uses binary search to invert the freq_to_y function, which handles all scaling modes.
+/// This is more robust than duplicating the scaling logic from ViewState.
+fn y_to_freq_inverse(
+    y_target: f32,
+    freq_min_hz: f32,
+    freq_max_hz: f32,
+    freq_to_y: &dyn Fn(f32) -> f32,
+) -> f32 {
+    // Binary search to find frequency that maps to y_target
+    let mut low = freq_min_hz;
+    let mut high = freq_max_hz;
+    
+    // 20 iterations gives us precision better than 1/1,000,000 of the range
+    for _ in 0..20 {
+        let mid = (low + high) / 2.0;
+        let y_mid = freq_to_y(mid);
+        
+        if y_mid < y_target {
+            low = mid;
+        } else {
+            high = mid;
         }
     }
-
-    // ── Linear-step fallback (for very narrow ranges) ──
-    if candidates.len() < desired {
-        let range = f_max - f_min;
-        let nice_step = nice_step_value(range / desired.max(1) as f32);
-        let start = (f_min / nice_step).ceil() * nice_step;
-        let mut f = start;
-        while f <= f_max + nice_step * 0.01 {
-            candidates.push(f);
-            f += nice_step;
-        }
-        candidates.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        candidates.dedup_by(|a, b| (*a - *b).abs() < 0.5);
-    }
-
-    candidates
+    
+    (low + high) / 2.0
 }
 
-/// Compute a "nice" step value (1, 2, 5 × 10^n) for linear tick spacing.
+/// Round a frequency to a "nice" value based on the local step size.
+/// Uses the 1-2-5 pattern to find appropriate rounding granularity.
+fn round_to_nice_freq(freq: f32, local_step: f32) -> f32 {
+    if local_step <= 0.0 {
+        return freq.round();
+    }
+    
+    // Determine rounding granularity from step size
+    let granularity = nice_step_value(local_step);
+    
+    // Round to nearest multiple of granularity
+    (freq / granularity).round() * granularity
+}
+
+/// Format a frequency value as an integer with commas.
+/// Never uses "k" suffix - always shows full number with thousand separators.
+/// 
+/// Examples:
+/// - 100 → "100"
+/// - 1000 → "1,000"
+/// - 21100 → "21,100"
+/// - 211000 → "211,000"
+fn format_freq_label(freq: f32) -> String {
+    let rounded = freq.round() as i64;
+    format_with_commas(rounded)
+}
+
+/// Format an integer with comma thousand separators.
+fn format_with_commas(n: i64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    
+    for (i, ch) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*ch);
+    }
+    
+    result
+}
+
+/// Compute a "nice" step value using the 1-2-5 pattern across decades.
+/// 
+/// Given any raw step size, rounds it UP to the nearest value from:
+/// ..., 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, ...
+/// 
+/// This ensures tick spacing uses human-friendly round numbers.
 fn nice_step_value(raw: f32) -> f32 {
     if raw <= 0.0 { return 1.0; }
     let exp = raw.log10().floor();
@@ -597,3 +576,4 @@ fn nice_step_value(raw: f32) -> f32 {
         else { 10.0 };
     nice * mag
 }
+
