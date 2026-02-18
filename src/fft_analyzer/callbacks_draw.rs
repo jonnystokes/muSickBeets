@@ -291,6 +291,17 @@ fn setup_freq_axis_draw(
             w.h(),
         );
 
+        // Compute label precision from minimum spacing between adjacent ticks.
+        // This ensures labels like "21.10k" vs "21.12k" when zoomed in,
+        // and clean "18k" vs "19k" when zoomed out.
+        let min_diff = if ticks.len() >= 2 {
+            ticks.windows(2)
+                .map(|pair| (pair[1].0 - pair[0].0).abs())
+                .fold(f32::MAX, f32::min)
+        } else {
+            st.view.freq_max_hz - st.view.freq_min_hz
+        };
+
         fltk::draw::set_font(Font::Helvetica, 9);
         for &(freq, y_norm) in &ticks {
             let py = w.y() + w.h() - (y_norm * w.h() as f32) as i32;
@@ -299,8 +310,8 @@ fn setup_freq_axis_draw(
             fltk::draw::set_draw_color(theme::color(theme::BORDER));
             fltk::draw::draw_line(w.x() + w.w() - 6, py, w.x() + w.w(), py);
 
-            // Label text
-            let label = format_freq_label(freq);
+            // Label text with adaptive precision
+            let label = format_freq_label(freq, min_diff);
             fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
             fltk::draw::draw_text(&label, w.x() + 2, py + 3);
         }
@@ -409,20 +420,28 @@ fn setup_time_axis_draw(
 }
 
 /// Format a frequency value as a readable label.
-fn format_freq_label(freq: f32) -> String {
+/// `min_diff` is the minimum Hz difference between adjacent ticks,
+/// used to compute enough decimal precision so labels are distinguishable.
+fn format_freq_label(freq: f32, min_diff: f32) -> String {
     if freq >= 1000.0 {
         let k = freq / 1000.0;
-        if k == k.floor() {
-            format!("{}k", k as i32)
+        let k_diff = min_diff / 1000.0;
+        // Enough decimals of kHz to distinguish adjacent ticks
+        let prec = if k_diff >= 1.0 { 0 }
+            else { ((-k_diff.log10()).ceil() as usize).clamp(1, 3) };
+        if prec == 0 {
+            format!("{}k", k.round() as i32)
         } else {
-            format!("{:.1}k", k)
+            format!("{:.prec$}k", k, prec = prec)
         }
-    } else if freq >= 100.0 {
-        format!("{}", freq as i32)
-    } else if freq == freq.floor() {
-        format!("{}", freq as i32)
     } else {
-        format!("{:.1}", freq)
+        let prec = if min_diff >= 1.0 { 0 }
+            else { ((-min_diff.log10()).ceil() as usize).clamp(1, 2) };
+        if prec == 0 {
+            format!("{}", freq.round() as i32)
+        } else {
+            format!("{:.prec$}", freq, prec = prec)
+        }
     }
 }
 
@@ -431,7 +450,7 @@ fn format_freq_label(freq: f32) -> String {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Generate frequency axis ticks that are evenly spaced in display space
-/// with "nice" rounded frequency values.
+/// with preference for "nice" rounded frequency values.
 ///
 /// Algorithm:
 ///  1. Generate ALL nice candidate frequencies in [freq_min, freq_max]
@@ -440,9 +459,10 @@ fn format_freq_label(freq: f32) -> String {
 ///  2. Convert every candidate to a normalized display-space Y position
 ///     via freq_to_y (handles linear, log, Power blend automatically).
 ///  3. Compute ideal evenly-spaced target positions in display space.
-///  4. For each target, claim the nearest UNCLAIMED candidate.
-///     This avoids the old snap-and-collapse bug where multiple targets
-///     snapped to the same nice number and got deduplicated.
+///  4. For each target, claim the best candidate using NICENESS-WEIGHTED
+///     distance: `|y - ideal| + niceness_penalty * weight`.
+///     This prefers round numbers (1000, 5000, 20000) over ugly ones
+///     (19200, 17300) when both are near an ideal position.
 ///  5. Enforce minimum pixel spacing between selected ticks.
 fn generate_freq_ticks(
     freq_min_hz: f32,
@@ -456,33 +476,40 @@ fn generate_freq_ticks(
     // Step 1: generate all nice candidates in the visible range
     let candidates = generate_nice_candidates(freq_min_hz, freq_max_hz, target_count);
 
-    // Step 2: convert to (freq, y_norm) pairs
-    let cand_pos: Vec<(f32, f32)> = candidates.iter()
-        .map(|&f| (f, freq_to_y(f)))
+    // Step 2: convert to (freq, y_norm, niceness_penalty) triples
+    let cand_pos: Vec<(f32, f32, f32)> = candidates.iter()
+        .map(|&f| (f, freq_to_y(f), niceness_penalty(f)))
         .collect();
 
     if cand_pos.is_empty() { return vec![]; }
 
-    // Step 3-4: for each ideal position, claim nearest unclaimed candidate
+    // Step 3: compute ideal evenly-spaced positions
     let margin = 0.03;
     let usable = 1.0 - 2.0 * margin;
     let step = if target_count <= 1 { usable }
                else { usable / (target_count - 1) as f32 };
 
+    // Niceness weight: how much "ugliness" inflates the effective distance.
+    // At 0.5 × step, a maximally-ugly candidate (penalty 1.0) is penalized
+    // by half a step, letting a nicer candidate ~half a step further away win.
+    let penalty_weight = step * 0.5;
+
+    // Step 4: for each ideal position, claim best candidate (niceness-weighted)
     let mut used = vec![false; cand_pos.len()];
     let mut selected: Vec<(f32, f32)> = Vec::new();
 
     for i in 0..target_count {
         let ideal_y = margin + i as f32 * step;
 
-        // Find nearest unclaimed candidate
         let best = cand_pos.iter().enumerate()
             .filter(|(idx, _)| !used[*idx])
-            .min_by(|(_, (_, y1)), (_, (_, y2))|
-                (*y1 - ideal_y).abs().partial_cmp(&(*y2 - ideal_y).abs()).unwrap()
-            );
+            .min_by(|(_, (_, y1, p1)), (_, (_, y2, p2))| {
+                let d1 = (*y1 - ideal_y).abs() + p1 * penalty_weight;
+                let d2 = (*y2 - ideal_y).abs() + p2 * penalty_weight;
+                d1.partial_cmp(&d2).unwrap()
+            });
 
-        if let Some((idx, &(freq, y_norm))) = best {
+        if let Some((idx, &(freq, y_norm, _))) = best {
             // Step 5: enforce minimum spacing from already-selected ticks
             let too_close = selected.iter()
                 .any(|&(_, sy)| (sy - y_norm).abs() < min_spacing_norm);
@@ -495,6 +522,25 @@ fn generate_freq_ticks(
 
     selected.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     selected
+}
+
+/// How "ugly" is a frequency value? 0.0 = very round, 1.0 = least round.
+/// Tests absolute divisibility by decreasing "nice" factors.
+fn niceness_penalty(freq: f32) -> f32 {
+    let f = freq.round();
+    let check = |d: f32| -> bool { f % d < 0.5 || (d - f % d) < 0.5 };
+
+    if check(10000.0) { return 0.0; }
+    if check(5000.0)  { return 0.1; }
+    if check(2000.0)  { return 0.2; }
+    if check(1000.0)  { return 0.3; }
+    if check(500.0)   { return 0.4; }
+    if check(200.0)   { return 0.5; }
+    if check(100.0)   { return 0.6; }
+    if check(50.0)    { return 0.7; }
+    if check(20.0)    { return 0.8; }
+    if check(10.0)    { return 0.9; }
+    1.0
 }
 
 /// Generate all "nice" candidate frequencies in [f_min, f_max].
