@@ -1,4 +1,4 @@
-use crate::data::ColormapId;
+use crate::data::{ColormapId, GradientStop, eval_gradient};
 
 const LUT_SIZE: usize = 1024;
 
@@ -10,6 +10,7 @@ pub struct ColorLUT {
     brightness: f32,
     gamma: f32,
     colormap: ColormapId,
+    custom_stops: Vec<GradientStop>,
 }
 
 impl ColorLUT {
@@ -21,6 +22,7 @@ impl ColorLUT {
             brightness: brightness.clamp(0.1, 3.0),
             gamma: gamma.clamp(0.1, 5.0),
             colormap,
+            custom_stops: Vec::new(),
         };
         lut.rebuild();
         lut
@@ -64,6 +66,20 @@ impl ColorLUT {
         }
     }
 
+    /// Update the custom gradient stops. Returns true if the LUT was rebuilt.
+    pub fn set_custom_stops(&mut self, stops: &[GradientStop]) -> bool {
+        if self.custom_stops.len() != stops.len()
+            || self.custom_stops.iter().zip(stops.iter()).any(|(a, b)| a != b)
+        {
+            self.custom_stops = stops.to_vec();
+            if self.colormap == ColormapId::Custom {
+                self.rebuild();
+                return true;
+            }
+        }
+        false
+    }
+
     /// Look up a color for a raw linear magnitude value.
     /// Converts magnitude to dB, normalizes to [threshold_db, db_ceiling] → [0,1],
     /// then indexes into the pre-built LUT.
@@ -88,7 +104,17 @@ impl ColorLUT {
             ColormapId::Greyscale => Self::colormap_greyscale(intensity),
             ColormapId::InvertedGrey => Self::colormap_inverted_grey(intensity),
             ColormapId::Geek => Self::colormap_geek(intensity),
+            ColormapId::Custom => self.colormap_custom(intensity),
         }
+    }
+
+    fn colormap_custom(&self, t: f32) -> (u8, u8, u8) {
+        let (r, g, b) = eval_gradient(&self.custom_stops, t.clamp(0.0, 1.0));
+        (
+            (r.clamp(0.0, 1.0) * 255.0) as u8,
+            (g.clamp(0.0, 1.0) * 255.0) as u8,
+            (b.clamp(0.0, 1.0) * 255.0) as u8,
+        )
     }
 
     /// SebLague-style 7-point gradient:

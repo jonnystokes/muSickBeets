@@ -6,4 +6,4 @@ pub mod view_state;
 pub use audio_data::AudioData;
 pub use fft_params::{FftParams, WindowType, TimeUnit};
 pub use spectrogram::{Spectrogram, FftFrame};
-pub use view_state::{ViewState, FreqScale, ColormapId, TransportState};
+pub use view_state::{ViewState, FreqScale, ColormapId, TransportState, GradientStop, default_custom_gradient, eval_gradient};

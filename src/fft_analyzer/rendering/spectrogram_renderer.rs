@@ -34,6 +34,9 @@ impl SpectrogramRenderer {
         if self.color_lut.set_params(view.threshold_db, view.db_ceiling, view.brightness, view.gamma, view.colormap) {
             self.cache_valid = false;
         }
+        if self.color_lut.set_custom_stops(&view.custom_gradient) {
+            self.cache_valid = false;
+        }
     }
 
     fn view_hash(view: &ViewState, proc_time_min: f64, proc_time_max: f64, w: i32, h: i32) -> u64 {
@@ -59,6 +62,13 @@ impl SpectrogramRenderer {
         hash = hash.wrapping_mul(31).wrapping_add(view.recon_freq_count as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_min_hz * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_max_hz * 100.0) as u64);
+        // Include custom gradient in hash
+        for stop in &view.custom_gradient {
+            hash = hash.wrapping_mul(31).wrapping_add((stop.position * 10000.0) as u64);
+            hash = hash.wrapping_mul(31).wrapping_add((stop.r * 255.0) as u64);
+            hash = hash.wrapping_mul(31).wrapping_add((stop.g * 255.0) as u64);
+            hash = hash.wrapping_mul(31).wrapping_add((stop.b * 255.0) as u64);
+        }
         hash
     }
 

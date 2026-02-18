@@ -1,3 +1,62 @@
+/// A single color stop in a custom gradient (position 0.0..1.0, color as RGB floats 0.0..1.0).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientStop {
+    pub position: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+
+impl GradientStop {
+    pub fn new(position: f32, r: f32, g: f32, b: f32) -> Self {
+        Self { position: position.clamp(0.0, 1.0), r, g, b }
+    }
+}
+
+/// Default gradient: SebLague-style rainbow (Black → Purple → Blue → Green → Yellow → Orange → Red)
+pub fn default_custom_gradient() -> Vec<GradientStop> {
+    vec![
+        GradientStop::new(0.0000, 0.00, 0.00, 0.00),
+        GradientStop::new(0.2618, 0.27, 0.11, 0.42),
+        GradientStop::new(0.4147, 0.17, 0.47, 0.92),
+        GradientStop::new(0.6559, 0.34, 0.92, 0.22),
+        GradientStop::new(0.7618, 0.88, 0.88, 0.12),
+        GradientStop::new(0.8735, 1.00, 0.56, 0.10),
+        GradientStop::new(0.9559, 1.00, 0.00, 0.00),
+    ]
+}
+
+/// Evaluate a custom gradient at position t (0..1) using linear interpolation between stops.
+pub fn eval_gradient(stops: &[GradientStop], t: f32) -> (f32, f32, f32) {
+    if stops.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    if stops.len() == 1 || t <= stops[0].position {
+        return (stops[0].r, stops[0].g, stops[0].b);
+    }
+    let last = &stops[stops.len() - 1];
+    if t >= last.position {
+        return (last.r, last.g, last.b);
+    }
+    // Find bracketing stops
+    let mut idx = 0;
+    for i in 1..stops.len() {
+        if t < stops[i].position {
+            break;
+        }
+        idx = i;
+    }
+    let s0 = &stops[idx];
+    let s1 = &stops[(idx + 1).min(stops.len() - 1)];
+    let seg_len = s1.position - s0.position;
+    let seg_t = if seg_len.abs() < 1e-6 { 0.0 } else { ((t - s0.position) / seg_len).clamp(0.0, 1.0) };
+    (
+        s0.r + (s1.r - s0.r) * seg_t,
+        s0.g + (s1.g - s0.g) * seg_t,
+        s0.b + (s1.b - s0.b) * seg_t,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
 pub enum FreqScale {
@@ -15,6 +74,7 @@ pub enum ColormapId {
     Greyscale,
     InvertedGrey,
     Geek,
+    Custom,
 }
 
 impl ColormapId {
@@ -26,6 +86,7 @@ impl ColormapId {
         ColormapId::Greyscale,
         ColormapId::InvertedGrey,
         ColormapId::Geek,
+        ColormapId::Custom,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -37,6 +98,7 @@ impl ColormapId {
             ColormapId::Greyscale => "Greyscale",
             ColormapId::InvertedGrey => "Inverted Grey",
             ColormapId::Geek => "Geek",
+            ColormapId::Custom => "Custom",
         }
     }
 
@@ -62,6 +124,9 @@ pub struct ViewState {
     pub brightness: f32,
     pub gamma: f32,
     pub colormap: ColormapId,
+
+    // Custom gradient (used when colormap == Custom)
+    pub custom_gradient: Vec<GradientStop>,
 
     // Reconstruction / processing parameters
     pub recon_freq_count: usize,
@@ -90,6 +155,7 @@ impl Default for ViewState {
             brightness: 1.0,
             gamma: 2.2,
             colormap: ColormapId::Classic,
+            custom_gradient: default_custom_gradient(),
 
             recon_freq_count: 4097,
             recon_freq_min_hz: 0.0,

@@ -28,3 +28,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+### Gradient-Editor by Sebastian Lague
+
+The custom gradient editor in this project was inspired by the Gradient-Editor project
+by Sebastian Lague (https://github.com/SebLague/Gradient-Editor).
+
+The Gradient-Editor repository does not include an explicit license file.
+However, it is referenced from Sebastian Lague's Solar-System project which is MIT licensed,
+and the concepts used here (sorted color stops with linear interpolation) are standard
+computer graphics techniques. Our implementation is an original Rust/FLTK port.
