@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use fltk::{
-    enums::Event,
+    button::Button,
+    enums::{Event, Key},
     input::{Input, FloatInput},
     prelude::*,
 };
@@ -81,6 +82,72 @@ pub fn attach_uint_validation(input: &mut Input) {
                 if current == lv {
                     return false;
                 }
+                if is_valid_uint_input(&current) {
+                    *last_valid.borrow_mut() = current;
+                } else {
+                    let restore = field.position().saturating_sub(1);
+                    field.set_value(&lv);
+                    field.set_position(restore).ok();
+                }
+                false
+            }
+            _ => false,
+        }
+    });
+}
+
+/// Float validation + spacebar guard that also triggers recompute.
+/// Used by setup_spacebar_guards() to replace the plain validation handler
+/// so that space KeyUp triggers btn_rerun.do_callback().
+pub fn attach_float_validation_with_recompute(input: &mut FloatInput, btn_rerun: &Button) {
+    let last_valid = Rc::new(RefCell::new(input.value()));
+    let mut btn = btn_rerun.clone();
+    input.handle(move |field, ev| {
+        if fltk::app::event_key() == Key::from_char(' ') {
+            return match ev {
+                Event::KeyDown | Event::Shortcut => true,
+                Event::KeyUp => { btn.do_callback(); true }
+                _ => false,
+            };
+        }
+        match ev {
+            Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
+                let current = field.value();
+                let lv = last_valid.borrow().clone();
+                if current == lv { return false; }
+                let minus_just_added = current.contains('-') && !lv.contains('-');
+                let typed_at_start = field.position() == 1;
+                if is_valid_float_input(&current) && !(minus_just_added && !typed_at_start) {
+                    *last_valid.borrow_mut() = current;
+                } else {
+                    let restore = field.position().saturating_sub(1);
+                    field.set_value(&lv);
+                    field.set_position(restore).ok();
+                }
+                false
+            }
+            _ => false,
+        }
+    });
+}
+
+/// Uint validation + spacebar guard that also triggers recompute.
+pub fn attach_uint_validation_with_recompute(input: &mut Input, btn_rerun: &Button) {
+    let last_valid = Rc::new(RefCell::new(input.value()));
+    let mut btn = btn_rerun.clone();
+    input.handle(move |field, ev| {
+        if fltk::app::event_key() == Key::from_char(' ') {
+            return match ev {
+                Event::KeyDown | Event::Shortcut => true,
+                Event::KeyUp => { btn.do_callback(); true }
+                _ => false,
+            };
+        }
+        match ev {
+            Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
+                let current = field.value();
+                let lv = last_valid.borrow().clone();
+                if current == lv { return false; }
                 if is_valid_uint_input(&current) {
                     *last_valid.borrow_mut() = current;
                 } else {

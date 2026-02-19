@@ -12,6 +12,7 @@ use fltk::{
 use crate::app_state::AppState;
 use crate::data::TimeUnit;
 use crate::layout::Widgets;
+use crate::validation::{attach_float_validation_with_recompute, attach_uint_validation_with_recompute};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  MENU CALLBACKS
@@ -426,4 +427,16 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     // ── Scrollbars ──
     block_space!(widgets.x_scroll.clone(), btn_rerun);
     block_space!(widgets.y_scroll.clone(), btn_rerun);
+
+    // ── Text inputs ──
+    // Re-attach validation handlers with recompute trigger.
+    // This REPLACES the plain validation handlers set in layout.rs,
+    // adding btn_rerun.do_callback() on space KeyUp so recompute fires.
+    attach_float_validation_with_recompute(&mut widgets.input_start.clone(), &btn_rerun);
+    attach_float_validation_with_recompute(&mut widgets.input_stop.clone(), &btn_rerun);
+    attach_uint_validation_with_recompute(&mut widgets.input_seg_size.clone(), &btn_rerun);
+    attach_float_validation_with_recompute(&mut widgets.input_kaiser_beta.clone(), &btn_rerun);
+    attach_uint_validation_with_recompute(&mut widgets.input_freq_count.clone(), &btn_rerun);
+    attach_float_validation_with_recompute(&mut widgets.input_recon_freq_min.clone(), &btn_rerun);
+    attach_float_validation_with_recompute(&mut widgets.input_recon_freq_max.clone(), &btn_rerun);
 }

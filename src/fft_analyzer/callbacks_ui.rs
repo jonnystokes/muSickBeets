@@ -427,10 +427,15 @@ pub fn setup_playback_callbacks(
         let state = state.clone();
 
         let mut scrub_slider = widgets.scrub_slider.clone();
+        let mut btn_rerun_scrub = widgets.btn_rerun.clone();
         scrub_slider.handle(move |s, ev| {
-            // Block spacebar from reaching the scrub slider
+            // Block spacebar and trigger recompute on KeyUp
             if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
-                return matches!(ev, fltk::enums::Event::KeyDown | fltk::enums::Event::KeyUp | fltk::enums::Event::Shortcut);
+                return match ev {
+                    fltk::enums::Event::KeyDown | fltk::enums::Event::Shortcut => true,
+                    fltk::enums::Event::KeyUp => { btn_rerun_scrub.do_callback(); true }
+                    _ => false,
+                };
             }
             match ev {
                 fltk::enums::Event::Push => {
@@ -676,10 +681,15 @@ pub fn setup_gradient_editor(
         let mut gradient_preview_redraw = widgets.gradient_preview.clone();
 
         let mut gradient_preview = widgets.gradient_preview.clone();
+        let mut btn_rerun_grad = widgets.btn_rerun.clone();
         gradient_preview.handle(move |w, ev| {
-            // Block spacebar from reaching the gradient editor
+            // Block spacebar and trigger recompute on KeyUp
             if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
-                return matches!(ev, fltk::enums::Event::KeyDown | fltk::enums::Event::KeyUp | fltk::enums::Event::Shortcut);
+                return match ev {
+                    fltk::enums::Event::KeyDown | fltk::enums::Event::Shortcut => true,
+                    fltk::enums::Event::KeyUp => { btn_rerun_grad.do_callback(); true }
+                    _ => false,
+                };
             }
             // Only allow interaction when colormap is Custom
             {
