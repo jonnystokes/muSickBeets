@@ -23,7 +23,7 @@ const MENU_H: i32 = 25;
 const STATUS_H: i32 = 25;
 const SIDEBAR_W: i32 = 215;
 const SIDEBAR_INNER_W: i32 = 200;
-const SIDEBAR_INNER_H: i32 = 1200;
+const SIDEBAR_INNER_H: i32 = 1400;
 
 // ─── Widgets struct ─────────────────────────────────────────────────────────────
 // Holds cloneable handles to every widget that callbacks need to access.
@@ -39,12 +39,16 @@ pub struct Widgets {
     pub input_stop: FloatInput,
     pub btn_seg_minus: Button,
     pub btn_seg_plus: Button,
-    pub lbl_seg_value: Frame,
+    pub input_seg_size: Input,
+    pub seg_preset_choice: Choice,
     pub slider_overlap: HorNiceSlider,
     pub lbl_overlap_val: Frame,
+    pub lbl_hop_info: Frame,
     pub window_type_choice: Choice,
     pub input_kaiser_beta: FloatInput,
     pub check_center: fltk::button::CheckButton,
+    pub zero_pad_choice: Choice,
+    pub lbl_resolution_info: Frame,
     pub btn_rerun: Button,
     pub colormap_choice: Choice,
     pub gradient_preview: Widget,
@@ -52,6 +56,8 @@ pub struct Widgets {
     pub lbl_scale_val: Frame,
     pub slider_threshold: HorNiceSlider,
     pub lbl_threshold_val: Frame,
+    pub slider_ceiling: HorNiceSlider,
+    pub lbl_ceiling_val: Frame,
     pub slider_brightness: HorNiceSlider,
     pub lbl_brightness_val: Frame,
     pub slider_gamma: HorNiceSlider,
@@ -206,12 +212,30 @@ pub fn build_ui() -> (Window, Widgets) {
     attach_float_validation(&mut input_stop);
     left.fixed(&input_stop, 25);
 
-    // Window length (segments) with +/- buttons
+    // Window length (segments) with preset dropdown + typed input + +/- buttons
     let mut lbl_wl = Frame::default().with_label("Segment Size:");
     lbl_wl.set_label_color(theme::color(theme::TEXT_SECONDARY));
     lbl_wl.set_label_size(11);
     lbl_wl.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_wl, 16);
+
+    let mut seg_preset_choice = Choice::default();
+    seg_preset_choice.add_choice("256");
+    seg_preset_choice.add_choice("512");
+    seg_preset_choice.add_choice("1024");
+    seg_preset_choice.add_choice("2048");
+    seg_preset_choice.add_choice("4096");
+    seg_preset_choice.add_choice("8192");
+    seg_preset_choice.add_choice("16384");
+    seg_preset_choice.add_choice("32768");
+    seg_preset_choice.add_choice("65536");
+    seg_preset_choice.add_choice("Custom");
+    seg_preset_choice.set_value(5); // 8192 default
+    seg_preset_choice.set_color(theme::color(theme::BG_WIDGET));
+    seg_preset_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
+    seg_preset_choice.deactivate();
+    set_tooltip(&mut seg_preset_choice, "Preset segment sizes.\nNon-power-of-2 sizes also work (select Custom and type a value).");
+    left.fixed(&seg_preset_choice, 25);
 
     let mut seg_row = Flex::default().row();
     seg_row.set_pad(2);
@@ -221,21 +245,24 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_seg_minus.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_seg_minus.set_label_size(14);
     btn_seg_minus.deactivate();
-    set_tooltip(&mut btn_seg_minus, "Halve the segment size.\nSmaller segments = better time resolution, worse frequency resolution.");
+    set_tooltip(&mut btn_seg_minus, "Step to previous preset size, or halve if Custom.");
     seg_row.fixed(&btn_seg_minus, 30);
+
+    let mut input_seg_size = Input::default();
+    input_seg_size.set_value("8192");
+    input_seg_size.set_color(theme::color(theme::BG_WIDGET));
+    input_seg_size.set_text_color(theme::color(theme::TEXT_PRIMARY));
+    input_seg_size.deactivate();
+    set_tooltip(&mut input_seg_size, "Type an exact segment size (samples).\nMust be even (realfft requirement). Range: 2 to 131072.\nPress Enter to apply.");
+    crate::validation::attach_uint_validation(&mut input_seg_size);
 
     let mut btn_seg_plus = Button::default().with_label("+");
     btn_seg_plus.set_color(theme::color(theme::BG_WIDGET));
     btn_seg_plus.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_seg_plus.set_label_size(14);
     btn_seg_plus.deactivate();
-    set_tooltip(&mut btn_seg_plus, "Double the segment size.\nLarger segments = better frequency resolution, worse time resolution.");
+    set_tooltip(&mut btn_seg_plus, "Step to next preset size, or double if Custom.");
     seg_row.fixed(&btn_seg_plus, 30);
-
-    let mut lbl_seg_value = Frame::default().with_label("8192 smp / 170.67 ms");
-    lbl_seg_value.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    lbl_seg_value.set_label_size(10);
-    lbl_seg_value.set_align(Align::Inside | Align::Left);
 
     seg_row.end();
     left.fixed(&seg_row, 25);
@@ -256,6 +283,13 @@ pub fn build_ui() -> (Window, Widgets) {
     lbl_overlap_val.set_label_size(11);
     lbl_overlap_val.set_align(Align::Inside | Align::Right);
     left.fixed(&lbl_overlap_val, 14);
+
+    // Hop size display (read-only)
+    let mut lbl_hop_info = Frame::default().with_label("Hop: -- smp (-- ms)");
+    lbl_hop_info.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_hop_info.set_label_size(10);
+    lbl_hop_info.set_align(Align::Inside | Align::Right);
+    left.fixed(&lbl_hop_info, 14);
 
     // Window type
     let mut window_type_choice = Choice::default();
@@ -284,6 +318,32 @@ pub fn build_ui() -> (Window, Widgets) {
     check_center.deactivate();
     set_tooltip(&mut check_center, "Add zero-padding around signal for symmetric analysis.\nRecommended: ON for most use cases.");
     left.fixed(&check_center, 22);
+
+    // Zero-padding factor
+    let mut lbl_zp = Frame::default().with_label("Zero-Pad Factor:");
+    lbl_zp.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_zp.set_label_size(11);
+    lbl_zp.set_align(Align::Inside | Align::Left);
+    left.fixed(&lbl_zp, 16);
+
+    let mut zero_pad_choice = Choice::default();
+    zero_pad_choice.add_choice("1x (none)");
+    zero_pad_choice.add_choice("2x");
+    zero_pad_choice.add_choice("4x");
+    zero_pad_choice.add_choice("8x");
+    zero_pad_choice.set_value(0);
+    zero_pad_choice.set_color(theme::color(theme::BG_WIDGET));
+    zero_pad_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
+    zero_pad_choice.deactivate();
+    set_tooltip(&mut zero_pad_choice, "Zero-padding factor for FFT.\n1x = no padding (standard).\n2x/4x/8x = interpolate frequency bins\nfor smoother spectrograms.\nDoes not change actual frequency resolution.");
+    left.fixed(&zero_pad_choice, 25);
+
+    // Resolution trade-off display (live feedback)
+    let mut lbl_resolution_info = Frame::default().with_label("--");
+    lbl_resolution_info.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_resolution_info.set_label_size(9);
+    lbl_resolution_info.set_align(Align::Inside | Align::Left | Align::Top);
+    left.fixed(&lbl_resolution_info, 56);
 
     let mut btn_rerun = Button::default().with_label("Recompute + Rebuild (Space)");
     btn_rerun.set_color(theme::color(theme::ACCENT_BLUE));
@@ -360,6 +420,22 @@ pub fn build_ui() -> (Window, Widgets) {
     lbl_threshold_val.set_label_size(11);
     lbl_threshold_val.set_align(Align::Inside | Align::Right);
     left.fixed(&lbl_threshold_val, 14);
+
+    // dB Ceiling
+    let mut slider_ceiling = HorNiceSlider::default();
+    slider_ceiling.set_minimum(-40.0);
+    slider_ceiling.set_maximum(20.0);
+    slider_ceiling.set_value(0.0);
+    slider_ceiling.set_color(theme::color(theme::BG_WIDGET));
+    slider_ceiling.set_selection_color(theme::accent_color());
+    set_tooltip(&mut slider_ceiling, "Maximum dB level for color mapping.\nAuto-set from data. Adjust to change dynamic range.\nRange: -40 to +20 dB.");
+    left.fixed(&slider_ceiling, 22);
+
+    let mut lbl_ceiling_val = Frame::default().with_label("Ceiling: 0 dB");
+    lbl_ceiling_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_ceiling_val.set_label_size(11);
+    lbl_ceiling_val.set_align(Align::Inside | Align::Right);
+    left.fixed(&lbl_ceiling_val, 14);
 
     // Brightness
     let mut slider_brightness = HorNiceSlider::default();
@@ -703,12 +779,16 @@ pub fn build_ui() -> (Window, Widgets) {
         input_stop,
         btn_seg_minus,
         btn_seg_plus,
-        lbl_seg_value,
+        input_seg_size,
+        seg_preset_choice,
         slider_overlap,
         lbl_overlap_val,
+        lbl_hop_info,
         window_type_choice,
         input_kaiser_beta,
         check_center,
+        zero_pad_choice,
+        lbl_resolution_info,
         btn_rerun,
         colormap_choice,
         gradient_preview,
@@ -716,6 +796,8 @@ pub fn build_ui() -> (Window, Widgets) {
         lbl_scale_val,
         slider_threshold,
         lbl_threshold_val,
+        slider_ceiling,
+        lbl_ceiling_val,
         slider_brightness,
         lbl_brightness_val,
         slider_gamma,

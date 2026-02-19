@@ -139,6 +139,21 @@ impl DerivedInfo {
             self.hop_length as f64 / self.sample_rate.max(1) as f64 * 1000.0,
         )
     }
+
+    pub fn format_resolution(&self) -> String {
+        let window_ms = self.window_length as f64 / self.sample_rate.max(1) as f64 * 1000.0;
+        let hop_ms = self.hop_length as f64 / self.sample_rate.max(1) as f64 * 1000.0;
+        format!(
+            "Window: {} smp ({:.1} ms)\n\
+             Freq res: {:.2} Hz/bin ({} bins)\n\
+             Time res: {:.1} ms/frame ({} frames)\n\
+             Hop: {} smp ({:.1} ms)",
+            self.window_length, window_ms,
+            self.freq_resolution, self.freq_bins,
+            self.bin_duration_ms, self.segments,
+            self.hop_length, hop_ms,
+        )
+    }
 }
 
 /// Throttle helper to prevent excessive redraws

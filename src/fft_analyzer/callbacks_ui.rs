@@ -55,9 +55,10 @@ pub fn setup_parameter_callbacks(
         });
     }
 
-    // Overlap
+    // Overlap (with hop info update)
     {
         let mut lbl = widgets.lbl_overlap_val.clone();
+        let mut lbl_hop = widgets.lbl_hop_info.clone();
         let state = state.clone();
         let update_info = shared.update_info.clone();
 
@@ -65,7 +66,13 @@ pub fn setup_parameter_callbacks(
         slider_overlap.set_callback(move |s| {
             let val = s.value() as f32;
             lbl.set_label(&format!("Overlap: {}%", val as i32));
-            state.borrow_mut().fft_params.overlap_percent = val;
+            {
+                let mut st = state.borrow_mut();
+                st.fft_params.overlap_percent = val;
+                let hop = st.fft_params.hop_length();
+                let hop_ms = hop as f64 / st.fft_params.sample_rate.max(1) as f64 * 1000.0;
+                lbl_hop.set_label(&format!("Hop: {} smp ({:.1} ms)", hop, hop_ms));
+            }
             (update_info.borrow_mut())();
         });
     }
@@ -92,18 +99,70 @@ pub fn setup_parameter_callbacks(
         });
     }
 
-    // Segment size +/- buttons
+    // Segment size preset dropdown
+    {
+        let state = state.clone();
+        let update_info = shared.update_info.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        seg_preset_choice.set_callback(move |c| {
+            let idx = c.value();
+            if idx >= 0 && idx < 9 {
+                let size = SEG_PRESETS[idx as usize];
+                input_seg_size.set_value(&size.to_string());
+                state.borrow_mut().fft_params.window_length = size;
+                (update_info.borrow_mut())();
+            }
+            // idx == 9 is "Custom" - leave input as-is
+        });
+    }
+
+    // Segment size typed input (on Enter)
+    {
+        let state = state.clone();
+        let update_info = shared.update_info.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        input_seg_size.set_callback(move |inp| {
+            let raw: usize = inp.value().parse().unwrap_or(8192);
+            let clamped = raw.clamp(2, 131072);
+            let even = round_even(clamped);
+            inp.set_value(&even.to_string());
+            state.borrow_mut().fft_params.window_length = even;
+
+            // Sync preset dropdown
+            let preset_idx = find_preset_index(even).map(|i| i as i32).unwrap_or(9);
+            seg_preset_choice.set_value(preset_idx);
+
+            (update_info.borrow_mut())();
+        });
+    }
+
+    // Segment size +/- buttons (step through presets)
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
         let update_seg_label = shared.update_seg_label.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
 
         let mut btn_seg_minus = widgets.btn_seg_minus.clone();
         btn_seg_minus.set_callback(move |_| {
             let mut st = state.borrow_mut();
-            let new_wl = (st.fft_params.window_length / 2).max(2);
+            let cur = st.fft_params.window_length;
+            let new_wl = if let Some(idx) = find_preset_index(cur) {
+                if idx > 0 { SEG_PRESETS[idx - 1] } else { SEG_PRESETS[0] }
+            } else {
+                // Custom: halve
+                round_even((cur / 2).max(2))
+            };
             st.fft_params.window_length = new_wl;
             drop(st);
+            input_seg_size.set_value(&new_wl.to_string());
+            let preset_idx = find_preset_index(new_wl).map(|i| i as i32).unwrap_or(9);
+            seg_preset_choice.set_value(preset_idx);
             (update_info.borrow_mut())();
             (update_seg_label.borrow_mut())();
         });
@@ -112,13 +171,24 @@ pub fn setup_parameter_callbacks(
         let state = state.clone();
         let update_info = shared.update_info.clone();
         let update_seg_label = shared.update_seg_label.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
 
         let mut btn_seg_plus = widgets.btn_seg_plus.clone();
         btn_seg_plus.set_callback(move |_| {
             let mut st = state.borrow_mut();
-            let new_wl = (st.fft_params.window_length * 2).min(65536);
+            let cur = st.fft_params.window_length;
+            let new_wl = if let Some(idx) = find_preset_index(cur) {
+                if idx < SEG_PRESETS.len() - 1 { SEG_PRESETS[idx + 1] } else { SEG_PRESETS[SEG_PRESETS.len() - 1] }
+            } else {
+                // Custom: double
+                round_even((cur * 2).min(131072))
+            };
             st.fft_params.window_length = new_wl;
             drop(st);
+            input_seg_size.set_value(&new_wl.to_string());
+            let preset_idx = find_preset_index(new_wl).map(|i| i as i32).unwrap_or(9);
+            seg_preset_choice.set_value(preset_idx);
             (update_info.borrow_mut())();
             (update_seg_label.borrow_mut())();
         });
@@ -141,6 +211,37 @@ pub fn setup_parameter_callbacks(
             (update_info.borrow_mut())();
         });
     }
+
+    // Zero-padding factor
+    {
+        let state = state.clone();
+        let update_info = shared.update_info.clone();
+
+        let mut zero_pad_choice = widgets.zero_pad_choice.clone();
+        zero_pad_choice.set_callback(move |c| {
+            let factor = match c.value() {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                3 => 8,
+                _ => 1,
+            };
+            state.borrow_mut().fft_params.zero_pad_factor = factor;
+            (update_info.borrow_mut())();
+        });
+    }
+}
+
+// ─── Segment size helpers ─────────────────────────────────────────────────────
+
+const SEG_PRESETS: [usize; 9] = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
+
+fn find_preset_index(size: usize) -> Option<usize> {
+    SEG_PRESETS.iter().position(|&p| p == size)
+}
+
+fn round_even(n: usize) -> usize {
+    if n < 2 { 2 } else if n % 2 != 0 { n + 1 } else { n }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -205,6 +306,26 @@ pub fn setup_display_callbacks(
             let val = s.value() as f32;
             lbl.set_label(&format!("Threshold: {} dB", val as i32));
             state.borrow_mut().view.threshold_db = val;
+
+            if throttle.borrow_mut().should_update() {
+                state.borrow_mut().spec_renderer.invalidate();
+                spec_display.redraw();
+            }
+        });
+    }
+
+    // dB Ceiling
+    {
+        let mut lbl = widgets.lbl_ceiling_val.clone();
+        let state = state.clone();
+        let mut spec_display = widgets.spec_display.clone();
+        let throttle = Rc::new(RefCell::new(UpdateThrottle::new(50)));
+
+        let mut slider_ceiling = widgets.slider_ceiling.clone();
+        slider_ceiling.set_callback(move |s| {
+            let val = s.value() as f32;
+            lbl.set_label(&format!("Ceiling: {} dB", val as i32));
+            state.borrow_mut().view.db_ceiling = val;
 
             if throttle.borrow_mut().should_update() {
                 state.borrow_mut().spec_renderer.invalidate();

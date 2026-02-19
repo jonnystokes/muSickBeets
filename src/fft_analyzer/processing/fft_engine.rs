@@ -19,10 +19,11 @@ impl FftEngine {
 
         let audio_slice = audio.get_slice(start_sample, stop_sample);
         let hop = params.hop_length();
-        let n_fft = params.window_length;
+        let window_len = params.window_length;
+        let n_fft = params.n_fft_padded();
 
         let (padded_audio, _offset) = if params.use_center {
-            let pad = n_fft / 2;
+            let pad = window_len / 2;
             let mut padded = vec![0.0; audio_slice.len() + 2 * pad];
             padded[pad..pad + audio_slice.len()].copy_from_slice(audio_slice);
             (padded, pad)
@@ -30,8 +31,8 @@ impl FftEngine {
             (audio_slice.to_vec(), 0)
         };
 
-        let num_frames = if padded_audio.len() >= n_fft {
-            (padded_audio.len() - n_fft) / hop + 1
+        let num_frames = if padded_audio.len() >= window_len {
+            (padded_audio.len() - window_len) / hop + 1
         } else {
             0
         };
@@ -56,7 +57,8 @@ impl FftEngine {
                 let mut indata = vec![0.0f32; n_fft];
                 let mut spectrum = fft.make_output_vec();
 
-                for i in 0..n_fft {
+                // Apply window to first window_len samples; rest stays zero (zero-padding)
+                for i in 0..window_len {
                     indata[i] = padded_arc[start + i] * window_arc[i];
                 }
 
@@ -72,14 +74,14 @@ impl FftEngine {
                 let mut phases = Vec::with_capacity(num_bins);
 
                 for (bin_idx, complex_val) in spectrum.iter().enumerate() {
-    frequencies.push(bin_idx as f32 * freq_resolution);
-    
-    // Normalize magnitude by FFT size and scale by 2 for non-DC/Nyquist bins
-    let amplitude_scale = if bin_idx == 0 || bin_idx == num_bins - 1 { 1.0 } else { 2.0 };
-    magnitudes.push((complex_val.norm() / n_fft as f32) * amplitude_scale);
-    
-    phases.push(complex_val.arg());
-}
+                    frequencies.push(bin_idx as f32 * freq_resolution);
+
+                    // Normalize magnitude by FFT size and scale by 2 for non-DC/Nyquist bins
+                    let amplitude_scale = if bin_idx == 0 || bin_idx == num_bins - 1 { 1.0 } else { 2.0 };
+                    magnitudes.push((complex_val.norm() / n_fft as f32) * amplitude_scale);
+
+                    phases.push(complex_val.arg());
+                }
 
                 FftFrame {
                     time_seconds,

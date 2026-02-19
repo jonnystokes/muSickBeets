@@ -17,7 +17,8 @@ impl Reconstructor {
         view: &ViewState,
     ) -> AudioData {
         let hop = params.hop_length();
-        let n_fft = params.window_length;
+        let window_len = params.window_length;
+        let n_fft = params.n_fft_padded();
         let num_frames = spectrogram.num_frames();
         let window = params.generate_window();
 
@@ -29,12 +30,12 @@ impl Reconstructor {
             };
         }
 
-        // Calculate output length
+        // Calculate output length (based on window_len, not n_fft)
         let output_length = if params.use_center {
-            let padded_length = (num_frames - 1) * hop + n_fft;
-            padded_length.saturating_sub(n_fft)
+            let padded_length = (num_frames - 1) * hop + window_len;
+            padded_length.saturating_sub(window_len)
         } else {
-            (num_frames - 1) * hop + n_fft
+            (num_frames - 1) * hop + window_len
         };
 
         // Phase 1: Parallel IFFT for each frame
@@ -97,17 +98,15 @@ impl Reconstructor {
                     *s *= norm;
                 }
 
-                // Apply synthesis window
+                // Apply synthesis window to first window_len samples only
+                // (discard zero-padding extension from IFFT output)
                 let windowed: Vec<f32> = time_buffer.iter()
+                    .take(window_len)
                     .zip(window.iter())
                     .map(|(&s, &w)| s * w)
                     .collect();
 
-                let start_pos = if params.use_center {
-                    frame_idx * hop
-                } else {
-                    frame_idx * hop
-                };
+                let start_pos = frame_idx * hop;
 
                 (start_pos, windowed)
             })

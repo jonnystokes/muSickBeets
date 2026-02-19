@@ -46,12 +46,19 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
     let update_info: SharedCb = {
         let state = state.clone();
         let mut lbl_info = widgets.lbl_info.clone();
+        let mut lbl_resolution_info = widgets.lbl_resolution_info.clone();
+        let mut lbl_hop_info = widgets.lbl_hop_info.clone();
         let mut input_freq_count = widgets.input_freq_count.clone();
         let flag = freq_count_user_adjusted.clone();
         Rc::new(RefCell::new(Box::new(move || {
             let st = state.borrow();
             let info = st.derived_info();
             lbl_info.set_label(&info.format_info());
+            lbl_resolution_info.set_label(&info.format_resolution());
+
+            // Update hop display
+            let hop_ms = info.hop_length as f64 / info.sample_rate.max(1) as f64 * 1000.0;
+            lbl_hop_info.set_label(&format!("Hop: {} smp ({:.1} ms)", info.hop_length, hop_ms));
 
             let current: usize = input_freq_count.value().parse().unwrap_or(info.freq_bins);
             if !flag.get() {
@@ -66,14 +73,19 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
 
     let update_seg_label: SharedCb = {
         let state = state.clone();
-        let mut lbl_seg_value = widgets.lbl_seg_value.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
         Rc::new(RefCell::new(Box::new(move || {
             let st = state.borrow();
             let wl = st.fft_params.window_length;
-            let sr = st.fft_params.sample_rate;
-            let ms = wl as f64 / sr.max(1) as f64 * 1000.0;
-            let bins = wl / 2 + 1;
-            lbl_seg_value.set_label(&format!("{} smp / {:.1}ms / {} bins", wl, ms, bins));
+            input_seg_size.set_value(&wl.to_string());
+            // Sync preset dropdown
+            let preset_idx = match wl {
+                256 => 0, 512 => 1, 1024 => 2, 2048 => 3, 4096 => 4,
+                8192 => 5, 16384 => 6, 32768 => 7, 65536 => 8,
+                _ => 9, // Custom
+            };
+            seg_preset_choice.set_value(preset_idx);
         })))
     };
 
@@ -83,9 +95,12 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
         let mut input_stop = widgets.input_stop.clone();
         let mut btn_seg_minus = widgets.btn_seg_minus.clone();
         let mut btn_seg_plus = widgets.btn_seg_plus.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
         let mut slider_overlap = widgets.slider_overlap.clone();
         let mut window_type_choice = widgets.window_type_choice.clone();
         let mut check_center = widgets.check_center.clone();
+        let mut zero_pad_choice = widgets.zero_pad_choice.clone();
         let mut btn_rerun = widgets.btn_rerun.clone();
         Rc::new(RefCell::new(Box::new(move || {
             btn_time_unit.activate();
@@ -93,9 +108,12 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
             input_stop.activate();
             btn_seg_minus.activate();
             btn_seg_plus.activate();
+            input_seg_size.activate();
+            seg_preset_choice.activate();
             slider_overlap.activate();
             window_type_choice.activate();
             check_center.activate();
+            zero_pad_choice.activate();
             btn_rerun.activate();
         })))
     };
@@ -186,6 +204,8 @@ fn main() {
         st.mouse_zoom_factor = cfg.mouse_zoom_factor;
         st.normalize_audio = cfg.normalize_audio;
         st.normalize_peak = cfg.normalize_peak;
+        st.view.db_ceiling = cfg.db_ceiling;
+        st.fft_params.zero_pad_factor = cfg.zero_pad_factor;
         Rc::new(RefCell::new(st))
     };
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
@@ -221,6 +241,8 @@ fn main() {
         let mut time_axis = widgets.time_axis.clone();
         let mut scrub_slider = widgets.scrub_slider.clone();
         let mut lbl_time = widgets.lbl_time.clone();
+        let mut slider_ceiling = widgets.slider_ceiling.clone();
+        let mut lbl_ceiling_val = widgets.lbl_ceiling_val.clone();
         let enable_spec_widgets = shared.enable_spec_widgets.clone();
         let enable_wav_export = shared.enable_wav_export.clone();
         let update_info = shared.update_info.clone();
@@ -346,6 +368,14 @@ fn main() {
 
                             (spec, params, view, proc_time_min, proc_time_max)
                         };
+
+                        // Sync ceiling slider to auto-computed dB ceiling
+                        {
+                            let st = state.borrow();
+                            let ceil = st.view.db_ceiling;
+                            slider_ceiling.set_value(ceil as f64);
+                            lbl_ceiling_val.set_label(&format!("Ceiling: {} dB", ceil as i32));
+                        }
 
                         (enable_spec_widgets.borrow_mut())();
                         (update_info.borrow_mut())();

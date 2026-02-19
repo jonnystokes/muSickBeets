@@ -12,6 +12,7 @@ pub struct Settings {
     pub window_type: String,       // "Hann", "Hamming", "Blackman", "Kaiser"
     pub kaiser_beta: f32,
     pub center_pad: bool,
+    pub zero_pad_factor: usize,
 
     // ── View: Frequency ──
     pub view_freq_min_hz: f32,
@@ -21,6 +22,7 @@ pub struct Settings {
     // ── View: Display ──
     pub colormap: String,          // "Classic", "Viridis", etc.
     pub threshold_db: f32,
+    pub db_ceiling: f32,
     pub brightness: f32,
     pub gamma: f32,
 
@@ -83,6 +85,7 @@ impl Default for Settings {
             window_type: "Hann".to_string(),
             kaiser_beta: 8.6,
             center_pad: false,
+            zero_pad_factor: 1,
 
             // View: Frequency
             view_freq_min_hz: 100.0,
@@ -92,6 +95,7 @@ impl Default for Settings {
             // View: Display
             colormap: "Classic".to_string(),
             threshold_db: -87.0,
+            db_ceiling: 0.0,
             brightness: 1.0,
             gamma: 2.2,
 
@@ -197,6 +201,7 @@ impl Settings {
             crate::data::WindowType::Kaiser(b) => { cfg.kaiser_beta = b; "Kaiser".to_string() }
         };
         cfg.center_pad = st.fft_params.use_center;
+        cfg.zero_pad_factor = st.fft_params.zero_pad_factor;
 
         // View
         cfg.view_freq_min_hz = st.view.freq_min_hz;
@@ -210,6 +215,7 @@ impl Settings {
         // Display
         cfg.colormap = st.view.colormap.name().to_string();
         cfg.threshold_db = st.view.threshold_db;
+        cfg.db_ceiling = st.view.db_ceiling;
         cfg.brightness = st.view.brightness;
         cfg.gamma = st.view.gamma;
 
@@ -255,6 +261,7 @@ impl Settings {
         s.push_str(&format!("window_type = {}\n", self.window_type));
         s.push_str(&format!("kaiser_beta = {}\n", self.kaiser_beta));
         s.push_str(&format!("center_pad = {}\n", self.center_pad));
+        s.push_str(&format!("zero_pad_factor = {}\n", self.zero_pad_factor));
         s.push('\n');
 
         s.push_str("[View]\n");
@@ -268,6 +275,7 @@ impl Settings {
         s.push_str("# Colormaps: Classic, Viridis, Magma, Inferno, Greyscale, Inverted Grey, Geek\n");
         s.push_str(&format!("colormap = {}\n", self.colormap));
         s.push_str(&format!("threshold_db = {}\n", self.threshold_db));
+        s.push_str(&format!("db_ceiling = {}\n", self.db_ceiling));
         s.push_str(&format!("brightness = {}\n", self.brightness));
         s.push_str(&format!("gamma = {}\n", self.gamma));
         s.push('\n');
@@ -344,6 +352,7 @@ impl Settings {
         if let Some(v) = map.get("window_type") { self.window_type = v.clone(); }
         if let Some(v) = map.get("kaiser_beta") { if let Ok(n) = v.parse() { self.kaiser_beta = n; } }
         if let Some(v) = map.get("center_pad") { self.center_pad = v == "true"; }
+        if let Some(v) = map.get("zero_pad_factor") { if let Ok(n) = v.parse() { self.zero_pad_factor = n; } }
 
         // View
         if let Some(v) = map.get("view_freq_min_hz") { if let Ok(n) = v.parse() { self.view_freq_min_hz = n; } }
@@ -353,6 +362,7 @@ impl Settings {
         // Display
         if let Some(v) = map.get("colormap") { self.colormap = v.clone(); }
         if let Some(v) = map.get("threshold_db") { if let Ok(n) = v.parse() { self.threshold_db = n; } }
+        if let Some(v) = map.get("db_ceiling") { if let Ok(n) = v.parse() { self.db_ceiling = n; } }
         if let Some(v) = map.get("brightness") { if let Ok(n) = v.parse() { self.brightness = n; } }
         if let Some(v) = map.get("gamma") { if let Ok(n) = v.parse() { self.gamma = n; } }
 

@@ -24,6 +24,7 @@ pub struct FftParams {
     pub stop_time: f64,
     pub time_unit: TimeUnit,
     pub sample_rate: u32,
+    pub zero_pad_factor: usize,
 }
 
 impl Default for FftParams {
@@ -37,6 +38,7 @@ impl Default for FftParams {
             stop_time: 0.0,
             time_unit: TimeUnit::Seconds,
             sample_rate: 48000,
+            zero_pad_factor: 1,
         }
     }
 }
@@ -45,6 +47,12 @@ impl FftParams {
     pub fn hop_length(&self) -> usize {
         let overlap_ratio = self.overlap_percent / 100.0;
         ((self.window_length as f32) * (1.0 - overlap_ratio)).max(1.0) as usize
+    }
+
+    /// The padded FFT size: window_length * zero_pad_factor.
+    /// Used for FFT plan and buffer sizing.
+    pub fn n_fft_padded(&self) -> usize {
+        self.window_length * self.zero_pad_factor.max(1)
     }
 
     pub fn start_sample(&self) -> usize {
@@ -62,12 +70,13 @@ impl FftParams {
     }
 
     pub fn num_frequency_bins(&self) -> usize {
-        self.window_length / 2 + 1
+        self.n_fft_padded() / 2 + 1
     }
 
     pub fn frequency_resolution(&self) -> f32 {
-        if self.window_length == 0 { return 0.0; }
-        self.sample_rate as f32 / self.window_length as f32
+        let n = self.n_fft_padded();
+        if n == 0 { return 0.0; }
+        self.sample_rate as f32 / n as f32
     }
 
     pub fn num_segments(&self, total_samples: usize) -> usize {

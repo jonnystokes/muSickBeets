@@ -428,6 +428,8 @@ pub fn setup_rerun_callback(
     let update_seg_label = shared.update_seg_label.clone();
     let window_type_choice = widgets.window_type_choice.clone();
     let input_kaiser_beta = widgets.input_kaiser_beta.clone();
+    let input_seg_size = widgets.input_seg_size.clone();
+    let zero_pad_choice = widgets.zero_pad_choice.clone();
 
     let mut btn_rerun = widgets.btn_rerun.clone();
     btn_rerun.set_callback(move |_| {
@@ -441,7 +443,16 @@ pub fn setup_rerun_callback(
             st.fft_params.start_time = parse_or_zero_f64(&input_start.value());
             st.fft_params.stop_time = parse_or_zero_f64(&input_stop.value());
 
-            // Window length is managed by +/- buttons, already in state
+            // Read segment size from input field, validate
+            let seg_size: usize = parse_or_zero_usize(&input_seg_size.value()).max(2);
+            let seg_size = if seg_size % 2 != 0 { seg_size + 1 } else { seg_size };
+            st.fft_params.window_length = seg_size.min(131072);
+
+            // Read zero-pad factor from dropdown
+            st.fft_params.zero_pad_factor = match zero_pad_choice.value() {
+                0 => 1, 1 => 2, 2 => 4, 3 => 8, _ => 1,
+            };
+
             st.fft_params.overlap_percent = slider_overlap.value() as f32;
             st.fft_params.use_center = check_center.is_checked();
 

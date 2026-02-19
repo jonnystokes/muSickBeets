@@ -34,6 +34,7 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
         view.recon_freq_count.to_string(),          // 9
         format!("{:.2}", view.recon_freq_min_hz),   // 10
         format!("{:.2}", view.recon_freq_max_hz),   // 11
+        params.zero_pad_factor.to_string(),         // 12
     ]).context("Failed to write CSV metadata")?;
 
     // Write column labels (row 2)
@@ -123,6 +124,13 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         None
     };
 
+    // Read optional zero_pad_factor (field 12, backward-compatible)
+    let zero_pad_factor: usize = if metadata.len() >= 13 {
+        metadata[12].parse().unwrap_or(1)
+    } else {
+        1
+    };
+
     // Skip column labels (row 2)
     records.next();
 
@@ -180,6 +188,7 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         stop_time: stop_sample as f64 / sample_rate as f64,
         time_unit: TimeUnit::Seconds,
         sample_rate,
+        zero_pad_factor,
     };
 
     Ok((spectrogram, params, recon_params))
