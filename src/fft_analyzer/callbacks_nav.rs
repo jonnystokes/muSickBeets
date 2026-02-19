@@ -405,11 +405,21 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.btn_time_zoom_out.clone(), btn_rerun);
 
     // ── Choice dropdowns ──
+    // FLTK Choice widgets don't reliably honour handle() for space key —
+    // their internal menu system processes keyboard events through a separate
+    // path. The reliable fix is clear_visible_focus() which prevents them
+    // from ever receiving keyboard focus. They still work fully via mouse.
+    // The window-level handler catches the freed-up space event for recompute.
     block_space!(widgets.seg_preset_choice.clone(), btn_rerun);
     block_space!(widgets.window_type_choice.clone(), btn_rerun);
     block_space!(widgets.zero_pad_choice.clone(), btn_rerun);
     block_space!(widgets.colormap_choice.clone(), btn_rerun);
     block_space!(widgets.repeat_choice.clone(), btn_rerun);
+    widgets.seg_preset_choice.clone().clear_visible_focus();
+    widgets.window_type_choice.clone().clear_visible_focus();
+    widgets.zero_pad_choice.clone().clear_visible_focus();
+    widgets.colormap_choice.clone().clear_visible_focus();
+    widgets.repeat_choice.clone().clear_visible_focus();
 
     // ── CheckButtons ──
     block_space!(widgets.check_center.clone(), btn_rerun);
