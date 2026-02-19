@@ -322,10 +322,24 @@ pub fn setup_spacebar_handler(
 ) {
     let mut btn_rerun = widgets.btn_rerun.clone();
     win.handle(move |_, event| {
-        if event == Event::KeyUp && app::event_key() == Key::from_char(' ') {
-            println!("Space bar press detected");
-            btn_rerun.do_callback();
+        let is_space = app::event_key() == Key::from_char(' ');
+        if !is_space { return false; }
+
+        match event {
+            // Consume KeyDown to prevent space from reaching any focused widget
+            // (buttons, dropdowns, text inputs). This is the primary guard.
+            Event::KeyDown => true,
+
+            // Trigger recompute on KeyUp (not KeyDown to avoid double-fire)
+            Event::KeyUp => {
+                btn_rerun.do_callback();
+                true
+            }
+
+            // VNC/remote desktop may send space as a Shortcut event
+            Event::Shortcut => true,
+
+            _ => false,
         }
-        false
     });
 }

@@ -390,11 +390,20 @@ fn main() {
                         // Auto-trigger reconstruction with time-filtered spectrogram
                         let tx_clone = tx.clone();
                         let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
+
+                        // Pre-filter frames on main thread so we can set recon_start_time
+                        // precisely from the actual first frame (not the user-typed start)
+                        let filtered_frames: Vec<_> = spec.frames.iter()
+                            .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
+                            .cloned()
+                            .collect();
+
+                        // Set recon_start_time from actual first frame time
+                        if let Some(first) = filtered_frames.first() {
+                            state.borrow_mut().recon_start_time = first.time_seconds;
+                        }
+
                         std::thread::spawn(move || {
-                            let filtered_frames: Vec<_> = spec.frames.iter()
-                                .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
-                                .cloned()
-                                .collect();
                             let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
                             let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
                             tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
@@ -470,20 +479,22 @@ fn main() {
                 if st.audio_player.has_audio() {
                     let audio_pos = st.audio_player.get_position_seconds();
                     let playing = st.audio_player.get_state() == PlaybackState::Playing;
-                    st.transport.position_seconds = st.recon_start_time + audio_pos;
-                    Some((audio_pos, st.transport.duration_seconds, playing))
+                    let global_pos = st.recon_start_time + audio_pos;
+                    st.transport.position_seconds = global_pos;
+                    Some((audio_pos, st.transport.duration_seconds, global_pos, playing))
                 } else {
                     None
                 }
             };
-            if let Some((audio_pos, dur, playing)) = transport_data {
+            if let Some((audio_pos, dur, global_pos, playing)) = transport_data {
                 if dur > 0.0 {
                     scrub_slider.set_value((audio_pos / dur).clamp(0.0, 1.0));
                 }
                 lbl_time.set_label(&format!(
-                    "{} / {}",
+                    "L {} / {}\nG {}",
                     format_time(audio_pos),
-                    format_time(dur)
+                    format_time(dur),
+                    format_time(global_pos),
                 ));
                 if playing {
                     spec_display.redraw();

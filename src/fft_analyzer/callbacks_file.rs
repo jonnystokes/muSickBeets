@@ -346,11 +346,17 @@ fn setup_load_fft_callback(
                 // Auto-trigger reconstruction so sound can play
                 let tx_clone = tx.clone();
                 let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
+
+                // Pre-filter and set recon_start_time from actual first frame
+                let filtered_frames: Vec<_> = spec.frames.iter()
+                    .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
+                    .cloned()
+                    .collect();
+                if let Some(first) = filtered_frames.first() {
+                    state.borrow_mut().recon_start_time = first.time_seconds;
+                }
+
                 std::thread::spawn(move || {
-                    let filtered_frames: Vec<_> = spec.frames.iter()
-                        .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
-                        .cloned()
-                        .collect();
                     let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
                     let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
                     tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();

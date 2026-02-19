@@ -126,10 +126,19 @@ impl Reconstructor {
             }
         }
 
-        // Normalize by window sum
+        // Normalize by window sum, with adaptive threshold to prevent
+        // edge amplification artifacts when few frames overlap.
+        // With proper overlap (Hann 75%), window_sum is ~1.5 everywhere.
+        // With few frames, edges have tiny window_sum → division amplifies noise.
+        // Fix: use 10% of peak window_sum as minimum; silence below that.
+        let max_wsum = window_sum.iter().copied().fold(0.0f32, f32::max);
+        let threshold = (max_wsum * 0.1).max(1e-8);
         for i in 0..output.len() {
-            if window_sum[i] > 1e-8 {
+            if window_sum[i] >= threshold {
                 output[i] /= window_sum[i];
+            } else {
+                // Insufficient overlap — fade to zero rather than amplify artifacts
+                output[i] = 0.0;
             }
         }
 

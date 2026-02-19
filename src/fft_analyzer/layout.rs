@@ -731,10 +731,11 @@ pub fn build_ui() -> (Window, Widgets) {
     scrub_slider.deactivate();
     set_tooltip(&mut scrub_slider, "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.");
 
-    let mut lbl_time = Frame::default().with_label("0:00.00 / 0:00.00");
+    let mut lbl_time = Frame::default().with_label("L 0:00.00 / 0:00.00\nG 0:00.00");
     lbl_time.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_time.set_label_size(11);
-    transport_row.fixed(&lbl_time, 120);
+    lbl_time.set_label_size(10);
+    lbl_time.set_align(Align::Inside | Align::Left);
+    transport_row.fixed(&lbl_time, 170);
 
     let mut repeat_choice = Choice::default();
     repeat_choice.add_choice("Single");

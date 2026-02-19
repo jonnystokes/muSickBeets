@@ -1,14 +1,21 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use fltk::{
-    enums::CallbackTrigger,
+    enums::Event,
     input::{Input, FloatInput},
     prelude::*,
 };
 
 // ─── Float/Int Input Validation ──────────────────────────────────────────────
 //
-// Revert-based validation: let the character enter, then validate and revert
-// if invalid. This works on VNC/Termux/remote desktop where keystroke blocking
-// doesn't work because input arrives as Shortcut/Paste events.
+// Revert-based validation using handle() instead of set_callback().
+// This is critical: set_callback() can only have ONE callback per widget,
+// so if a functional callback is set later, it overwrites validation.
+// handle() is independent and always fires, regardless of other callbacks.
+//
+// Works on VNC/Termux/remote desktop where input arrives as Shortcut/Paste events.
+// On every text change, we check validity and revert if invalid.
 
 pub fn is_valid_float_input(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
@@ -22,34 +29,59 @@ pub fn is_valid_uint_input(text: &str) -> bool {
     text.is_empty() || text.chars().all(|c| c.is_ascii_digit())
 }
 
+/// Attach revert-based float validation via handle().
+/// Survives any later set_callback() calls on the same widget.
 pub fn attach_float_validation(input: &mut FloatInput) {
-    let mut last_valid = String::new();
-    input.set_trigger(CallbackTrigger::Changed);
-    input.set_callback(move |field| {
-        let current = field.value();
-        let minus_just_added = current.contains('-') && !last_valid.contains('-');
-        let typed_at_start = field.position() == 1;
-        if is_valid_float_input(&current) && !(minus_just_added && !typed_at_start) {
-            last_valid = current;
-        } else {
-            let restore = field.position().saturating_sub(1);
-            field.set_value(&last_valid);
-            field.set_position(restore).ok();
+    let last_valid = Rc::new(RefCell::new(input.value()));
+    input.handle(move |field, ev| {
+        // We care about any event that may have changed the text:
+        // KeyUp, Paste, Shortcut, Unfocus, etc.
+        // Rather than guessing events, just check on every event whether text changed.
+        match ev {
+            Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
+                let current = field.value();
+                let lv = last_valid.borrow().clone();
+                if current == lv {
+                    return false; // no change
+                }
+                let minus_just_added = current.contains('-') && !lv.contains('-');
+                let typed_at_start = field.position() == 1;
+                if is_valid_float_input(&current) && !(minus_just_added && !typed_at_start) {
+                    *last_valid.borrow_mut() = current;
+                } else {
+                    let restore = field.position().saturating_sub(1);
+                    field.set_value(&lv);
+                    field.set_position(restore).ok();
+                }
+                false // don't consume — let other handlers see it too
+            }
+            _ => false,
         }
     });
 }
 
+/// Attach revert-based uint validation via handle().
+/// Survives any later set_callback() calls on the same widget.
 pub fn attach_uint_validation(input: &mut Input) {
-    let mut last_valid = String::new();
-    input.set_trigger(CallbackTrigger::Changed);
-    input.set_callback(move |field| {
-        let current = field.value();
-        if is_valid_uint_input(&current) {
-            last_valid = current;
-        } else {
-            let restore = field.position().saturating_sub(1);
-            field.set_value(&last_valid);
-            field.set_position(restore).ok();
+    let last_valid = Rc::new(RefCell::new(input.value()));
+    input.handle(move |field, ev| {
+        match ev {
+            Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
+                let current = field.value();
+                let lv = last_valid.borrow().clone();
+                if current == lv {
+                    return false;
+                }
+                if is_valid_uint_input(&current) {
+                    *last_valid.borrow_mut() = current;
+                } else {
+                    let restore = field.position().saturating_sub(1);
+                    field.set_value(&lv);
+                    field.set_position(restore).ok();
+                }
+                false
+            }
+            _ => false,
         }
     });
 }

@@ -1,6 +1,23 @@
 # Operation Progress Tracker
 
 ## Recently Completed
+- [x] Segmentation Overhaul (all 5 features from plan below):
+  1. Resolution trade-off display (live multi-line info in ANALYSIS section)
+  2. dB ceiling slider (DISPLAY section, auto-set from data, user-adjustable)
+  3. Direct segment size input + presets (typed input + dropdown, +/- steps through presets)
+  4. Zero-padding factor (1x/2x/4x/8x, full FFT pipeline integration)
+  5. Hop size display (read-only, below overlap slider)
+- [x] Bug fixes (Feb 2026):
+  - Text field validation: switched from set_callback() to handle() so validation survives
+    when functional callbacks are attached later. Spaces and invalid chars now blocked everywhere.
+  - Spacebar guard: space consumed at window level (KeyDown+KeyUp+Shortcut all return true),
+    preventing it from reaching focused buttons, dropdowns, or text fields.
+  - Global time display: transport bar now shows "L" (local) and "G" (global) time.
+    Global = absolute time in full file. Local = offset within reconstructed buffer.
+  - Time calculation precision: recon_start_time now set from actual first FFT frame time
+    (not user-typed Start value), so global time matches spectrogram cursor exactly.
+  - Volume reduction fix: reconstructor overlap-add normalization uses adaptive threshold
+    (10% of peak window_sum) to prevent edge amplification artifacts with few frames.
 - [x] Custom gradient/color ramp editor (SebLague-inspired)
   - GradientStop data structure, eval_gradient(), default 7-stop rainbow
   - Custom variant added to ColormapId (8th dropdown option)
