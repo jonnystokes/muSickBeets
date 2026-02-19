@@ -15,9 +15,8 @@
 - [ ] Auto-regenerate mode (careful - software rendering only, no GPU)
 
 ## Backburner
-- File open freeze still happens intermittently (audio device not properly recycled)
+- File open freeze  used to happens intermittently
   - Debug logging prints thread state to terminal when Open is clicked
-  - Possible cause: audio device not properly recycled on file change
 
 ---
 
