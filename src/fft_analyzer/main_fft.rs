@@ -227,6 +227,9 @@ fn main() {
     callbacks_nav::setup_zoom_callbacks(&widgets, &state);
     callbacks_nav::setup_snap_to_view(&widgets, &state);
     callbacks_nav::setup_spacebar_handler(&mut win, &widgets);
+    // Per-widget spacebar guards MUST be last — they set handle() on widgets,
+    // which would be overwritten if any later setup also calls handle().
+    callbacks_nav::setup_spacebar_guards(&widgets);
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  MAIN POLL LOOP (16ms)
@@ -430,17 +433,6 @@ fn main() {
                                     st.is_processing = false;
                                     st.dirty = false;
 
-                                    // If "Lock to Active" is on, snap viewport to processing range
-                                    if st.lock_to_active {
-                                        let proc_min = st.recon_start_time;
-                                        let proc_max = st.recon_start_time + duration;
-                                        if proc_max > proc_min {
-                                            st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
-                                            st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
-                                            st.spec_renderer.invalidate();
-                                        }
-                                    }
-
                                     Ok((duration, samples))
                                 }
                                 Err(e) => {
@@ -460,6 +452,38 @@ fn main() {
                                 waveform_display.redraw();
                                 freq_axis.redraw();
                                 time_axis.redraw();
+
+                                // If "Lock to Active" is on, snap viewport to processing
+                                // range (time + frequency) after a short delay so the UI
+                                // has time to finish updating renderers/redraws.
+                                let lock_active = state.borrow().lock_to_active;
+                                if lock_active {
+                                    let state_lock = state.clone();
+                                    let mut spec_d = spec_display.clone();
+                                    let mut wave_d = waveform_display.clone();
+                                    let mut freq_a = freq_axis.clone();
+                                    let mut time_a = time_axis.clone();
+                                    app::add_timeout3(0.5, move |_| {
+                                        let mut st = state_lock.borrow_mut();
+                                        // Snap time to reconstruction range
+                                        let proc_min = st.recon_start_time;
+                                        let proc_max = proc_min + st.transport.duration_seconds;
+                                        if proc_max > proc_min {
+                                            st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
+                                            st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
+                                        }
+                                        // Snap frequency to reconstruction range
+                                        st.view.freq_min_hz = st.view.recon_freq_min_hz.max(1.0);
+                                        st.view.freq_max_hz = st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
+                                        st.spec_renderer.invalidate();
+                                        st.wave_renderer.invalidate();
+                                        drop(st);
+                                        spec_d.redraw();
+                                        wave_d.redraw();
+                                        freq_a.redraw();
+                                        time_a.redraw();
+                                    });
+                                }
                             }
                             Err(e) => {
                                 status_bar.set_label(&format!("Reconstruction error: {}", e));

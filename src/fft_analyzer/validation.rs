@@ -34,6 +34,11 @@ pub fn is_valid_uint_input(text: &str) -> bool {
 pub fn attach_float_validation(input: &mut FloatInput) {
     let last_valid = Rc::new(RefCell::new(input.value()));
     input.handle(move |field, ev| {
+        // Block spacebar from reaching the text field entirely.
+        // Space is a global shortcut for recompute; it must never insert into text.
+        if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
+            return matches!(ev, Event::KeyDown | Event::KeyUp | Event::Shortcut);
+        }
         // We care about any event that may have changed the text:
         // KeyUp, Paste, Shortcut, Unfocus, etc.
         // Rather than guessing events, just check on every event whether text changed.
@@ -65,6 +70,10 @@ pub fn attach_float_validation(input: &mut FloatInput) {
 pub fn attach_uint_validation(input: &mut Input) {
     let last_valid = Rc::new(RefCell::new(input.value()));
     input.handle(move |field, ev| {
+        // Block spacebar from reaching the text field entirely.
+        if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
+            return matches!(ev, Event::KeyDown | Event::KeyUp | Event::Shortcut);
+        }
         match ev {
             Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
                 let current = field.value();

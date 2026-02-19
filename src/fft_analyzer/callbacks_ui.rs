@@ -428,6 +428,10 @@ pub fn setup_playback_callbacks(
 
         let mut scrub_slider = widgets.scrub_slider.clone();
         scrub_slider.handle(move |s, ev| {
+            // Block spacebar from reaching the scrub slider
+            if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
+                return matches!(ev, fltk::enums::Event::KeyDown | fltk::enums::Event::KeyUp | fltk::enums::Event::Shortcut);
+            }
             match ev {
                 fltk::enums::Event::Push => {
                     let st = state.borrow();
@@ -673,6 +677,10 @@ pub fn setup_gradient_editor(
 
         let mut gradient_preview = widgets.gradient_preview.clone();
         gradient_preview.handle(move |w, ev| {
+            // Block spacebar from reaching the gradient editor
+            if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
+                return matches!(ev, fltk::enums::Event::KeyDown | fltk::enums::Event::KeyUp | fltk::enums::Event::Shortcut);
+            }
             // Only allow interaction when colormap is Custom
             {
                 let st = state.borrow();

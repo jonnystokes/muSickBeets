@@ -343,3 +343,87 @@ pub fn setup_spacebar_handler(
         }
     });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PER-WIDGET SPACEBAR GUARDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Block spacebar from activating any interactive widget (buttons, choices,
+/// checkbuttons, sliders, scrollbars). Space is a global recompute shortcut
+/// and must never trigger widget-specific behavior (opening dropdowns,
+/// toggling checkboxes, activating buttons, etc.).
+///
+/// EXCEPTION: The top-level menu bar (File, Analyze, Display) is not guarded.
+///
+/// Text inputs, scrub_slider, and gradient_preview are handled separately
+/// (their existing handle() callbacks include space blocking).
+///
+/// Must be called AFTER all other callback setups so it doesn't get overwritten.
+pub fn setup_spacebar_guards(widgets: &Widgets) {
+    // Macro to attach a spacebar-blocking handle() to any widget.
+    // On KeyDown/Shortcut: consume (blocks widget activation).
+    // On KeyUp: trigger recompute via btn_rerun, then consume.
+    macro_rules! block_space {
+        ($widget:expr, $btn_rerun:expr) => {{
+            let mut btn = $btn_rerun.clone();
+            let mut w = $widget;
+            w.handle(move |_, event| {
+                if app::event_key() == Key::from_char(' ') {
+                    match event {
+                        Event::KeyDown | Event::Shortcut => true,
+                        Event::KeyUp => { btn.do_callback(); true }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            });
+        }};
+    }
+
+    let btn_rerun = widgets.btn_rerun.clone();
+
+    // ── Buttons ──
+    block_space!(widgets.btn_open.clone(), btn_rerun);
+    block_space!(widgets.btn_save_fft.clone(), btn_rerun);
+    block_space!(widgets.btn_load_fft.clone(), btn_rerun);
+    block_space!(widgets.btn_save_wav.clone(), btn_rerun);
+    block_space!(widgets.btn_time_unit.clone(), btn_rerun);
+    block_space!(widgets.btn_seg_minus.clone(), btn_rerun);
+    block_space!(widgets.btn_seg_plus.clone(), btn_rerun);
+    block_space!(widgets.btn_rerun.clone(), btn_rerun);
+    block_space!(widgets.btn_snap_to_view.clone(), btn_rerun);
+    block_space!(widgets.btn_home.clone(), btn_rerun);
+    block_space!(widgets.btn_save_defaults.clone(), btn_rerun);
+    block_space!(widgets.btn_play.clone(), btn_rerun);
+    block_space!(widgets.btn_pause.clone(), btn_rerun);
+    block_space!(widgets.btn_stop.clone(), btn_rerun);
+    block_space!(widgets.btn_freq_zoom_in.clone(), btn_rerun);
+    block_space!(widgets.btn_freq_zoom_out.clone(), btn_rerun);
+    block_space!(widgets.btn_time_zoom_in.clone(), btn_rerun);
+    block_space!(widgets.btn_time_zoom_out.clone(), btn_rerun);
+
+    // ── Choice dropdowns ──
+    block_space!(widgets.seg_preset_choice.clone(), btn_rerun);
+    block_space!(widgets.window_type_choice.clone(), btn_rerun);
+    block_space!(widgets.zero_pad_choice.clone(), btn_rerun);
+    block_space!(widgets.colormap_choice.clone(), btn_rerun);
+    block_space!(widgets.repeat_choice.clone(), btn_rerun);
+
+    // ── CheckButtons ──
+    block_space!(widgets.check_center.clone(), btn_rerun);
+    block_space!(widgets.btn_tooltips.clone(), btn_rerun);
+    block_space!(widgets.check_lock_active.clone(), btn_rerun);
+
+    // ── Sliders ──
+    block_space!(widgets.slider_overlap.clone(), btn_rerun);
+    block_space!(widgets.slider_scale.clone(), btn_rerun);
+    block_space!(widgets.slider_threshold.clone(), btn_rerun);
+    block_space!(widgets.slider_ceiling.clone(), btn_rerun);
+    block_space!(widgets.slider_brightness.clone(), btn_rerun);
+    block_space!(widgets.slider_gamma.clone(), btn_rerun);
+
+    // ── Scrollbars ──
+    block_space!(widgets.x_scroll.clone(), btn_rerun);
+    block_space!(widgets.y_scroll.clone(), btn_rerun);
+}

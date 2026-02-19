@@ -582,7 +582,7 @@ pub fn build_ui() -> (Window, Widgets) {
     check_lock_active.set_checked(false);
     check_lock_active.set_label_color(theme::color(theme::TEXT_SECONDARY));
     check_lock_active.set_label_size(10);
-    set_tooltip(&mut check_lock_active, "When checked, viewport auto-snaps to\nthe processing time range on recompute.");
+    set_tooltip(&mut check_lock_active, "When checked, viewport auto-snaps to the\nactive time and frequency range after recompute.\nSnaps both axes with a short delay.");
     left.fixed(&check_lock_active, 22);
 
     // Home button — snap viewport to processing range
@@ -590,7 +590,7 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_home.set_color(theme::color(theme::BG_WIDGET));
     btn_home.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_home.set_label_size(11);
-    set_tooltip(&mut btn_home, "Snap viewport to the active processing\ntime range (sidebar Start/Stop).");
+    set_tooltip(&mut btn_home, "Snap viewport to the active processing\ntime range (Start/Stop) and frequency range\n(Recon Min/Max Freq).");
     left.fixed(&btn_home, 25);
 
     // Save As Default button

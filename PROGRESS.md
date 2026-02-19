@@ -26,6 +26,18 @@
   - Save/load custom gradient to settings.ini
 - [x] Remove 64-sample minimum on segment size (now allows down to 2)
 - [x] Fix Save As Default button (SIDEBAR_INNER_H overflow from new gradient widget)
+- [x] Spacebar guard v2 (Feb 2026):
+  - Per-widget handle() on ALL interactive widgets (buttons, choices, checkbuttons, sliders, scrollbars)
+  - Text input validation handlers also block space (return true for KeyDown/KeyUp/Shortcut)
+  - scrub_slider and gradient_preview handlers include space blocking inline
+  - Window-level handler still catches space for reconstruction trigger
+  - Only exception: top menu bar (File, Analyze, Display) not guarded
+  - On KeyUp with space, per-widget handler triggers btn_rerun.do_callback() directly
+- [x] Lock to Active v2 (Feb 2026):
+  - Now matches Home button behavior: snaps both time AND frequency to active range
+  - Uses 0.5s delay via app::add_timeout3 after reconstruction completes
+  - Frequency snaps to recon_freq_min/max (same as Home button)
+  - Tooltip updated to mention both time and frequency
 
 ## Active TODO
 - [ ] Segmentation Overhaul (see detailed notes below)
