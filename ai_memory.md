@@ -23,8 +23,11 @@
 ## Key Gotchas
 - FLTK widget methods require `&mut self` - closures capturing widgets must be `FnMut`, not `Fn`
 - Use `Rc<RefCell<Box<dyn FnMut()>>>` and call as `(cb.borrow_mut())()`
-- **Spacebar**: Use `win.handle()` with `Event::KeyUp`, return `false`. NOT `app::add_handler()`. FloatInput won't accept space.
-- `app::add_handler()` takes `fn(Event) -> bool` (no captures) — avoid for key detection
+- **Spacebar — READ CLAUDE.md**: Three-layer defense required. `handle()` alone does NOT work for buttons/choices/checkbuttons because FLTK's internal C++ handler bypasses it. The PRIMARY defense is `clear_visible_focus()` which prevents keyboard focus entirely. See CLAUDE.md for complete rules.
+- `app::add_handler()` takes `fn(Event) -> bool` (no captures) — runs AFTER widgets, useless for blocking
+- **clear_visible_focus()**: Required on ALL buttons, choices, checkbuttons, sliders, scrollbars to prevent spacebar from activating them. Widgets still work by mouse click.
+- **handle() vs set_callback()**: These are INDEPENDENT in fltk-rs. Setting one does not overwrite the other. But calling `handle()` twice DOES overwrite the first handler.
+- **setup_spacebar_guards()**: MUST be called LAST in callback setup chain. It sets `handle()` on widgets and would be overwritten by any later `handle()` call.
 - `app::event_dy()` returns `MouseWheel` enum (Up/Down/Left/Right/None), not integer
 - `fltk::misc::Tooltip::enable(bool)` takes a bool; `disable()` takes no args
 - `RgbImage::draw()` needs `use fltk::prelude::ImageExt`

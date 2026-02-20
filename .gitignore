@@ -3,3 +3,7 @@
 # Generated audio files
 *.wav
 *.csv
+
+# Settings file (auto-generated at runtime)
+settings.ini
+muSickBeets.ini
