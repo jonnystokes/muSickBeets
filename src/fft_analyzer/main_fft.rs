@@ -505,21 +505,37 @@ fn main() {
                     let playing = st.audio_player.get_state() == PlaybackState::Playing;
                     let global_pos = st.recon_start_time + audio_pos;
                     st.transport.position_seconds = global_pos;
-                    Some((audio_pos, st.transport.duration_seconds, global_pos, playing))
+                    let time_unit = st.fft_params.time_unit;
+                    let sample_rate = st.fft_params.sample_rate;
+                    Some((audio_pos, st.transport.duration_seconds, global_pos, playing, time_unit, sample_rate))
                 } else {
                     None
                 }
             };
-            if let Some((audio_pos, dur, global_pos, playing)) = transport_data {
+            if let Some((audio_pos, dur, global_pos, playing, time_unit, sample_rate)) = transport_data {
                 if dur > 0.0 {
                     scrub_slider.set_value((audio_pos / dur).clamp(0.0, 1.0));
                 }
-                lbl_time.set_label(&format!(
-                    "L {} / {}\nG {}",
-                    format_time(audio_pos),
-                    format_time(dur),
-                    format_time(global_pos),
-                ));
+                let label = match time_unit {
+                    TimeUnit::Samples => {
+                        let sr = sample_rate as f64;
+                        format!(
+                            "L {} / {}\nG {}",
+                            (audio_pos * sr) as u64,
+                            (dur * sr) as u64,
+                            (global_pos * sr) as u64,
+                        )
+                    }
+                    TimeUnit::Seconds => {
+                        format!(
+                            "L {} / {}\nG {}",
+                            format_time(audio_pos),
+                            format_time(dur),
+                            format_time(global_pos),
+                        )
+                    }
+                };
+                lbl_time.set_label(&label);
                 if playing {
                     spec_display.redraw();
                     waveform_display.redraw();
