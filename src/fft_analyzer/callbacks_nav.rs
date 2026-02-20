@@ -385,6 +385,9 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     let btn_rerun = widgets.btn_rerun.clone();
 
     // ── Buttons ──
+    // Like Choice widgets, FLTK buttons process space internally before
+    // handle() can intercept. clear_visible_focus() on all buttons prevents
+    // them from receiving keyboard focus so space never reaches them.
     block_space!(widgets.btn_open.clone(), btn_rerun);
     block_space!(widgets.btn_save_fft.clone(), btn_rerun);
     block_space!(widgets.btn_load_fft.clone(), btn_rerun);
@@ -403,6 +406,24 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.btn_freq_zoom_out.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_in.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_out.clone(), btn_rerun);
+    widgets.btn_open.clone().clear_visible_focus();
+    widgets.btn_save_fft.clone().clear_visible_focus();
+    widgets.btn_load_fft.clone().clear_visible_focus();
+    widgets.btn_save_wav.clone().clear_visible_focus();
+    widgets.btn_time_unit.clone().clear_visible_focus();
+    widgets.btn_seg_minus.clone().clear_visible_focus();
+    widgets.btn_seg_plus.clone().clear_visible_focus();
+    widgets.btn_rerun.clone().clear_visible_focus();
+    widgets.btn_snap_to_view.clone().clear_visible_focus();
+    widgets.btn_home.clone().clear_visible_focus();
+    widgets.btn_save_defaults.clone().clear_visible_focus();
+    widgets.btn_play.clone().clear_visible_focus();
+    widgets.btn_pause.clone().clear_visible_focus();
+    widgets.btn_stop.clone().clear_visible_focus();
+    widgets.btn_freq_zoom_in.clone().clear_visible_focus();
+    widgets.btn_freq_zoom_out.clone().clear_visible_focus();
+    widgets.btn_time_zoom_in.clone().clear_visible_focus();
+    widgets.btn_time_zoom_out.clone().clear_visible_focus();
 
     // ── Choice dropdowns ──
     // FLTK Choice widgets don't reliably honour handle() for space key —
@@ -425,6 +446,9 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.check_center.clone(), btn_rerun);
     block_space!(widgets.btn_tooltips.clone(), btn_rerun);
     block_space!(widgets.check_lock_active.clone(), btn_rerun);
+    widgets.check_center.clone().clear_visible_focus();
+    widgets.btn_tooltips.clone().clear_visible_focus();
+    widgets.check_lock_active.clone().clear_visible_focus();
 
     // ── Sliders ──
     block_space!(widgets.slider_overlap.clone(), btn_rerun);
@@ -433,10 +457,18 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.slider_ceiling.clone(), btn_rerun);
     block_space!(widgets.slider_brightness.clone(), btn_rerun);
     block_space!(widgets.slider_gamma.clone(), btn_rerun);
+    widgets.slider_overlap.clone().clear_visible_focus();
+    widgets.slider_scale.clone().clear_visible_focus();
+    widgets.slider_threshold.clone().clear_visible_focus();
+    widgets.slider_ceiling.clone().clear_visible_focus();
+    widgets.slider_brightness.clone().clear_visible_focus();
+    widgets.slider_gamma.clone().clear_visible_focus();
 
     // ── Scrollbars ──
     block_space!(widgets.x_scroll.clone(), btn_rerun);
     block_space!(widgets.y_scroll.clone(), btn_rerun);
+    widgets.x_scroll.clone().clear_visible_focus();
+    widgets.y_scroll.clone().clear_visible_focus();
 
     // ── Text inputs ──
     // Re-attach validation handlers with recompute trigger.
