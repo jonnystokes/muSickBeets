@@ -137,6 +137,11 @@ impl AudioPlayer {
         data.position = sample.min(data.end_sample);
     }
 
+    pub fn seek_to_sample(&self, sample: usize) {
+        let mut data = self.playback_data.lock().unwrap();
+        data.position = sample.min(data.end_sample);
+    }
+
     pub fn set_seeking(&self, seeking: bool) {
         let mut data = self.playback_data.lock().unwrap();
         data.is_seeking = seeking;
@@ -150,6 +155,11 @@ impl AudioPlayer {
     pub fn get_state(&self) -> PlaybackState {
         let data = self.playback_data.lock().unwrap();
         data.state
+    }
+
+    pub fn get_position_samples(&self) -> usize {
+        let data = self.playback_data.lock().unwrap();
+        data.position
     }
 
     pub fn get_position_seconds(&self) -> f64 {

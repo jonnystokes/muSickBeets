@@ -30,7 +30,8 @@ pub struct AppState {
     pub wave_renderer: WaveformRenderer,
 
     pub reconstructed_audio: Option<AudioData>,
-    pub recon_start_time: f64,
+    /// Reconstruction start position in samples (ground truth).
+    pub recon_start_sample: usize,
     pub is_processing: bool,
     pub dirty: bool,
     pub lock_to_active: bool,
@@ -63,7 +64,7 @@ impl AppState {
             wave_renderer: WaveformRenderer::new(),
 
             reconstructed_audio: None,
-            recon_start_time: 0.0,
+            recon_start_sample: 0,
             is_processing: false,
             dirty: false,
             lock_to_active: false,
@@ -81,11 +82,16 @@ impl AppState {
         }
     }
 
+    /// Reconstruction start time in seconds, derived from sample count.
+    pub fn recon_start_seconds(&self) -> f64 {
+        self.recon_start_sample as f64 / self.fft_params.sample_rate.max(1) as f64
+    }
+
     /// Compute all derived info values from current params
     pub fn derived_info(&self) -> DerivedInfo {
         let total_samples = if let Some(ref audio) = self.audio_data {
-            let start = self.fft_params.start_sample().min(audio.num_samples());
-            let stop = self.fft_params.stop_sample().min(audio.num_samples());
+            let start = self.fft_params.start_sample.min(audio.num_samples());
+            let stop = self.fft_params.stop_sample.min(audio.num_samples());
             stop.saturating_sub(start)
         } else {
             0

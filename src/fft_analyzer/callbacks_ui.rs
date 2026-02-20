@@ -27,28 +27,18 @@ pub fn setup_parameter_callbacks(
         let mut btn_time_unit = widgets.btn_time_unit.clone();
         btn_time_unit.set_callback(move |btn| {
             let mut st = state.borrow_mut();
-            let sr = st.fft_params.sample_rate as f64;
+            // Internal storage (start_sample/stop_sample) never changes — only the display
             match st.fft_params.time_unit {
                 TimeUnit::Seconds => {
-                    // Convert seconds -> samples
-                    let start_samples = (st.fft_params.start_time * sr) as u64;
-                    let stop_samples = (st.fft_params.stop_time * sr) as u64;
                     st.fft_params.time_unit = TimeUnit::Samples;
-                    st.fft_params.start_time = start_samples as f64;
-                    st.fft_params.stop_time = stop_samples as f64;
-                    input_start.set_value(&start_samples.to_string());
-                    input_stop.set_value(&stop_samples.to_string());
+                    input_start.set_value(&st.fft_params.start_sample.to_string());
+                    input_stop.set_value(&st.fft_params.stop_sample.to_string());
                     btn.set_label("Unit: Samples");
                 }
                 TimeUnit::Samples => {
-                    // Convert samples -> seconds
-                    let start_secs = st.fft_params.start_time / sr;
-                    let stop_secs = st.fft_params.stop_time / sr;
                     st.fft_params.time_unit = TimeUnit::Seconds;
-                    st.fft_params.start_time = start_secs;
-                    st.fft_params.stop_time = stop_secs;
-                    input_start.set_value(&format!("{:.5}", start_secs));
-                    input_stop.set_value(&format!("{:.5}", stop_secs));
+                    input_start.set_value(&format!("{:.5}", st.fft_params.start_seconds()));
+                    input_stop.set_value(&format!("{:.5}", st.fft_params.stop_seconds()));
                     btn.set_label("Unit: Seconds");
                 }
             }
@@ -418,7 +408,7 @@ pub fn setup_playback_callbacks(
             let mut st = state.borrow_mut();
             st.audio_player.stop();
             st.transport.is_playing = false;
-            st.transport.position_seconds = 0.0;
+            st.transport.position_samples = 0;
         });
     }
 
@@ -441,14 +431,14 @@ pub fn setup_playback_callbacks(
                 fltk::enums::Event::Push => {
                     let st = state.borrow();
                     st.audio_player.set_seeking(true);
-                    let audio_position = s.value() * st.transport.duration_seconds;
-                    st.audio_player.seek_to(audio_position);
+                    let seek_sample = (s.value() * st.transport.duration_samples as f64) as usize;
+                    st.audio_player.seek_to_sample(seek_sample);
                     true
                 }
                 fltk::enums::Event::Drag => {
                     let st = state.borrow();
-                    let audio_position = s.value() * st.transport.duration_seconds;
-                    st.audio_player.seek_to(audio_position);
+                    let seek_sample = (s.value() * st.transport.duration_samples as f64) as usize;
+                    st.audio_player.seek_to_sample(seek_sample);
                     true
                 }
                 fltk::enums::Event::Released => {
@@ -514,14 +504,8 @@ pub fn setup_misc_callbacks(
         let mut btn_home = widgets.btn_home.clone();
         btn_home.set_callback(move |_| {
             let mut st = state.borrow_mut();
-            let proc_min = match st.fft_params.time_unit {
-                TimeUnit::Seconds => st.fft_params.start_time,
-                TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
-            };
-            let proc_max = match st.fft_params.time_unit {
-                TimeUnit::Seconds => st.fft_params.stop_time,
-                TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
-            };
+            let proc_min = st.fft_params.start_seconds();
+            let proc_max = st.fft_params.stop_seconds();
             if proc_max > proc_min {
                 st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
                 st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);

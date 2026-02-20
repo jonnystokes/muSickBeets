@@ -10,8 +10,8 @@ impl FftEngine {
     /// Process audio into a spectrogram using parallel FFT computation.
     /// Each frame's FFT runs independently on a rayon thread.
     pub fn process(audio: &AudioData, params: &FftParams) -> Spectrogram {
-        let start_sample = params.start_sample();
-        let stop_sample = params.stop_sample().min(audio.num_samples());
+        let start_sample = params.start_sample;
+        let stop_sample = params.stop_sample.min(audio.num_samples());
 
         if start_sample >= stop_sample {
             return Spectrogram::default();

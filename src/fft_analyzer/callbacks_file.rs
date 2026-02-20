@@ -103,6 +103,7 @@ fn setup_open_callback(
                     }
                 }
 
+                let num_smp = audio.num_samples();
                 let duration = audio.duration_seconds;
                 let nyquist = audio.nyquist_freq();
                 let sample_rate = audio.sample_rate;
@@ -115,7 +116,8 @@ fn setup_open_callback(
                     // Stop any current playback before loading new audio
                     st.audio_player.stop();
                     st.fft_params.sample_rate = sample_rate;
-                    st.fft_params.stop_time = duration;
+                    st.fft_params.start_sample = 0;
+                    st.fft_params.stop_sample = num_smp;
                     st.audio_data = Some(audio.clone());
                     st.has_audio = true;
 
@@ -131,8 +133,9 @@ fn setup_open_callback(
                     st.view.max_freq_bins = st.fft_params.num_frequency_bins();
                     st.view.recon_freq_count = st.fft_params.num_frequency_bins();
 
-                    st.transport.duration_seconds = duration;
-                    st.transport.position_seconds = 0.0;
+                    st.transport.duration_samples = num_smp;
+                    st.transport.sample_rate = sample_rate;
+                    st.transport.position_samples = 0;
 
                     st.spec_renderer.invalidate();
                     st.wave_renderer.invalidate();
@@ -150,7 +153,14 @@ fn setup_open_callback(
                     win.set_label(&format!("muSickBeets - {}", fname));
                 }
 
-                input_stop.set_value(&format!("{:.5}", duration));
+                // Display stop value based on current time unit
+                {
+                    let st = state.borrow();
+                    match st.fft_params.time_unit {
+                        TimeUnit::Seconds => input_stop.set_value(&format!("{:.5}", duration)),
+                        TimeUnit::Samples => input_stop.set_value(&num_smp.to_string()),
+                    }
+                }
                 {
                     let st = state.borrow();
                     input_recon_freq_max.set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
@@ -217,14 +227,8 @@ fn setup_save_fft_callback(
         // Filter spectrogram frames to processing time range (sidebar Start/Stop)
         // so the CSV only contains the section the user cares about.
         let spec_full = st.spectrogram.as_ref().unwrap();
-        let proc_time_min = match st.fft_params.time_unit {
-            TimeUnit::Seconds => st.fft_params.start_time,
-            TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
-        };
-        let proc_time_max = match st.fft_params.time_unit {
-            TimeUnit::Seconds => st.fft_params.stop_time,
-            TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
-        };
+        let proc_time_min = st.fft_params.start_seconds();
+        let proc_time_max = st.fft_params.stop_seconds();
         let filtered_frames: Vec<_> = spec_full.frames.iter()
             .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
             .cloned()
@@ -286,9 +290,10 @@ fn setup_load_fft_callback(
                 // Ensure proc_time covers the full spectrogram range
                 let spec_min_time = imported_spec.min_time;
                 let spec_max_time = imported_spec.max_time;
-                imported_params.start_time = spec_min_time;
-                imported_params.stop_time = spec_max_time;
-                imported_params.time_unit = TimeUnit::Seconds;
+                let sr = imported_params.sample_rate;
+                // Convert spectrogram time range to sample counts (ground truth)
+                imported_params.start_sample = (spec_min_time * sr as f64).round() as usize;
+                imported_params.stop_sample = (spec_max_time * sr as f64).round() as usize;
 
                 let recon_data = {
                     let mut st = state.borrow_mut();
@@ -317,7 +322,7 @@ fn setup_load_fft_callback(
                     st.spectrogram = Some(Arc::new(imported_spec));
                     st.spec_renderer.invalidate();
                     st.wave_renderer.invalidate();
-                    st.recon_start_time = spec_min_time;
+                    st.recon_start_sample = imported_params.start_sample;
                     st.is_processing = true;
                     st.dirty = false;
 
@@ -328,8 +333,9 @@ fn setup_load_fft_callback(
                     (spec, params, view, spec_min_time, spec_max_time)
                 };
 
-                input_start.set_value(&format!("{:.5}", imported_params.start_time));
-                input_stop.set_value(&format!("{:.5}", imported_params.stop_time));
+                // Display values based on time_unit (default: Seconds for CSV import)
+                input_start.set_value(&format!("{:.5}", imported_params.start_seconds()));
+                input_stop.set_value(&format!("{:.5}", imported_params.stop_seconds()));
                 slider_overlap.set_value(imported_params.overlap_percent as f64);
 
                 (enable_audio_widgets.borrow_mut())();
@@ -347,13 +353,14 @@ fn setup_load_fft_callback(
                 let tx_clone = tx.clone();
                 let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
 
-                // Pre-filter and set recon_start_time from actual first frame
+                // Pre-filter and set recon_start_sample from actual first frame
                 let filtered_frames: Vec<_> = spec.frames.iter()
                     .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
                     .cloned()
                     .collect();
                 if let Some(first) = filtered_frames.first() {
-                    state.borrow_mut().recon_start_time = first.time_seconds;
+                    let frame_sr = params.sample_rate as f64;
+                    state.borrow_mut().recon_start_sample = (first.time_seconds * frame_sr).round() as usize;
                 }
 
                 std::thread::spawn(move || {
@@ -445,9 +452,18 @@ pub fn setup_rerun_callback(
             if st.audio_data.is_none() { return; }
             if st.is_processing { return; }
 
-            // Read current field values for processing time range
-            st.fft_params.start_time = parse_or_zero_f64(&input_start.value());
-            st.fft_params.stop_time = parse_or_zero_f64(&input_stop.value());
+            // Read current field values and convert to sample counts
+            let sr = st.fft_params.sample_rate as f64;
+            match st.fft_params.time_unit {
+                TimeUnit::Seconds => {
+                    st.fft_params.start_sample = (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
+                    st.fft_params.stop_sample = (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
+                }
+                TimeUnit::Samples => {
+                    st.fft_params.start_sample = parse_or_zero_usize(&input_start.value());
+                    st.fft_params.stop_sample = parse_or_zero_usize(&input_stop.value());
+                }
+            }
 
             // Read segment size from input field, validate
             let seg_size: usize = parse_or_zero_usize(&input_seg_size.value()).max(2);
@@ -491,10 +507,9 @@ pub fn setup_rerun_callback(
         let (audio, params) = {
             let st = state.borrow();
             let mut fft_params = st.fft_params.clone();
-            // Override start/stop to process full file
-            fft_params.start_time = 0.0;
-            fft_params.stop_time = st.audio_data.as_ref().unwrap().duration_seconds;
-            fft_params.time_unit = TimeUnit::Seconds;
+            // Override start/stop to process full file (sample-based)
+            fft_params.start_sample = 0;
+            fft_params.stop_sample = st.audio_data.as_ref().unwrap().num_samples();
             (st.audio_data.clone().unwrap(), fft_params)
         };
 

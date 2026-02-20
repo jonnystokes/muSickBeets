@@ -20,8 +20,11 @@ pub struct FftParams {
     pub overlap_percent: f32,
     pub window_type: WindowType,
     pub use_center: bool,
-    pub start_time: f64,
-    pub stop_time: f64,
+    /// Processing start position, always in samples (ground truth).
+    pub start_sample: usize,
+    /// Processing stop position, always in samples (ground truth).
+    pub stop_sample: usize,
+    /// UI display preference only — does NOT affect internal storage.
     pub time_unit: TimeUnit,
     pub sample_rate: u32,
     pub zero_pad_factor: usize,
@@ -34,8 +37,8 @@ impl Default for FftParams {
             overlap_percent: 75.0,
             window_type: WindowType::Hann,
             use_center: false,
-            start_time: 0.0,
-            stop_time: 0.0,
+            start_sample: 0,
+            stop_sample: 0,
             time_unit: TimeUnit::Seconds,
             sample_rate: 48000,
             zero_pad_factor: 1,
@@ -55,18 +58,14 @@ impl FftParams {
         self.window_length * self.zero_pad_factor.max(1)
     }
 
-    pub fn start_sample(&self) -> usize {
-        match self.time_unit {
-            TimeUnit::Seconds => (self.start_time * self.sample_rate as f64) as usize,
-            TimeUnit::Samples => self.start_time as usize,
-        }
+    /// Start time in seconds, derived from start_sample.
+    pub fn start_seconds(&self) -> f64 {
+        self.start_sample as f64 / self.sample_rate.max(1) as f64
     }
 
-    pub fn stop_sample(&self) -> usize {
-        match self.time_unit {
-            TimeUnit::Seconds => (self.stop_time * self.sample_rate as f64) as usize,
-            TimeUnit::Samples => self.stop_time as usize,
-        }
+    /// Stop time in seconds, derived from stop_sample.
+    pub fn stop_seconds(&self) -> f64 {
+        self.stop_sample as f64 / self.sample_rate.max(1) as f64
     }
 
     pub fn num_frequency_bins(&self) -> usize {

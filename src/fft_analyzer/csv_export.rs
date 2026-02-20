@@ -29,8 +29,8 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
         window_type_str,                            // 4
         params.use_center.to_string(),              // 5
         "1".to_string(),                            // 6: num_channels
-        params.start_sample().to_string(),          // 7
-        params.stop_sample().to_string(),           // 8
+        params.start_sample.to_string(),           // 7
+        params.stop_sample.to_string(),            // 8
         view.recon_freq_count.to_string(),          // 9
         format!("{:.2}", view.recon_freq_min_hz),   // 10
         format!("{:.2}", view.recon_freq_max_hz),   // 11
@@ -184,8 +184,8 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         overlap_percent,
         window_type,
         use_center,
-        start_time: start_sample as f64 / sample_rate as f64,
-        stop_time: stop_sample as f64 / sample_rate as f64,
+        start_sample: start_sample,
+        stop_sample: stop_sample,
         time_unit: TimeUnit::Seconds,
         sample_rate,
         zero_pad_factor,

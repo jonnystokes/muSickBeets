@@ -286,20 +286,19 @@ pub fn setup_snap_to_view(
     btn_snap_to_view.set_callback(move |_| {
         {
             let mut st = state.borrow_mut();
-            // Copy viewport time to processing time
+            // Copy viewport time to processing time (always store as samples)
+            let sr = st.fft_params.sample_rate as f64;
+            st.fft_params.start_sample = (st.view.time_min_sec * sr).round() as usize;
+            st.fft_params.stop_sample = (st.view.time_max_sec * sr).round() as usize;
+            // Display based on current time unit
             match st.fft_params.time_unit {
                 TimeUnit::Seconds => {
-                    st.fft_params.start_time = st.view.time_min_sec;
-                    st.fft_params.stop_time = st.view.time_max_sec;
-                    input_start.set_value(&format!("{:.5}", st.view.time_min_sec));
-                    input_stop.set_value(&format!("{:.5}", st.view.time_max_sec));
+                    input_start.set_value(&format!("{:.5}", st.fft_params.start_seconds()));
+                    input_stop.set_value(&format!("{:.5}", st.fft_params.stop_seconds()));
                 }
                 TimeUnit::Samples => {
-                    let sr = st.fft_params.sample_rate as f64;
-                    st.fft_params.start_time = (st.view.time_min_sec * sr).round();
-                    st.fft_params.stop_time = (st.view.time_max_sec * sr).round();
-                    input_start.set_value(&format!("{}", st.fft_params.start_time as u64));
-                    input_stop.set_value(&format!("{}", st.fft_params.stop_time as u64));
+                    input_start.set_value(&st.fft_params.start_sample.to_string());
+                    input_stop.set_value(&st.fft_params.stop_sample.to_string());
                 }
             }
             // Copy viewport freq to reconstruction freq

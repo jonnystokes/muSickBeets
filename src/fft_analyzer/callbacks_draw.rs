@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use fltk::{app, enums::{Event, Font}, prelude::*};
 
 use crate::app_state::AppState;
-use crate::data::{self, TimeUnit};
+use crate::data;
 use crate::app_state::format_time;
 use crate::layout::Widgets;
 use crate::ui::theme;
@@ -45,18 +45,12 @@ fn setup_spectrogram_draw(
             let Ok(mut st) = state.try_borrow_mut() else { return; };
             if let Some(spec) = st.spectrogram.clone() {
                 let view = st.view.clone();
-                let proc_time_min = match st.fft_params.time_unit {
-                    TimeUnit::Seconds => st.fft_params.start_time,
-                    TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
-                };
-                let proc_time_max = match st.fft_params.time_unit {
-                    TimeUnit::Seconds => st.fft_params.stop_time,
-                    TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
-                };
+                let proc_time_min = st.fft_params.start_seconds();
+                let proc_time_max = st.fft_params.stop_seconds();
                 st.spec_renderer.draw(&spec, &view, proc_time_min, proc_time_max, w.x(), w.y(), w.w(), w.h());
 
-                let cursor_cx = if st.transport.duration_seconds > 0.0 {
-                    let playback_time = st.recon_start_time + st.audio_player.get_position_seconds();
+                let cursor_cx = if st.transport.duration_samples > 0 {
+                    let playback_time = st.recon_start_seconds() + st.audio_player.get_position_seconds();
                     let cursor_t = st.view.time_to_x(playback_time);
                     if cursor_t >= 0.0 && cursor_t <= 1.0 {
                         Some(w.x() + (cursor_t * w.w() as f64) as i32)
@@ -109,8 +103,8 @@ fn setup_spectrogram_mouse(
                 let t = mx as f64 / w.w() as f64;
                 let st = state.borrow();
                 let time = st.view.x_to_time(t);
-                // Seek is relative to recon_start_time
-                let audio_pos = (time - st.recon_start_time).max(0.0);
+                // Seek is relative to recon_start_seconds
+                let audio_pos = (time - st.recon_start_seconds()).max(0.0);
                 st.audio_player.set_seeking(true);
                 st.audio_player.seek_to(audio_pos);
                 true
@@ -203,7 +197,7 @@ fn setup_spectrogram_mouse(
                 let t = mx as f64 / w.w() as f64;
                 let st = state.borrow();
                 let time = st.view.x_to_time(t);
-                let audio_pos = (time - st.recon_start_time).max(0.0);
+                let audio_pos = (time - st.recon_start_seconds()).max(0.0);
                 st.audio_player.seek_to(audio_pos);
                 true
             }
@@ -237,8 +231,8 @@ fn setup_waveform_draw(
         {
             let Ok(mut st) = state.try_borrow_mut() else { return; };
 
-            let cursor_x = if st.transport.duration_seconds > 0.0 {
-                let playback_time = st.recon_start_time + st.audio_player.get_position_seconds();
+            let cursor_x = if st.transport.duration_samples > 0 {
+                let playback_time = st.recon_start_seconds() + st.audio_player.get_position_seconds();
                 let t = st.view.time_to_x(playback_time);
                 if t >= 0.0 && t <= 1.0 {
                     Some((t * w.w() as f64) as i32)
@@ -251,7 +245,7 @@ fn setup_waveform_draw(
 
             let view = st.view.clone();
             let audio_opt = st.reconstructed_audio.take();
-            let recon_start = st.recon_start_time;
+            let recon_start = st.recon_start_seconds();
             if let Some(ref audio) = audio_opt {
                 st.wave_renderer.draw(&audio.samples, audio.sample_rate, recon_start, &view, cursor_x, w.x(), w.y(), w.w(), w.h());
             } else {
@@ -381,14 +375,8 @@ fn setup_time_axis_draw(
         }
 
         // Draw boundary lines for processing time range
-        let proc_start = match st.fft_params.time_unit {
-            TimeUnit::Seconds => st.fft_params.start_time,
-            TimeUnit::Samples => st.fft_params.start_time / st.fft_params.sample_rate.max(1) as f64,
-        };
-        let proc_stop = match st.fft_params.time_unit {
-            TimeUnit::Seconds => st.fft_params.stop_time,
-            TimeUnit::Samples => st.fft_params.stop_time / st.fft_params.sample_rate.max(1) as f64,
-        };
+        let proc_start = st.fft_params.start_seconds();
+        let proc_stop = st.fft_params.stop_seconds();
         fltk::draw::set_draw_color(fltk::enums::Color::from_hex(0xf9e2af)); // accent yellow
         let t_start = st.view.time_to_x(proc_start);
         if t_start > 0.01 && t_start < 0.99 {

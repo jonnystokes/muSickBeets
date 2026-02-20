@@ -270,17 +270,33 @@ impl ViewState {
 
 #[derive(Debug, Clone)]
 pub struct TransportState {
-    pub position_seconds: f64,
-    pub duration_seconds: f64,
+    /// Current playback position in samples (global = recon_start + local).
+    pub position_samples: usize,
+    /// Duration of reconstructed audio in samples.
+    pub duration_samples: usize,
+    /// Sample rate for seconds conversion at display time.
+    pub sample_rate: u32,
     pub is_playing: bool,
     pub repeat: bool,
+}
+
+impl TransportState {
+    #[allow(dead_code)]
+    pub fn position_seconds(&self) -> f64 {
+        self.position_samples as f64 / self.sample_rate.max(1) as f64
+    }
+
+    pub fn duration_seconds(&self) -> f64 {
+        self.duration_samples as f64 / self.sample_rate.max(1) as f64
+    }
 }
 
 impl Default for TransportState {
     fn default() -> Self {
         Self {
-            position_seconds: 0.0,
-            duration_seconds: 0.0,
+            position_samples: 0,
+            duration_samples: 0,
+            sample_rate: 48000,
             is_playing: false,
             repeat: false,
         }

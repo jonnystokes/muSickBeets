@@ -357,17 +357,11 @@ fn main() {
                             let params = st.fft_params.clone();
                             let view = st.view.clone();
 
-                            // Get processing time range
-                            let proc_time_min = match params.time_unit {
-                                TimeUnit::Seconds => params.start_time,
-                                TimeUnit::Samples => params.start_time / params.sample_rate.max(1) as f64,
-                            };
-                            let proc_time_max = match params.time_unit {
-                                TimeUnit::Seconds => params.stop_time,
-                                TimeUnit::Samples => params.stop_time / params.sample_rate.max(1) as f64,
-                            };
+                            // Get processing time range (derived from sample counts)
+                            let proc_time_min = params.start_seconds();
+                            let proc_time_max = params.stop_seconds();
 
-                            st.recon_start_time = proc_time_min;
+                            st.recon_start_sample = params.start_sample;
 
                             (spec, params, view, proc_time_min, proc_time_max)
                         };
@@ -394,16 +388,17 @@ fn main() {
                         let tx_clone = tx.clone();
                         let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
 
-                        // Pre-filter frames on main thread so we can set recon_start_time
-                        // precisely from the actual first frame (not the user-typed start)
+                        // Pre-filter frames on main thread
                         let filtered_frames: Vec<_> = spec.frames.iter()
                             .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
                             .cloned()
                             .collect();
 
-                        // Set recon_start_time from actual first frame time
+                        // Set recon_start_sample from actual first frame time
+                        // (frame time = center_sample / sample_rate, so round-trip is exact for practical lengths)
                         if let Some(first) = filtered_frames.first() {
-                            state.borrow_mut().recon_start_time = first.time_seconds;
+                            let sr = params.sample_rate as f64;
+                            state.borrow_mut().recon_start_sample = (first.time_seconds * sr).round() as usize;
                         }
 
                         std::thread::spawn(move || {
@@ -424,16 +419,17 @@ fn main() {
                             let mut st = state.borrow_mut();
                             match st.audio_player.load_audio(&reconstructed) {
                                 Ok(_) => {
-                                    let duration = reconstructed.duration_seconds;
-                                    let samples = reconstructed.num_samples();
-                                    st.transport.duration_seconds = duration;
+                                    let num_smp = reconstructed.num_samples();
+                                    let sr = reconstructed.sample_rate;
+                                    st.transport.duration_samples = num_smp;
+                                    st.transport.sample_rate = sr;
                                     st.wave_renderer.invalidate();
 
                                     st.reconstructed_audio = Some(reconstructed);
                                     st.is_processing = false;
                                     st.dirty = false;
 
-                                    Ok((duration, samples))
+                                    Ok((num_smp, sr))
                                 }
                                 Err(e) => {
                                     st.is_processing = false;
@@ -442,11 +438,12 @@ fn main() {
                             }
                         };
                         match recon_result {
-                            Ok((duration, samples)) => {
+                            Ok((num_smp, sr)) => {
+                                let duration_sec = num_smp as f64 / sr.max(1) as f64;
                                 (enable_wav_export.borrow_mut())();
                                 status_bar.set_label(&format!(
                                     "Reconstructed | {:.2}s | {} samples",
-                                    duration, samples
+                                    duration_sec, num_smp
                                 ));
                                 spec_display.redraw();
                                 waveform_display.redraw();
@@ -466,8 +463,8 @@ fn main() {
                                     app::add_timeout3(0.5, move |_| {
                                         let mut st = state_lock.borrow_mut();
                                         // Snap time to reconstruction range
-                                        let proc_min = st.recon_start_time;
-                                        let proc_max = proc_min + st.transport.duration_seconds;
+                                        let proc_min = st.recon_start_seconds();
+                                        let proc_max = proc_min + st.transport.duration_seconds();
                                         if proc_max > proc_min {
                                             st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
                                             st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
@@ -501,37 +498,36 @@ fn main() {
                     return;
                 };
                 if st.audio_player.has_audio() {
-                    let audio_pos = st.audio_player.get_position_seconds();
+                    let local_samples = st.audio_player.get_position_samples();
                     let playing = st.audio_player.get_state() == PlaybackState::Playing;
-                    let global_pos = st.recon_start_time + audio_pos;
-                    st.transport.position_seconds = global_pos;
+                    let global_samples = st.recon_start_sample + local_samples;
+                    st.transport.position_samples = global_samples;
+                    let dur_samples = st.transport.duration_samples;
+                    let sr = st.transport.sample_rate;
                     let time_unit = st.fft_params.time_unit;
-                    let sample_rate = st.fft_params.sample_rate;
-                    Some((audio_pos, st.transport.duration_seconds, global_pos, playing, time_unit, sample_rate))
+                    Some((local_samples, dur_samples, global_samples, sr, playing, time_unit))
                 } else {
                     None
                 }
             };
-            if let Some((audio_pos, dur, global_pos, playing, time_unit, sample_rate)) = transport_data {
-                if dur > 0.0 {
-                    scrub_slider.set_value((audio_pos / dur).clamp(0.0, 1.0));
+            if let Some((local_smp, dur_smp, global_smp, sr, playing, time_unit)) = transport_data {
+                if dur_smp > 0 {
+                    scrub_slider.set_value(local_smp as f64 / dur_smp as f64);
                 }
                 let label = match time_unit {
                     TimeUnit::Samples => {
-                        let sr = sample_rate as f64;
                         format!(
                             "L {} / {}\nG {}",
-                            (audio_pos * sr) as u64,
-                            (dur * sr) as u64,
-                            (global_pos * sr) as u64,
+                            local_smp, dur_smp, global_smp,
                         )
                     }
                     TimeUnit::Seconds => {
+                        let sr_f = sr.max(1) as f64;
                         format!(
                             "L {} / {}\nG {}",
-                            format_time(audio_pos),
-                            format_time(dur),
-                            format_time(global_pos),
+                            format_time(local_smp as f64 / sr_f),
+                            format_time(dur_smp as f64 / sr_f),
+                            format_time(global_smp as f64 / sr_f),
                         )
                     }
                 };
