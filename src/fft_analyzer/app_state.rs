@@ -198,5 +198,5 @@ pub struct SharedCallbacks {
 pub fn format_time(seconds: f64) -> String {
     let mins = (seconds / 60.0) as u32;
     let secs = seconds % 60.0;
-    format!("{}:{:05.2}", mins, secs)
+    format!("{}:{:08.5}", mins, secs)
 }

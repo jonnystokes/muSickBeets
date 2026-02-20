@@ -134,7 +134,7 @@ fn setup_spectrogram_mouse(
                             {
                                 let db = data::Spectrogram::magnitude_to_db(*mag);
                                 status_bar.set_label(&format!(
-                                    "Cursor: {:.1} Hz | {:.1} dB | {:.3}s",
+                                    "Cursor: {:.1} Hz | {:.1} dB | {:.5}s",
                                     freq, db, time
                                 ));
                             }
