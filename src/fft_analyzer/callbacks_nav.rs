@@ -1,5 +1,5 @@
-use std::rc::Rc;
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use fltk::{
     app,
@@ -12,45 +12,80 @@ use fltk::{
 use crate::app_state::AppState;
 use crate::data::TimeUnit;
 use crate::layout::Widgets;
-use crate::validation::{attach_float_validation_with_recompute, attach_uint_validation_with_recompute};
+use crate::validation::{
+    attach_float_validation_with_recompute, attach_uint_validation_with_recompute,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  MENU CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_menu_callbacks(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+pub fn setup_menu_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let mut menu = widgets.menu.clone();
 
     {
         let mut btn_open = widgets.btn_open.clone();
-        menu.add("&File/Open Audio\t", Shortcut::Ctrl | 'o', MenuFlag::Normal,
-            move |_| { btn_open.do_callback(); });
+        menu.add(
+            "&File/Open Audio\t",
+            Shortcut::Ctrl | 'o',
+            MenuFlag::Normal,
+            move |_| {
+                btn_open.do_callback();
+            },
+        );
     }
     {
         let mut btn_save_fft = widgets.btn_save_fft.clone();
-        menu.add("&File/Save FFT Data\t", Shortcut::Ctrl | 's', MenuFlag::Normal,
-            move |_| { btn_save_fft.do_callback(); });
+        menu.add(
+            "&File/Save FFT Data\t",
+            Shortcut::Ctrl | 's',
+            MenuFlag::Normal,
+            move |_| {
+                btn_save_fft.do_callback();
+            },
+        );
     }
     {
         let mut btn_load_fft = widgets.btn_load_fft.clone();
-        menu.add("&File/Load FFT Data\t", Shortcut::Ctrl | 'l', MenuFlag::Normal,
-            move |_| { btn_load_fft.do_callback(); });
+        menu.add(
+            "&File/Load FFT Data\t",
+            Shortcut::Ctrl | 'l',
+            MenuFlag::Normal,
+            move |_| {
+                btn_load_fft.do_callback();
+            },
+        );
     }
     {
         let mut btn_save_wav = widgets.btn_save_wav.clone();
-        menu.add("&File/Export WAV\t", Shortcut::Ctrl | 'e', MenuFlag::Normal,
-            move |_| { btn_save_wav.do_callback(); });
+        menu.add(
+            "&File/Export WAV\t",
+            Shortcut::Ctrl | 'e',
+            MenuFlag::Normal,
+            move |_| {
+                btn_save_wav.do_callback();
+            },
+        );
     }
-    menu.add("&File/Quit\t", Shortcut::Ctrl | 'q', MenuFlag::Normal,
-        move |_| { app::quit(); });
+    menu.add(
+        "&File/Quit\t",
+        Shortcut::Ctrl | 'q',
+        MenuFlag::Normal,
+        move |_| {
+            app::quit();
+        },
+    );
 
     {
         let mut btn_rerun = widgets.btn_rerun.clone();
-        menu.add("&Analysis/Recompute FFT\t", Shortcut::None, MenuFlag::Normal,
-            move |_| { btn_rerun.do_callback(); });
+        menu.add(
+            "&Analysis/Recompute FFT\t",
+            Shortcut::None,
+            MenuFlag::Normal,
+            move |_| {
+                btn_rerun.do_callback();
+            },
+        );
     }
 
     {
@@ -59,7 +94,10 @@ pub fn setup_menu_callbacks(
         let mut freq_axis_c = widgets.freq_axis.clone();
         let mut time_axis_c = widgets.time_axis.clone();
         let mut waveform_c = widgets.waveform_display.clone();
-        menu.add("&Display/Reset Zoom\t", Shortcut::None, MenuFlag::Normal,
+        menu.add(
+            "&Display/Reset Zoom\t",
+            Shortcut::None,
+            MenuFlag::Normal,
             move |_| {
                 let mut st = state_c.borrow_mut();
                 st.view.reset_zoom();
@@ -70,7 +108,8 @@ pub fn setup_menu_callbacks(
                 waveform_c.redraw();
                 freq_axis_c.redraw();
                 time_axis_c.redraw();
-            });
+            },
+        );
     }
 }
 
@@ -103,9 +142,13 @@ pub fn setup_scrollbar_callbacks(
 
         x_scroll.set_callback(move |s| {
             x_scroll_gen.set(x_scroll_gen.get() + 1);
-            let Ok(mut st) = state.try_borrow_mut() else { return; };
+            let Ok(mut st) = state.try_borrow_mut() else {
+                return;
+            };
             let data_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
-            if data_range <= 0.0 { return; }
+            if data_range <= 0.0 {
+                return;
+            }
 
             let vis_range = st.view.visible_time_range().max(0.001);
             let scroll_frac = (s.value() / s.maximum()).clamp(0.0, 1.0);
@@ -137,14 +180,18 @@ pub fn setup_scrollbar_callbacks(
 
         y_scroll.set_callback(move |s| {
             y_scroll_gen.set(y_scroll_gen.get() + 1);
-            let Ok(mut st) = state.try_borrow_mut() else { return; };
+            let Ok(mut st) = state.try_borrow_mut() else {
+                return;
+            };
             let data_max = st.view.data_freq_max_hz;
             let data_min = 1.0_f32;
             let data_range = data_max - data_min;
-            if data_range <= 0.0 { return; }
+            if data_range <= 0.0 {
+                return;
+            }
 
             let vis_range = st.view.visible_freq_range().max(1.0);
-            let scroll_frac = 1.0 - (s.value() as f32 / s.maximum() as f32).clamp(0.0, 1.0);  // inverted for vertical
+            let scroll_frac = 1.0 - (s.value() as f32 / s.maximum() as f32).clamp(0.0, 1.0); // inverted for vertical
             let start = data_min + scroll_frac * (data_range - vis_range).max(0.0);
             st.view.freq_min_hz = start.max(data_min);
             st.view.freq_max_hz = (start + vis_range).min(data_max);
@@ -163,10 +210,7 @@ pub fn setup_scrollbar_callbacks(
 //  ZOOM BUTTON CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_zoom_callbacks(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     // Time zoom in (+)
     {
         let state = state.clone();
@@ -184,7 +228,8 @@ pub fn setup_zoom_callbacks(
             st.view.time_max_sec = st.view.time_min_sec + new_range;
             if st.view.time_max_sec > st.view.data_time_max_sec {
                 st.view.time_max_sec = st.view.data_time_max_sec;
-                st.view.time_min_sec = (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
+                st.view.time_min_sec =
+                    (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
             }
             st.spec_renderer.invalidate();
             st.wave_renderer.invalidate();
@@ -213,7 +258,8 @@ pub fn setup_zoom_callbacks(
             st.view.time_max_sec = st.view.time_min_sec + new_range;
             if st.view.time_max_sec > st.view.data_time_max_sec {
                 st.view.time_max_sec = st.view.data_time_max_sec;
-                st.view.time_min_sec = (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
+                st.view.time_min_sec =
+                    (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
             }
             st.spec_renderer.invalidate();
             st.wave_renderer.invalidate();
@@ -271,10 +317,7 @@ pub fn setup_zoom_callbacks(
 //  SNAP TO VIEW
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_snap_to_view(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+pub fn setup_snap_to_view(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let state = state.clone();
     let mut input_start = widgets.input_start.clone();
     let mut input_stop = widgets.input_stop.clone();
@@ -316,14 +359,13 @@ pub fn setup_snap_to_view(
 //  SPACEBAR HANDLER
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_spacebar_handler(
-    win: &mut Window,
-    widgets: &Widgets,
-) {
+pub fn setup_spacebar_handler(win: &mut Window, widgets: &Widgets) {
     let mut btn_rerun = widgets.btn_rerun.clone();
     win.handle(move |_, event| {
         let is_space = app::event_key() == Key::from_char(' ');
-        if !is_space { return false; }
+        if !is_space {
+            return false;
+        }
 
         match event {
             // Consume KeyDown to prevent space from reaching any focused widget
@@ -371,7 +413,10 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
                 if app::event_key() == Key::from_char(' ') {
                     match event {
                         Event::KeyDown | Event::Shortcut => true,
-                        Event::KeyUp => { btn.do_callback(); true }
+                        Event::KeyUp => {
+                            btn.do_callback();
+                            true
+                        }
                         _ => false,
                     }
                 } else {
@@ -476,6 +521,11 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     attach_float_validation_with_recompute(&mut widgets.input_start.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_stop.clone(), &btn_rerun);
     attach_uint_validation_with_recompute(&mut widgets.input_seg_size.clone(), &btn_rerun);
+    attach_uint_validation_with_recompute(
+        &mut widgets.input_segments_per_active.clone(),
+        &btn_rerun,
+    );
+    attach_uint_validation_with_recompute(&mut widgets.input_bins_per_segment.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_kaiser_beta.clone(), &btn_rerun);
     attach_uint_validation_with_recompute(&mut widgets.input_freq_count.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_recon_freq_min.clone(), &btn_rerun);
