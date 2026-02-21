@@ -1,12 +1,12 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::rc::Rc;
-use std::cell::RefCell;
 
-use crate::data::{AudioData, FftParams, Spectrogram, ViewState, TransportState};
+use crate::data::{AudioData, FftParams, Spectrogram, TransportState, ViewState};
+use crate::playback::audio_player::AudioPlayer;
 use crate::rendering::spectrogram_renderer::SpectrogramRenderer;
 use crate::rendering::waveform_renderer::WaveformRenderer;
-use crate::playback::audio_player::AudioPlayer;
 use crate::ui::tooltips::TooltipManager;
 
 // ─── Messages ──────────────────────────────────────────────────────────────────
@@ -112,6 +112,7 @@ impl AppState {
             bin_duration_ms,
             window_length: self.fft_params.window_length,
             sample_rate: self.fft_params.sample_rate,
+            overlap_percent: self.fft_params.overlap_percent,
         }
     }
 }
@@ -125,6 +126,7 @@ pub struct DerivedInfo {
     pub bin_duration_ms: f64,
     pub window_length: usize,
     pub sample_rate: u32,
+    pub overlap_percent: f32,
 }
 
 impl DerivedInfo {
@@ -136,13 +138,35 @@ impl DerivedInfo {
              Freq res: {:.2} Hz/bin\n\
              Time res: {:.2} ms/frame\n\
              Hop: {} smp ({:.1}ms)",
-            self.segments, self.window_length,
+            self.segments,
+            self.window_length,
             self.total_samples,
             self.freq_bins,
             self.freq_resolution,
             self.bin_duration_ms,
             self.hop_length,
             self.hop_length as f64 / self.sample_rate.max(1) as f64 * 1000.0,
+        )
+    }
+
+    pub fn format_segmentation_sentence(&self) -> String {
+        let sample_rate = self.sample_rate.max(1) as f64;
+        let active_seconds = self.total_samples as f64 / sample_rate;
+        let segment_seconds = self.window_length as f64 / sample_rate;
+        let hop_seconds = self.hop_length as f64 / sample_rate;
+        format!(
+            "Active time range is {} samples ({:.5} s at {:.1} kHz), divided into {} overlapping segments, each of length {} samples ({:.5} s). With {:.0}% overlap, the hop distance between segment starts is {} samples ({:.5} s). Each segment yields {} frequency bins, with each bin covering {:.5} Hz – the frequency resolution per bin.",
+            self.total_samples,
+            active_seconds,
+            sample_rate / 1000.0,
+            self.segments,
+            self.window_length,
+            segment_seconds,
+            self.overlap_percent.round(),
+            self.hop_length,
+            hop_seconds,
+            self.freq_bins,
+            self.freq_resolution,
         )
     }
 
@@ -154,10 +178,14 @@ impl DerivedInfo {
              Freq res: {:.2} Hz/bin ({} bins)\n\
              Time res: {:.1} ms/frame ({} frames)\n\
              Hop: {} smp ({:.1} ms)",
-            self.window_length, window_ms,
-            self.freq_resolution, self.freq_bins,
-            self.bin_duration_ms, self.segments,
-            self.hop_length, hop_ms,
+            self.window_length,
+            window_ms,
+            self.freq_resolution,
+            self.freq_bins,
+            self.bin_duration_ms,
+            self.segments,
+            self.hop_length,
+            hop_ms,
         )
     }
 }

@@ -1,16 +1,22 @@
-
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::path::Path;
 
-use super::data::{Spectrogram, FftParams, FftFrame, ViewState, WindowType, TimeUnit};
+use super::data::{
+    FftFrame, FftParams, LastEditedField, Spectrogram, TimeUnit, ViewState, WindowType,
+};
 
-pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftParams, view: &ViewState, path: P) -> Result<()> {
+pub fn export_to_csv<P: AsRef<Path>>(
+    spectrogram: &Spectrogram,
+    params: &FftParams,
+    view: &ViewState,
+    path: P,
+) -> Result<()> {
     let file = File::create(&path)
         .with_context(|| format!("Failed to create CSV file: {:?}", path.as_ref()))?;
 
     let mut writer = csv::WriterBuilder::new()
-        .flexible(true)  // Allow rows with different numbers of fields
+        .flexible(true) // Allow rows with different numbers of fields
         .from_writer(file);
 
     // Write metadata header (row 1): FFT params + reconstruction params
@@ -21,41 +27,49 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
         WindowType::Kaiser(beta) => format!("Kaiser_{}", beta),
     };
 
-    writer.write_record(&[
-        params.sample_rate.to_string(),            // 0
-        params.window_length.to_string(),           // 1
-        params.hop_length().to_string(),            // 2
-        params.overlap_percent.to_string(),         // 3
-        window_type_str,                            // 4
-        params.use_center.to_string(),              // 5
-        "1".to_string(),                            // 6: num_channels
-        params.start_sample.to_string(),           // 7
-        params.stop_sample.to_string(),            // 8
-        view.recon_freq_count.to_string(),          // 9
-        format!("{:.2}", view.recon_freq_min_hz),   // 10
-        format!("{:.2}", view.recon_freq_max_hz),   // 11
-        params.zero_pad_factor.to_string(),         // 12
-    ]).context("Failed to write CSV metadata")?;
+    writer
+        .write_record(&[
+            params.sample_rate.to_string(),                             // 0
+            params.window_length.to_string(),                           // 1
+            params.hop_length().to_string(),                            // 2
+            params.overlap_percent.to_string(),                         // 3
+            window_type_str,                                            // 4
+            params.use_center.to_string(),                              // 5
+            "1".to_string(),                                            // 6: num_channels
+            params.start_sample.to_string(),                            // 7
+            params.stop_sample.to_string(),                             // 8
+            view.recon_freq_count.to_string(),                          // 9
+            format!("{:.2}", view.recon_freq_min_hz),                   // 10
+            format!("{:.2}", view.recon_freq_max_hz),                   // 11
+            params.zero_pad_factor.to_string(),                         // 12
+            params.target_segments_per_active.unwrap_or(0).to_string(), // 13
+            params.target_bins_per_segment.unwrap_or(0).to_string(),    // 14
+            match params.last_edited_field {
+                LastEditedField::Overlap => "Overlap".to_string(),
+                LastEditedField::SegmentsPerActive => "SegmentsPerActive".to_string(),
+                LastEditedField::BinsPerSegment => "BinsPerSegment".to_string(),
+            }, // 15
+        ])
+        .context("Failed to write CSV metadata")?;
 
     // Write column labels (row 2)
-    writer.write_record(&[
-        "time_sec",
-        "frequency_hz",
-        "magnitude",
-        "phase_rad"
-    ]).context("Failed to write CSV header")?;
+    writer
+        .write_record(&["time_sec", "frequency_hz", "magnitude", "phase_rad"])
+        .context("Failed to write CSV header")?;
 
     // Write data (row 3+)
     for frame in &spectrogram.frames {
         let time = frame.time_seconds;
 
         for i in 0..frame.frequencies.len() {
-            writer.write_record(&[
-                format!("{:.5}", time),
-                format!("{:.4}", frame.frequencies[i]),
-                format!("{:.6}", frame.magnitudes[i]),
-                format!("{:.6}", frame.phases[i]),
-            ]).context("Failed to write CSV record")?;
+            writer
+                .write_record(&[
+                    format!("{:.5}", time),
+                    format!("{:.4}", frame.frequencies[i]),
+                    format!("{:.6}", frame.magnitudes[i]),
+                    format!("{:.6}", frame.phases[i]),
+                ])
+                .context("Failed to write CSV record")?;
         }
     }
 
@@ -65,37 +79,49 @@ pub fn export_to_csv<P: AsRef<Path>>(spectrogram: &Spectrogram, params: &FftPara
 }
 
 /// Returns (Spectrogram, FftParams, optional recon params)
-pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParams, Option<(usize, f32, f32)>)> {
+pub fn import_from_csv<P: AsRef<Path>>(
+    path: P,
+) -> Result<(Spectrogram, FftParams, Option<(usize, f32, f32)>)> {
     use csv::ReaderBuilder;
 
     let mut reader = ReaderBuilder::new()
         .has_headers(false)
-        .flexible(true)  // Allow rows with different numbers of fields
+        .flexible(true) // Allow rows with different numbers of fields
         .from_path(&path)
         .with_context(|| format!("Failed to open CSV file: {:?}", path.as_ref()))?;
 
     let mut records = reader.records();
 
     // Read metadata (row 1)
-    let metadata = records.next()
+    let metadata = records
+        .next()
         .ok_or_else(|| anyhow::anyhow!("CSV file is empty"))?
         .context("Failed to read metadata row")?;
 
     if metadata.len() < 9 {
-        anyhow::bail!("Invalid metadata row - expected at least 9 fields, got {}", metadata.len());
+        anyhow::bail!(
+            "Invalid metadata row - expected at least 9 fields, got {}",
+            metadata.len()
+        );
     }
 
-    let sample_rate: u32 = metadata[0].parse()
+    let sample_rate: u32 = metadata[0]
+        .parse()
         .context("Invalid sample_rate in metadata")?;
-    let window_length: usize = metadata[1].parse()
+    let window_length: usize = metadata[1]
+        .parse()
         .context("Invalid window_length in metadata")?;
-    let _hop_length: usize = metadata[2].parse()
+    let _hop_length: usize = metadata[2]
+        .parse()
         .context("Invalid hop_length in metadata")?;
-    let overlap_percent: f32 = metadata[3].parse()
+    let overlap_percent: f32 = metadata[3]
+        .parse()
         .context("Invalid overlap_percent in metadata")?;
 
     let window_type = if metadata[4].starts_with("Kaiser_") {
-        let beta: f32 = metadata[4].trim_start_matches("Kaiser_").parse()
+        let beta: f32 = metadata[4]
+            .trim_start_matches("Kaiser_")
+            .parse()
             .context("Invalid Kaiser beta in metadata")?;
         WindowType::Kaiser(beta)
     } else {
@@ -107,11 +133,14 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         }
     };
 
-    let use_center: bool = metadata[5].parse()
+    let use_center: bool = metadata[5]
+        .parse()
         .context("Invalid use_center in metadata")?;
-    let start_sample: usize = metadata[7].parse()
+    let start_sample: usize = metadata[7]
+        .parse()
         .context("Invalid start_sample in metadata")?;
-    let stop_sample: usize = metadata[8].parse()
+    let stop_sample: usize = metadata[8]
+        .parse()
         .context("Invalid stop_sample in metadata")?;
 
     // Read optional reconstruction params (fields 9-11, backward-compatible)
@@ -131,11 +160,45 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         1
     };
 
+    // Optional segmentation solver metadata (fields 13-15, backward-compatible)
+    let target_segments_per_active: Option<usize> = if metadata.len() >= 14 {
+        let n = metadata[13].parse().unwrap_or(0);
+        if n > 0 {
+            Some(n)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let target_bins_per_segment: Option<usize> = if metadata.len() >= 15 {
+        let n = metadata[14].parse().unwrap_or(0);
+        if n > 0 {
+            Some(n)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let last_edited_field = if metadata.len() >= 16 {
+        match metadata[15].as_ref() {
+            "SegmentsPerActive" => LastEditedField::SegmentsPerActive,
+            "BinsPerSegment" => LastEditedField::BinsPerSegment,
+            _ => LastEditedField::Overlap,
+        }
+    } else {
+        LastEditedField::Overlap
+    };
+
     // Skip column labels (row 2)
     records.next();
 
     // Read data rows
-    let mut frames_map: std::collections::BTreeMap<String, Vec<(f32, f32, f32)>> = std::collections::BTreeMap::new();
+    let mut frames_map: std::collections::BTreeMap<String, Vec<(f32, f32, f32)>> =
+        std::collections::BTreeMap::new();
 
     for result in records {
         let record = result.context("Failed to read CSV record")?;
@@ -149,9 +212,11 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         let magnitude: f32 = record[2].parse().unwrap_or(0.0);
         let phase_rad: f32 = record[3].parse().unwrap_or(0.0);
 
-        frames_map.entry(time_sec)
-            .or_insert_with(Vec::new)
-            .push((frequency_hz, magnitude, phase_rad));
+        frames_map.entry(time_sec).or_insert_with(Vec::new).push((
+            frequency_hz,
+            magnitude,
+            phase_rad,
+        ));
     }
 
     // Build frames
@@ -189,6 +254,9 @@ pub fn import_from_csv<P: AsRef<Path>>(path: P) -> Result<(Spectrogram, FftParam
         time_unit: TimeUnit::Seconds,
         sample_rate,
         zero_pad_factor,
+        target_segments_per_active,
+        target_bins_per_segment,
+        last_edited_field,
     };
 
     Ok((spectrogram, params, recon_params))
@@ -208,22 +276,54 @@ mod tests {
         };
 
         let spec = Spectrogram::from_frames(vec![frame]);
-        let params = FftParams::default();
+        let mut params = FftParams::default();
+        params.target_segments_per_active = Some(17);
+        params.target_bins_per_segment = Some(1025);
+        params.last_edited_field = LastEditedField::SegmentsPerActive;
         let view = ViewState::default();
 
         let temp_path = "/tmp/test_roundtrip.csv";
         export_to_csv(&spec, &params, &view, temp_path).expect("Export should succeed");
 
-        let (imported_spec, imported_params, recon) = import_from_csv(temp_path).expect("Import should succeed");
+        let (imported_spec, imported_params, recon) =
+            import_from_csv(temp_path).expect("Import should succeed");
 
         assert_eq!(imported_params.sample_rate, params.sample_rate);
         assert_eq!(imported_params.window_length, params.window_length);
+        assert_eq!(
+            imported_params.target_segments_per_active,
+            params.target_segments_per_active
+        );
+        assert_eq!(
+            imported_params.target_bins_per_segment,
+            params.target_bins_per_segment
+        );
+        assert_eq!(imported_params.last_edited_field, params.last_edited_field);
         assert_eq!(imported_spec.num_frames(), 1);
         assert!(recon.is_some());
         let (fc, fmin, fmax) = recon.unwrap();
         assert_eq!(fc, view.recon_freq_count);
         assert!((fmin - view.recon_freq_min_hz).abs() < 1.0);
         assert!((fmax - view.recon_freq_max_hz).abs() < 1.0);
+
+        std::fs::remove_file(temp_path).ok();
+    }
+
+    #[test]
+    fn test_csv_import_backward_compat_without_solver_fields() {
+        let temp_path = "/tmp/test_backward_compat.csv";
+        let csv = "48000,8192,2048,75,Hann,false,1,0,44100,4097,0.00,5000.00,1
+"
+        .to_string()
+            + "time_sec,frequency_hz,magnitude,phase_rad
+" + "0.00000,0.0000,0.500000,0.000000
+";
+        std::fs::write(temp_path, csv).expect("write test csv");
+
+        let (_spec, params, _recon) = import_from_csv(temp_path).expect("import should succeed");
+        assert_eq!(params.target_segments_per_active, None);
+        assert_eq!(params.target_bins_per_segment, None);
+        assert_eq!(params.last_edited_field, LastEditedField::Overlap);
 
         std::fs::remove_file(temp_path).ok();
     }

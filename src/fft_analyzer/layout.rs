@@ -3,7 +3,7 @@ use fltk::{
     enums::{Align, FrameType},
     frame::Frame,
     group::Flex,
-    input::{Input, FloatInput},
+    input::{FloatInput, Input},
     menu::{Choice, MenuBar},
     prelude::*,
     valuator::{HorNiceSlider, HorSlider},
@@ -21,6 +21,8 @@ pub const WIN_W: i32 = 1200;
 pub const WIN_H: i32 = 1200;
 const MENU_H: i32 = 25;
 const STATUS_H: i32 = 25;
+const STATUS_FFT_MIN_H: i32 = 0;
+pub const STATUS_FFT_OFFSET: i32 = 0;
 const SIDEBAR_W: i32 = 215;
 const SIDEBAR_INNER_W: i32 = 200;
 const SIDEBAR_INNER_H: i32 = 1400;
@@ -29,6 +31,7 @@ const SIDEBAR_INNER_H: i32 = 1400;
 // Holds cloneable handles to every widget that callbacks need to access.
 
 pub struct Widgets {
+    pub root: Flex,
     pub menu: MenuBar,
     pub btn_open: Button,
     pub btn_save_fft: Button,
@@ -44,6 +47,8 @@ pub struct Widgets {
     pub slider_overlap: HorNiceSlider,
     pub lbl_overlap_val: Frame,
     pub lbl_hop_info: Frame,
+    pub input_segments_per_active: Input,
+    pub input_bins_per_segment: Input,
     pub window_type_choice: Choice,
     pub input_kaiser_beta: FloatInput,
     pub check_center: fltk::button::CheckButton,
@@ -87,6 +92,7 @@ pub struct Widgets {
     pub scrub_slider: HorSlider,
     pub lbl_time: Frame,
     pub repeat_choice: Choice,
+    pub status_fft: Frame,
     pub status_bar: Frame,
 }
 
@@ -146,27 +152,39 @@ pub fn build_ui() -> (Window, Widgets) {
     let mut btn_open = Button::default().with_label("Open Audio File");
     btn_open.set_color(theme::color(theme::BG_WIDGET));
     btn_open.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(&mut btn_open, "Open a WAV audio file for analysis.\nSupports 8/16/24/32-bit PCM and float formats.");
+    set_tooltip(
+        &mut btn_open,
+        "Open a WAV audio file for analysis.\nSupports 8/16/24/32-bit PCM and float formats.",
+    );
     left.fixed(&btn_open, 28);
 
     let mut btn_save_fft = Button::default().with_label("Save FFT Data");
     btn_save_fft.set_color(theme::color(theme::BG_WIDGET));
     btn_save_fft.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_save_fft.deactivate();
-    set_tooltip(&mut btn_save_fft, "Export spectrogram data to CSV.\nRequires FFT data to be computed first.");
+    set_tooltip(
+        &mut btn_save_fft,
+        "Export spectrogram data to CSV.\nRequires FFT data to be computed first.",
+    );
     left.fixed(&btn_save_fft, 28);
 
     let mut btn_load_fft = Button::default().with_label("Load FFT Data");
     btn_load_fft.set_color(theme::color(theme::BG_WIDGET));
     btn_load_fft.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(&mut btn_load_fft, "Import previously saved FFT data from CSV.");
+    set_tooltip(
+        &mut btn_load_fft,
+        "Import previously saved FFT data from CSV.",
+    );
     left.fixed(&btn_load_fft, 28);
 
     let mut btn_save_wav = Button::default().with_label("Export WAV");
     btn_save_wav.set_color(theme::color(theme::BG_WIDGET));
     btn_save_wav.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_save_wav.deactivate();
-    set_tooltip(&mut btn_save_wav, "Save reconstructed audio as 16-bit WAV.\nReconstruct audio first, then export.");
+    set_tooltip(
+        &mut btn_save_wav,
+        "Save reconstructed audio as 16-bit WAV.\nReconstruct audio first, then export.",
+    );
     left.fixed(&btn_save_wav, 28);
 
     // Separator
@@ -191,7 +209,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_time_unit.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_time_unit.set_label_size(11);
     btn_time_unit.deactivate();
-    set_tooltip(&mut btn_time_unit, "Toggle between Seconds and Samples.\nClicking converts the start/stop values.");
+    set_tooltip(
+        &mut btn_time_unit,
+        "Toggle between Seconds and Samples.\nClicking converts the start/stop values.",
+    );
     left.fixed(&btn_time_unit, 25);
 
     let mut input_start = FloatInput::default().with_label("Start:");
@@ -199,7 +220,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_start.set_color(theme::color(theme::BG_WIDGET));
     input_start.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_start.deactivate();
-    set_tooltip(&mut input_start, "Analysis start position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.");
+    set_tooltip(
+        &mut input_start,
+        "Analysis start position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.",
+    );
     attach_float_validation(&mut input_start);
     left.fixed(&input_start, 25);
 
@@ -208,7 +232,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_stop.set_color(theme::color(theme::BG_WIDGET));
     input_stop.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_stop.deactivate();
-    set_tooltip(&mut input_stop, "Analysis stop position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.");
+    set_tooltip(
+        &mut input_stop,
+        "Analysis stop position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.",
+    );
     attach_float_validation(&mut input_stop);
     left.fixed(&input_stop, 25);
 
@@ -234,7 +261,10 @@ pub fn build_ui() -> (Window, Widgets) {
     seg_preset_choice.set_color(theme::color(theme::BG_WIDGET));
     seg_preset_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
     seg_preset_choice.deactivate();
-    set_tooltip(&mut seg_preset_choice, "Preset segment sizes.\nNon-power-of-2 sizes also work (select Custom and type a value).");
+    set_tooltip(
+        &mut seg_preset_choice,
+        "Preset segment sizes.\nNon-power-of-2 sizes also work (select Custom and type a value).",
+    );
     left.fixed(&seg_preset_choice, 25);
 
     let mut seg_row = Flex::default().row();
@@ -245,7 +275,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_seg_minus.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_seg_minus.set_label_size(14);
     btn_seg_minus.deactivate();
-    set_tooltip(&mut btn_seg_minus, "Step to previous preset size, or halve if Custom.");
+    set_tooltip(
+        &mut btn_seg_minus,
+        "Step to previous preset size, or halve if Custom.",
+    );
     seg_row.fixed(&btn_seg_minus, 30);
 
     let mut input_seg_size = Input::default();
@@ -253,7 +286,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_seg_size.set_color(theme::color(theme::BG_WIDGET));
     input_seg_size.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_seg_size.deactivate();
-    set_tooltip(&mut input_seg_size, "Type an exact segment size (samples).\nMust be even (realfft requirement). Range: 2 to 131072.\nPress Enter to apply.");
+    set_tooltip(
+        &mut input_seg_size,
+        "Type an exact segment size (samples).\nMust be even (realfft requirement). Range: 2 to active-range sample count.\nPress Enter to apply.",
+    );
     crate::validation::attach_uint_validation(&mut input_seg_size);
 
     let mut btn_seg_plus = Button::default().with_label("+");
@@ -261,7 +297,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_seg_plus.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_seg_plus.set_label_size(14);
     btn_seg_plus.deactivate();
-    set_tooltip(&mut btn_seg_plus, "Step to next preset size, or double if Custom.");
+    set_tooltip(
+        &mut btn_seg_plus,
+        "Step to next preset size, or double if Custom.",
+    );
     seg_row.fixed(&btn_seg_plus, 30);
 
     seg_row.end();
@@ -270,12 +309,15 @@ pub fn build_ui() -> (Window, Widgets) {
     // Overlap
     let mut slider_overlap = HorNiceSlider::default();
     slider_overlap.set_minimum(0.0);
-    slider_overlap.set_maximum(95.0);
+    slider_overlap.set_maximum(99.0);
     slider_overlap.set_value(75.0);
     slider_overlap.set_color(theme::color(theme::BG_WIDGET));
     slider_overlap.set_selection_color(theme::accent_color());
     slider_overlap.deactivate();
-    set_tooltip(&mut slider_overlap, "Overlap between adjacent FFT windows.\nFunctional range: 0% to 95%.\nHigher = more time frames, smoother spectrogram.\n75% is standard for Hann window.");
+    set_tooltip(
+        &mut slider_overlap,
+        "Overlap between adjacent FFT windows.\nFunctional range: 0% to 99%.\nHigher = more time frames, smoother spectrogram.\n75% is standard for Hann window.",
+    );
     left.fixed(&slider_overlap, 22);
 
     let mut lbl_overlap_val = Frame::default().with_label("Overlap: 75%");
@@ -291,6 +333,34 @@ pub fn build_ui() -> (Window, Widgets) {
     lbl_hop_info.set_align(Align::Inside | Align::Right);
     left.fixed(&lbl_hop_info, 14);
 
+    let mut input_segments_per_active = Input::default().with_label("Segments/Active:");
+    input_segments_per_active.set_value("0");
+    input_segments_per_active.set_color(theme::color(theme::BG_WIDGET));
+    input_segments_per_active.set_text_color(theme::color(theme::TEXT_PRIMARY));
+    input_segments_per_active.deactivate();
+    set_tooltip(
+        &mut input_segments_per_active,
+        "Target segment count across active analysis range.
+Last edited field drives solver.
+Editing this keeps overlap fixed and adjusts segment size.",
+    );
+    attach_uint_validation(&mut input_segments_per_active);
+    left.fixed(&input_segments_per_active, 25);
+
+    let mut input_bins_per_segment = Input::default().with_label("Bins/Segment:");
+    input_bins_per_segment.set_value("0");
+    input_bins_per_segment.set_color(theme::color(theme::BG_WIDGET));
+    input_bins_per_segment.set_text_color(theme::color(theme::TEXT_PRIMARY));
+    input_bins_per_segment.deactivate();
+    set_tooltip(
+        &mut input_bins_per_segment,
+        "Target FFT bins per segment.
+Last edited field drives solver.
+Initial solver pass maps bins target to segment size using current zero-pad factor.",
+    );
+    attach_uint_validation(&mut input_bins_per_segment);
+    left.fixed(&input_bins_per_segment, 25);
+
     // Window type
     let mut window_type_choice = Choice::default();
     window_type_choice.add_choice("Hann");
@@ -301,7 +371,10 @@ pub fn build_ui() -> (Window, Widgets) {
     window_type_choice.set_color(theme::color(theme::BG_WIDGET));
     window_type_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
     window_type_choice.deactivate();
-    set_tooltip(&mut window_type_choice, "Windowing function applied to each FFT segment.\nHann: general purpose, good frequency resolution.\nHamming: slightly better sidelobe rejection.\nBlackman: best sidelobe rejection, wider main lobe.\nKaiser: configurable via beta parameter.");
+    set_tooltip(
+        &mut window_type_choice,
+        "Windowing function applied to each FFT segment.\nHann: general purpose, good frequency resolution.\nHamming: slightly better sidelobe rejection.\nBlackman: best sidelobe rejection, wider main lobe.\nKaiser: configurable via beta parameter.",
+    );
     left.fixed(&window_type_choice, 25);
 
     let mut input_kaiser_beta = FloatInput::default().with_label("Kaiser B:");
@@ -309,14 +382,20 @@ pub fn build_ui() -> (Window, Widgets) {
     input_kaiser_beta.set_color(theme::color(theme::BG_WIDGET));
     input_kaiser_beta.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_kaiser_beta.deactivate();
-    set_tooltip(&mut input_kaiser_beta, "Kaiser window beta parameter.\nFunctional range: 0.0 to 20.0.\nHigher = narrower main lobe, higher sidelobes.\n8.6 approximates a Blackman window.");
+    set_tooltip(
+        &mut input_kaiser_beta,
+        "Kaiser window beta parameter.\nFunctional range: 0.0 to 20.0.\nHigher = narrower main lobe, higher sidelobes.\n8.6 approximates a Blackman window.",
+    );
     left.fixed(&input_kaiser_beta, 25);
 
     let mut check_center = fltk::button::CheckButton::default().with_label(" Center/Pad");
     check_center.set_checked(false);
     check_center.set_label_color(theme::color(theme::TEXT_PRIMARY));
     check_center.deactivate();
-    set_tooltip(&mut check_center, "Add zero-padding around signal for symmetric analysis.\nRecommended: ON for most use cases.");
+    set_tooltip(
+        &mut check_center,
+        "Add zero-padding around signal for symmetric analysis.\nRecommended: ON for most use cases.",
+    );
     left.fixed(&check_center, 22);
 
     // Zero-padding factor
@@ -335,7 +414,10 @@ pub fn build_ui() -> (Window, Widgets) {
     zero_pad_choice.set_color(theme::color(theme::BG_WIDGET));
     zero_pad_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
     zero_pad_choice.deactivate();
-    set_tooltip(&mut zero_pad_choice, "Zero-padding factor for FFT.\n1x = no padding (standard).\n2x/4x/8x = interpolate frequency bins\nfor smoother spectrograms.\nDoes not change actual frequency resolution.");
+    set_tooltip(
+        &mut zero_pad_choice,
+        "Zero-padding factor for FFT.\n1x = no padding (standard).\n2x/4x/8x = interpolate frequency bins\nfor smoother spectrograms.\nDoes not change actual frequency resolution.",
+    );
     left.fixed(&zero_pad_choice, 25);
 
     // Resolution trade-off display (live feedback)
@@ -350,7 +432,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_rerun.set_label_color(theme::color(theme::BG_DARK));
     btn_rerun.set_label_size(11);
     btn_rerun.deactivate();
-    set_tooltip(&mut btn_rerun, "Rerun FFT + reconstruct audio with current parameters.\nShortcut: Spacebar (works from anywhere).\nAll outputs (spectrogram, waveform, audio) will update.");
+    set_tooltip(
+        &mut btn_rerun,
+        "Rerun FFT + reconstruct audio with current parameters.\nShortcut: Spacebar (works from anywhere).\nAll outputs (spectrogram, waveform, audio) will update.",
+    );
     left.fixed(&btn_rerun, 28);
 
     // Separator
@@ -377,7 +462,10 @@ pub fn build_ui() -> (Window, Widgets) {
     colormap_choice.set_value(0);
     colormap_choice.set_color(theme::color(theme::BG_WIDGET));
     colormap_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(&mut colormap_choice, "Color scheme for the spectrogram display.\nClassic: blue-cyan-green-yellow-red (rainbow)\nViridis/Magma/Inferno: perceptually uniform scientific colormaps\nGreyscale: black to white\nInverted Grey: white to black (print-friendly)\nCustom: editable gradient with draggable color stops");
+    set_tooltip(
+        &mut colormap_choice,
+        "Color scheme for the spectrogram display.\nClassic: blue-cyan-green-yellow-red (rainbow)\nViridis/Magma/Inferno: perceptually uniform scientific colormaps\nGreyscale: black to white\nInverted Grey: white to black (print-friendly)\nCustom: editable gradient with draggable color stops",
+    );
     left.fixed(&colormap_choice, 25);
 
     // Gradient editor area (preview bar + interactive stop handles)
@@ -385,7 +473,10 @@ pub fn build_ui() -> (Window, Widgets) {
     let mut gradient_preview = Widget::default();
     gradient_preview.set_frame(FrameType::BorderBox);
     gradient_preview.set_color(theme::color(theme::BG_WIDGET));
-    set_tooltip(&mut gradient_preview, "Custom gradient editor.\nClick: add a color stop\nDrag: move a stop\nRight-click: delete a stop\nDouble-click a stop: change its color\nSelect 'Custom' colormap to edit.");
+    set_tooltip(
+        &mut gradient_preview,
+        "Custom gradient editor.\nClick: add a color stop\nDrag: move a stop\nRight-click: delete a stop\nDouble-click a stop: change its color\nSelect 'Custom' colormap to edit.",
+    );
     left.fixed(&gradient_preview, 30);
 
     // Freq Scale Power slider (0.0 = linear, 1.0 = log, anything between)
@@ -396,7 +487,10 @@ pub fn build_ui() -> (Window, Widgets) {
     slider_scale.set_step(0.01, 1);
     slider_scale.set_color(theme::color(theme::BG_WIDGET));
     slider_scale.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_scale, "Frequency axis scaling power.\nLeft (0.0) = Linear: uniform Hz spacing.\nRight (1.0) = Log: octave-based spacing.\nMiddle = blend between both.\nAdjust to taste.");
+    set_tooltip(
+        &mut slider_scale,
+        "Frequency axis scaling power.\nLeft (0.0) = Linear: uniform Hz spacing.\nRight (1.0) = Log: octave-based spacing.\nMiddle = blend between both.\nAdjust to taste.",
+    );
     left.fixed(&slider_scale, 22);
 
     let mut lbl_scale_val = Frame::default().with_label("Scale: 50%");
@@ -412,7 +506,10 @@ pub fn build_ui() -> (Window, Widgets) {
     slider_threshold.set_value(-87.0);
     slider_threshold.set_color(theme::color(theme::BG_WIDGET));
     slider_threshold.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_threshold, "Minimum dB level to display.\nFunctional range: -200 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.");
+    set_tooltip(
+        &mut slider_threshold,
+        "Minimum dB level to display.\nFunctional range: -200 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.",
+    );
     left.fixed(&slider_threshold, 22);
 
     let mut lbl_threshold_val = Frame::default().with_label("Threshold: -87 dB");
@@ -428,7 +525,10 @@ pub fn build_ui() -> (Window, Widgets) {
     slider_ceiling.set_value(0.0);
     slider_ceiling.set_color(theme::color(theme::BG_WIDGET));
     slider_ceiling.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_ceiling, "Maximum dB level for color mapping.\nAuto-set from data. Adjust to change dynamic range.\nRange: -40 to +20 dB.");
+    set_tooltip(
+        &mut slider_ceiling,
+        "Maximum dB level for color mapping.\nAuto-set from data. Adjust to change dynamic range.\nRange: -40 to +20 dB.",
+    );
     left.fixed(&slider_ceiling, 22);
 
     let mut lbl_ceiling_val = Frame::default().with_label("Ceiling: 0 dB");
@@ -444,7 +544,10 @@ pub fn build_ui() -> (Window, Widgets) {
     slider_brightness.set_value(1.0);
     slider_brightness.set_color(theme::color(theme::BG_WIDGET));
     slider_brightness.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_brightness, "Overall brightness multiplier.\nFunctional range: 0.1 to 3.0.\n1.0 = neutral. Higher = brighter colors for quiet content.");
+    set_tooltip(
+        &mut slider_brightness,
+        "Overall brightness multiplier.\nFunctional range: 0.1 to 3.0.\n1.0 = neutral. Higher = brighter colors for quiet content.",
+    );
     left.fixed(&slider_brightness, 22);
 
     let mut lbl_brightness_val = Frame::default().with_label("Brightness: 1.0");
@@ -460,7 +563,10 @@ pub fn build_ui() -> (Window, Widgets) {
     slider_gamma.set_value(2.2);
     slider_gamma.set_color(theme::color(theme::BG_WIDGET));
     slider_gamma.set_selection_color(theme::accent_color());
-    set_tooltip(&mut slider_gamma, "Perceptual gamma correction for dB display.\nFunctional range: 0.5 to 5.0.\n2.2 = standard perceptual gamma (recommended).\nHigher = more contrast, quiet content less visible.\nLower = flatter, quiet content more visible.");
+    set_tooltip(
+        &mut slider_gamma,
+        "Perceptual gamma correction for dB display.\nFunctional range: 0.5 to 5.0.\n2.2 = standard perceptual gamma (recommended).\nHigher = more contrast, quiet content less visible.\nLower = flatter, quiet content more visible.",
+    );
     left.fixed(&slider_gamma, 22);
 
     let mut lbl_gamma_val = Frame::default().with_label("Gamma: 2.2");
@@ -497,7 +603,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_freq_count.set_color(theme::color(theme::BG_WIDGET));
     input_freq_count.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_freq_count.deactivate();
-    set_tooltip(&mut input_freq_count, "Number of top-magnitude frequency bins to keep per frame.\nFunctional range: 1 to max bins (shown in INFO).\nMax = perfect reconstruction. Lower = simplified/filtered sound.\nAt 1, only the loudest frequency per frame is reconstructed.");
+    set_tooltip(
+        &mut input_freq_count,
+        "Number of top-magnitude frequency bins to keep per frame.\nFunctional range: 1 to max bins (shown in INFO).\nMax = perfect reconstruction. Lower = simplified/filtered sound.\nAt 1, only the loudest frequency per frame is reconstructed.",
+    );
     attach_uint_validation(&mut input_freq_count);
     left.fixed(&input_freq_count, 25);
 
@@ -513,7 +622,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_recon_freq_min.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_min.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_recon_freq_min.deactivate();
-    set_tooltip(&mut input_recon_freq_min, "Minimum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins below this frequency are zeroed out.");
+    set_tooltip(
+        &mut input_recon_freq_min,
+        "Minimum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins below this frequency are zeroed out.",
+    );
     attach_float_validation(&mut input_recon_freq_min);
     left.fixed(&input_recon_freq_min, 25);
 
@@ -528,7 +640,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
     input_recon_freq_max.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_recon_freq_max.deactivate();
-    set_tooltip(&mut input_recon_freq_max, "Maximum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins above this frequency are zeroed out.");
+    set_tooltip(
+        &mut input_recon_freq_max,
+        "Maximum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins above this frequency are zeroed out.",
+    );
     attach_float_validation(&mut input_recon_freq_max);
     left.fixed(&input_recon_freq_max, 25);
 
@@ -538,7 +653,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_snap_to_view.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_snap_to_view.set_label_size(11);
     btn_snap_to_view.deactivate();
-    set_tooltip(&mut btn_snap_to_view, "Copy current viewport bounds into\nStart/Stop and Freq Min/Max fields.\nThen recompute.");
+    set_tooltip(
+        &mut btn_snap_to_view,
+        "Copy current viewport bounds into\nStart/Stop and Freq Min/Max fields.\nThen recompute.",
+    );
     left.fixed(&btn_snap_to_view, 25);
 
     // Separator
@@ -582,7 +700,10 @@ pub fn build_ui() -> (Window, Widgets) {
     check_lock_active.set_checked(false);
     check_lock_active.set_label_color(theme::color(theme::TEXT_SECONDARY));
     check_lock_active.set_label_size(10);
-    set_tooltip(&mut check_lock_active, "When checked, viewport auto-snaps to the\nactive time and frequency range after recompute.\nSnaps both axes with a short delay.");
+    set_tooltip(
+        &mut check_lock_active,
+        "When checked, viewport auto-snaps to the\nactive time and frequency range after recompute.\nSnaps both axes with a short delay.",
+    );
     left.fixed(&check_lock_active, 22);
 
     // Home button — snap viewport to processing range
@@ -590,7 +711,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_home.set_color(theme::color(theme::BG_WIDGET));
     btn_home.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_home.set_label_size(11);
-    set_tooltip(&mut btn_home, "Snap viewport to the active processing\ntime range (Start/Stop) and frequency range\n(Recon Min/Max Freq).");
+    set_tooltip(
+        &mut btn_home,
+        "Snap viewport to the active processing\ntime range (Start/Stop) and frequency range\n(Recon Min/Max Freq).",
+    );
     left.fixed(&btn_home, 25);
 
     // Save As Default button
@@ -598,7 +722,10 @@ pub fn build_ui() -> (Window, Widgets) {
     btn_save_defaults.set_color(theme::color(theme::BG_WIDGET));
     btn_save_defaults.set_label_color(theme::color(theme::TEXT_PRIMARY));
     btn_save_defaults.set_label_size(11);
-    set_tooltip(&mut btn_save_defaults, "Save current settings to muSickBeets.ini.\nThese become the defaults on next launch.");
+    set_tooltip(
+        &mut btn_save_defaults,
+        "Save current settings to muSickBeets.ini.\nThese become the defaults on next launch.",
+    );
     left.fixed(&btn_save_defaults, 25);
 
     // Spacer to push everything up
@@ -648,7 +775,10 @@ pub fn build_ui() -> (Window, Widgets) {
     y_scroll.set_type(fltk::valuator::ScrollbarType::Vertical);
     y_scroll.set_color(theme::color(theme::BG_WIDGET));
     y_scroll.set_selection_color(theme::accent_color());
-    set_tooltip(&mut y_scroll, "Frequency axis pan.\nDrag to scroll up/down.");
+    set_tooltip(
+        &mut y_scroll,
+        "Frequency axis pan.\nDrag to scroll up/down.",
+    );
 
     let mut btn_freq_zoom_out = Button::default().with_label("-");
     btn_freq_zoom_out.set_color(theme::color(theme::BG_WIDGET));
@@ -683,7 +813,10 @@ pub fn build_ui() -> (Window, Widgets) {
     x_scroll.set_type(fltk::valuator::ScrollbarType::Horizontal);
     x_scroll.set_color(theme::color(theme::BG_WIDGET));
     x_scroll.set_selection_color(theme::accent_color());
-    set_tooltip(&mut x_scroll, "Time axis pan.\nDrag to scroll left/right.\nMouse wheel on spectrogram to zoom.");
+    set_tooltip(
+        &mut x_scroll,
+        "Time axis pan.\nDrag to scroll left/right.\nMouse wheel on spectrogram to zoom.",
+    );
 
     let mut btn_time_zoom_in = Button::default().with_label("+");
     btn_time_zoom_in.set_color(theme::color(theme::BG_WIDGET));
@@ -729,7 +862,10 @@ pub fn build_ui() -> (Window, Widgets) {
     scrub_slider.set_color(theme::color(theme::BG_WIDGET));
     scrub_slider.set_selection_color(theme::color(theme::ACCENT_RED));
     scrub_slider.deactivate();
-    set_tooltip(&mut scrub_slider, "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.");
+    set_tooltip(
+        &mut scrub_slider,
+        "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.",
+    );
 
     let mut lbl_time = Frame::default().with_label("L 0:00.00 / 0:00.00\nG 0:00.00");
     lbl_time.set_label_color(theme::color(theme::TEXT_SECONDARY));
@@ -744,13 +880,32 @@ pub fn build_ui() -> (Window, Widgets) {
     repeat_choice.set_color(theme::color(theme::BG_WIDGET));
     repeat_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
     repeat_choice.deactivate();
-    set_tooltip(&mut repeat_choice, "Single: stop at end.\nRepeat: loop continuously.");
+    set_tooltip(
+        &mut repeat_choice,
+        "Single: stop at end.\nRepeat: loop continuously.",
+    );
     transport_row.fixed(&repeat_choice, 70);
 
     transport_row.end();
 
     right.end();
     root.end();
+
+    // ─── FFT STATUS READOUT (auto-expanded height controlled by callback) ───
+
+    let mut status_fft = Frame::default()
+        .with_pos(0, WIN_H - STATUS_H - STATUS_FFT_MIN_H - STATUS_FFT_OFFSET)
+        .with_size(WIN_W, STATUS_FFT_MIN_H)
+        .with_label("");
+    status_fft.set_frame(FrameType::FlatBox);
+    status_fft.set_color(theme::color(theme::BG_PANEL));
+    status_fft.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    status_fft.set_label_size(11);
+    status_fft.set_align(Align::Inside | Align::Left | Align::Wrap | Align::Top);
+    set_tooltip(
+        &mut status_fft,
+        "My active time range (the selected portion of the full audio) is divided into overlapping segments; each segment is then transformed into a set of frequency bins – the vertical columns of the spectrogram.",
+    );
 
     // ─── STATUS BAR ───────────────────────────────────────────────────────────
 
@@ -770,6 +925,7 @@ pub fn build_ui() -> (Window, Widgets) {
     win.resizable(&root);
 
     let widgets = Widgets {
+        root,
         menu,
         btn_open,
         btn_save_fft,
@@ -785,6 +941,8 @@ pub fn build_ui() -> (Window, Widgets) {
         slider_overlap,
         lbl_overlap_val,
         lbl_hop_info,
+        input_segments_per_active,
+        input_bins_per_segment,
         window_type_choice,
         input_kaiser_beta,
         check_center,
@@ -828,6 +986,7 @@ pub fn build_ui() -> (Window, Widgets) {
         scrub_slider,
         lbl_time,
         repeat_choice,
+        status_fft,
         status_bar,
     };
 

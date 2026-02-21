@@ -1,16 +1,16 @@
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 
 use fltk::{app, dialog, prelude::*};
 
 use crate::app_state::{AppState, SharedCallbacks, WorkerMessage};
+use crate::csv_export;
 use crate::data::{self, AudioData, TimeUnit, WindowType};
 use crate::layout::Widgets;
 use crate::processing::fft_engine::FftEngine;
 use crate::processing::reconstructor::Reconstructor;
-use crate::validation::{parse_or_zero_f64, parse_or_zero_f32, parse_or_zero_usize};
-use crate::csv_export;
+use crate::validation::{parse_or_zero_f32, parse_or_zero_f64, parse_or_zero_usize};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  FILE OPERATION CALLBACKS
@@ -199,10 +199,7 @@ fn setup_open_callback(
 }
 
 // ── Save FFT to CSV ──
-fn setup_save_fft_callback(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+fn setup_save_fft_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
 
@@ -214,7 +211,8 @@ fn setup_save_fft_callback(
             return;
         }
 
-        let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+        let mut chooser =
+            dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
         chooser.set_filter("*.csv");
         chooser.set_preset_file("fft_data.csv");
         chooser.show();
@@ -229,7 +227,9 @@ fn setup_save_fft_callback(
         let spec_full = st.spectrogram.as_ref().unwrap();
         let proc_time_min = st.fft_params.start_seconds();
         let proc_time_max = st.fft_params.stop_seconds();
-        let filtered_frames: Vec<_> = spec_full.frames.iter()
+        let filtered_frames: Vec<_> = spec_full
+            .frames
+            .iter()
             .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
             .cloned()
             .collect();
@@ -239,7 +239,9 @@ fn setup_save_fft_callback(
             Ok(_) => {
                 status_bar.set_label(&format!(
                     "FFT saved ({} frames, {:.2}s-{:.2}s)",
-                    filtered_spec.num_frames(), proc_time_min, proc_time_max
+                    filtered_spec.num_frames(),
+                    proc_time_min,
+                    proc_time_max
                 ));
             }
             Err(e) => {
@@ -354,19 +356,24 @@ fn setup_load_fft_callback(
                 let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
 
                 // Pre-filter and set recon_start_sample from actual first frame
-                let filtered_frames: Vec<_> = spec.frames.iter()
+                let filtered_frames: Vec<_> = spec
+                    .frames
+                    .iter()
                     .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
                     .cloned()
                     .collect();
                 if let Some(first) = filtered_frames.first() {
                     let frame_sr = params.sample_rate as f64;
-                    state.borrow_mut().recon_start_sample = (first.time_seconds * frame_sr).round() as usize;
+                    state.borrow_mut().recon_start_sample =
+                        (first.time_seconds * frame_sr).round() as usize;
                 }
 
                 std::thread::spawn(move || {
                     let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
                     let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
-                    tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
+                    tx_clone
+                        .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                        .ok();
                 });
             }
             Err(e) => {
@@ -378,10 +385,7 @@ fn setup_load_fft_callback(
 }
 
 // ── Export WAV ──
-fn setup_save_wav_callback(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+fn setup_save_wav_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
 
@@ -393,7 +397,8 @@ fn setup_save_wav_callback(
             return;
         }
 
-        let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+        let mut chooser =
+            dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
         chooser.set_filter("*.wav");
         chooser.set_preset_file("reconstructed.wav");
         chooser.show();
@@ -449,15 +454,21 @@ pub fn setup_rerun_callback(
         // Sync all field values into state before running
         {
             let mut st = state.borrow_mut();
-            if st.audio_data.is_none() { return; }
-            if st.is_processing { return; }
+            if st.audio_data.is_none() {
+                return;
+            }
+            if st.is_processing {
+                return;
+            }
 
             // Read current field values and convert to sample counts
             let sr = st.fft_params.sample_rate as f64;
             match st.fft_params.time_unit {
                 TimeUnit::Seconds => {
-                    st.fft_params.start_sample = (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
-                    st.fft_params.stop_sample = (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
+                    st.fft_params.start_sample =
+                        (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
+                    st.fft_params.stop_sample =
+                        (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
                 }
                 TimeUnit::Samples => {
                     st.fft_params.start_sample = parse_or_zero_usize(&input_start.value());
@@ -467,12 +478,25 @@ pub fn setup_rerun_callback(
 
             // Read segment size from input field, validate
             let seg_size: usize = parse_or_zero_usize(&input_seg_size.value()).max(2);
-            let seg_size = if seg_size % 2 != 0 { seg_size + 1 } else { seg_size };
-            st.fft_params.window_length = seg_size.min(131072);
+            let seg_size = if seg_size % 2 != 0 {
+                seg_size + 1
+            } else {
+                seg_size
+            };
+            let active_len = st
+                .fft_params
+                .stop_sample
+                .saturating_sub(st.fft_params.start_sample)
+                .max(2);
+            st.fft_params.window_length = seg_size.min(active_len);
 
             // Read zero-pad factor from dropdown
             st.fft_params.zero_pad_factor = match zero_pad_choice.value() {
-                0 => 1, 1 => 2, 2 => 4, 3 => 8, _ => 1,
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                3 => 8,
+                _ => 1,
             };
 
             st.fft_params.overlap_percent = slider_overlap.value() as f32;
