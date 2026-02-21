@@ -1,3 +1,4 @@
+use crate::data::segmentation_solver::LastEditedField;
 use std::f32::consts::PI;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -28,6 +29,9 @@ pub struct FftParams {
     pub time_unit: TimeUnit,
     pub sample_rate: u32,
     pub zero_pad_factor: usize,
+    pub target_segments_per_active: Option<usize>,
+    pub target_bins_per_segment: Option<usize>,
+    pub last_edited_field: LastEditedField,
 }
 
 impl Default for FftParams {
@@ -42,6 +46,9 @@ impl Default for FftParams {
             time_unit: TimeUnit::Seconds,
             sample_rate: 48000,
             zero_pad_factor: 1,
+            target_segments_per_active: None,
+            target_bins_per_segment: None,
+            last_edited_field: LastEditedField::Overlap,
         }
     }
 }
@@ -74,7 +81,9 @@ impl FftParams {
 
     pub fn frequency_resolution(&self) -> f32 {
         let n = self.n_fft_padded();
-        if n == 0 { return 0.0; }
+        if n == 0 {
+            return 0.0;
+        }
         self.sample_rate as f32 / n as f32
     }
 
@@ -91,13 +100,17 @@ impl FftParams {
     }
 
     pub fn bin_duration_seconds(&self) -> f64 {
-        if self.sample_rate == 0 { return 0.0; }
+        if self.sample_rate == 0 {
+            return 0.0;
+        }
         self.hop_length() as f64 / self.sample_rate as f64
     }
 
     pub fn generate_window(&self) -> Vec<f32> {
         let n = self.window_length;
-        if n <= 1 { return vec![1.0; n]; }
+        if n <= 1 {
+            return vec![1.0; n];
+        }
         let mut window = vec![0.0; n];
 
         match self.window_type {
