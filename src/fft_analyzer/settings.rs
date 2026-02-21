@@ -9,18 +9,21 @@ pub struct Settings {
     // ── Analysis ──
     pub window_length: usize,
     pub overlap_percent: f32,
-    pub window_type: String,       // "Hann", "Hamming", "Blackman", "Kaiser"
+    pub window_type: String, // "Hann", "Hamming", "Blackman", "Kaiser"
     pub kaiser_beta: f32,
     pub center_pad: bool,
     pub zero_pad_factor: usize,
+    pub target_segments_per_active: usize,
+    pub target_bins_per_segment: usize,
+    pub last_edited_field: String, // "Overlap", "SegmentsPerActive", "BinsPerSegment"
 
     // ── View: Frequency ──
     pub view_freq_min_hz: f32,
     pub view_freq_max_hz: f32,
-    pub freq_scale_power: f32,     // 0.0 = linear, 1.0 = log, anything in between
+    pub freq_scale_power: f32, // 0.0 = linear, 1.0 = log, anything in between
 
     // ── View: Display ──
-    pub colormap: String,          // "Classic", "Viridis", etc.
+    pub colormap: String, // "Classic", "Viridis", etc.
     pub threshold_db: f32,
     pub db_ceiling: f32,
     pub brightness: f32,
@@ -33,12 +36,12 @@ pub struct Settings {
 
     // ── Audio ──
     pub normalize_audio: bool,
-    pub normalize_peak: f32,       // 0.97 = 97% of max
+    pub normalize_peak: f32, // 0.97 = 97% of max
 
     // ── Zoom ──
-    pub time_zoom_factor: f32,     // multiplier per click, e.g. 1.5
+    pub time_zoom_factor: f32, // multiplier per click, e.g. 1.5
     pub freq_zoom_factor: f32,
-    pub mouse_zoom_factor: f32,    // for scroll wheel
+    pub mouse_zoom_factor: f32, // for scroll wheel
 
     // ── Window ──
     pub window_width: i32,
@@ -86,11 +89,14 @@ impl Default for Settings {
             kaiser_beta: 8.6,
             center_pad: false,
             zero_pad_factor: 1,
+            target_segments_per_active: 0,
+            target_bins_per_segment: 0,
+            last_edited_field: "Overlap".to_string(),
 
             // View: Frequency
             view_freq_min_hz: 100.0,
             view_freq_max_hz: 2000.0,
-            freq_scale_power: 0.5,     // halfway between linear and log
+            freq_scale_power: 0.5, // halfway between linear and log
 
             // View: Display
             colormap: "Classic".to_string(),
@@ -151,7 +157,7 @@ impl Default for Settings {
 }
 
 use crate::app_state::AppState;
-use crate::data::{FreqScale, GradientStop, default_custom_gradient};
+use crate::data::{default_custom_gradient, FreqScale, GradientStop};
 
 #[allow(dead_code)]
 impl Settings {
@@ -174,7 +180,11 @@ impl Settings {
                     settings
                 }
                 Err(e) => {
-                    eprintln!("Warning: Could not read {}: {}. Using defaults.", Self::FILE_NAME, e);
+                    eprintln!(
+                        "Warning: Could not read {}: {}. Using defaults.",
+                        Self::FILE_NAME,
+                        e
+                    );
                     let settings = Self::default();
                     settings.save();
                     settings
@@ -198,10 +208,20 @@ impl Settings {
             crate::data::WindowType::Hann => "Hann".to_string(),
             crate::data::WindowType::Hamming => "Hamming".to_string(),
             crate::data::WindowType::Blackman => "Blackman".to_string(),
-            crate::data::WindowType::Kaiser(b) => { cfg.kaiser_beta = b; "Kaiser".to_string() }
+            crate::data::WindowType::Kaiser(b) => {
+                cfg.kaiser_beta = b;
+                "Kaiser".to_string()
+            }
         };
         cfg.center_pad = st.fft_params.use_center;
         cfg.zero_pad_factor = st.fft_params.zero_pad_factor;
+        cfg.target_segments_per_active = st.fft_params.target_segments_per_active.unwrap_or(0);
+        cfg.target_bins_per_segment = st.fft_params.target_bins_per_segment.unwrap_or(0);
+        cfg.last_edited_field = match st.fft_params.last_edited_field {
+            crate::data::LastEditedField::Overlap => "Overlap".to_string(),
+            crate::data::LastEditedField::SegmentsPerActive => "SegmentsPerActive".to_string(),
+            crate::data::LastEditedField::BinsPerSegment => "BinsPerSegment".to_string(),
+        };
 
         // View
         cfg.view_freq_min_hz = st.view.freq_min_hz;
@@ -262,6 +282,15 @@ impl Settings {
         s.push_str(&format!("kaiser_beta = {}\n", self.kaiser_beta));
         s.push_str(&format!("center_pad = {}\n", self.center_pad));
         s.push_str(&format!("zero_pad_factor = {}\n", self.zero_pad_factor));
+        s.push_str(&format!(
+            "target_segments_per_active = {}\n",
+            self.target_segments_per_active
+        ));
+        s.push_str(&format!(
+            "target_bins_per_segment = {}\n",
+            self.target_bins_per_segment
+        ));
+        s.push_str(&format!("last_edited_field = {}\n", self.last_edited_field));
         s.push('\n');
 
         s.push_str("[View]\n");
@@ -272,7 +301,9 @@ impl Settings {
         s.push('\n');
 
         s.push_str("[Display]\n");
-        s.push_str("# Colormaps: Classic, Viridis, Magma, Inferno, Greyscale, Inverted Grey, Geek\n");
+        s.push_str(
+            "# Colormaps: Classic, Viridis, Magma, Inferno, Greyscale, Inverted Grey, Geek\n",
+        );
         s.push_str(&format!("colormap = {}\n", self.colormap));
         s.push_str(&format!("threshold_db = {}\n", self.threshold_db));
         s.push_str(&format!("db_ceiling = {}\n", self.db_ceiling));
@@ -330,15 +361,27 @@ impl Settings {
 
         s.push_str("[Colors]\n");
         s.push_str("# Colors are in hex (0xRRGGBB)\n");
-        s.push_str(&format!("color_background = 0x{:06x}\n", self.color_background));
+        s.push_str(&format!(
+            "color_background = 0x{:06x}\n",
+            self.color_background
+        ));
         s.push_str(&format!("color_panel = 0x{:06x}\n", self.color_panel));
         s.push_str(&format!("color_widget = 0x{:06x}\n", self.color_widget));
-        s.push_str(&format!("color_text_primary = 0x{:06x}\n", self.color_text_primary));
-        s.push_str(&format!("color_text_secondary = 0x{:06x}\n", self.color_text_secondary));
+        s.push_str(&format!(
+            "color_text_primary = 0x{:06x}\n",
+            self.color_text_primary
+        ));
+        s.push_str(&format!(
+            "color_text_secondary = 0x{:06x}\n",
+            self.color_text_secondary
+        ));
         s.push_str(&format!("color_accent = 0x{:06x}\n", self.color_accent));
         s.push_str(&format!("color_waveform = 0x{:06x}\n", self.color_waveform));
         s.push_str(&format!("color_cursor = 0x{:06x}\n", self.color_cursor));
-        s.push_str(&format!("color_center_line = 0x{:06x}\n", self.color_center_line));
+        s.push_str(&format!(
+            "color_center_line = 0x{:06x}\n",
+            self.color_center_line
+        ));
 
         s
     }
@@ -347,70 +390,235 @@ impl Settings {
         let map = parse_ini_to_map(content);
 
         // Analysis
-        if let Some(v) = map.get("window_length") { if let Ok(n) = v.parse() { self.window_length = n; } }
-        if let Some(v) = map.get("overlap_percent") { if let Ok(n) = v.parse() { self.overlap_percent = n; } }
-        if let Some(v) = map.get("window_type") { self.window_type = v.clone(); }
-        if let Some(v) = map.get("kaiser_beta") { if let Ok(n) = v.parse() { self.kaiser_beta = n; } }
-        if let Some(v) = map.get("center_pad") { self.center_pad = v == "true"; }
-        if let Some(v) = map.get("zero_pad_factor") { if let Ok(n) = v.parse() { self.zero_pad_factor = n; } }
+        if let Some(v) = map.get("window_length") {
+            if let Ok(n) = v.parse() {
+                self.window_length = n;
+            }
+        }
+        if let Some(v) = map.get("overlap_percent") {
+            if let Ok(n) = v.parse() {
+                self.overlap_percent = n;
+            }
+        }
+        if let Some(v) = map.get("window_type") {
+            self.window_type = v.clone();
+        }
+        if let Some(v) = map.get("kaiser_beta") {
+            if let Ok(n) = v.parse() {
+                self.kaiser_beta = n;
+            }
+        }
+        if let Some(v) = map.get("center_pad") {
+            self.center_pad = v == "true";
+        }
+        if let Some(v) = map.get("zero_pad_factor") {
+            if let Ok(n) = v.parse() {
+                self.zero_pad_factor = n;
+            }
+        }
+        if let Some(v) = map.get("target_segments_per_active") {
+            if let Ok(n) = v.parse() {
+                self.target_segments_per_active = n;
+            }
+        }
+        if let Some(v) = map.get("target_bins_per_segment") {
+            if let Ok(n) = v.parse() {
+                self.target_bins_per_segment = n;
+            }
+        }
+        if let Some(v) = map.get("last_edited_field") {
+            self.last_edited_field = v.clone();
+        }
 
         // View
-        if let Some(v) = map.get("view_freq_min_hz") { if let Ok(n) = v.parse() { self.view_freq_min_hz = n; } }
-        if let Some(v) = map.get("view_freq_max_hz") { if let Ok(n) = v.parse() { self.view_freq_max_hz = n; } }
-        if let Some(v) = map.get("freq_scale_power") { if let Ok(n) = v.parse() { self.freq_scale_power = n; } }
+        if let Some(v) = map.get("view_freq_min_hz") {
+            if let Ok(n) = v.parse() {
+                self.view_freq_min_hz = n;
+            }
+        }
+        if let Some(v) = map.get("view_freq_max_hz") {
+            if let Ok(n) = v.parse() {
+                self.view_freq_max_hz = n;
+            }
+        }
+        if let Some(v) = map.get("freq_scale_power") {
+            if let Ok(n) = v.parse() {
+                self.freq_scale_power = n;
+            }
+        }
 
         // Display
-        if let Some(v) = map.get("colormap") { self.colormap = v.clone(); }
-        if let Some(v) = map.get("threshold_db") { if let Ok(n) = v.parse() { self.threshold_db = n; } }
-        if let Some(v) = map.get("db_ceiling") { if let Ok(n) = v.parse() { self.db_ceiling = n; } }
-        if let Some(v) = map.get("brightness") { if let Ok(n) = v.parse() { self.brightness = n; } }
-        if let Some(v) = map.get("gamma") { if let Ok(n) = v.parse() { self.gamma = n; } }
+        if let Some(v) = map.get("colormap") {
+            self.colormap = v.clone();
+        }
+        if let Some(v) = map.get("threshold_db") {
+            if let Ok(n) = v.parse() {
+                self.threshold_db = n;
+            }
+        }
+        if let Some(v) = map.get("db_ceiling") {
+            if let Ok(n) = v.parse() {
+                self.db_ceiling = n;
+            }
+        }
+        if let Some(v) = map.get("brightness") {
+            if let Ok(n) = v.parse() {
+                self.brightness = n;
+            }
+        }
+        if let Some(v) = map.get("gamma") {
+            if let Ok(n) = v.parse() {
+                self.gamma = n;
+            }
+        }
 
         // Reconstruction
-        if let Some(v) = map.get("recon_freq_min_hz") { if let Ok(n) = v.parse() { self.recon_freq_min_hz = n; } }
-        if let Some(v) = map.get("recon_freq_max_hz") { if let Ok(n) = v.parse() { self.recon_freq_max_hz = n; } }
-        if let Some(v) = map.get("recon_freq_count") { if let Ok(n) = v.parse() { self.recon_freq_count = n; } }
+        if let Some(v) = map.get("recon_freq_min_hz") {
+            if let Ok(n) = v.parse() {
+                self.recon_freq_min_hz = n;
+            }
+        }
+        if let Some(v) = map.get("recon_freq_max_hz") {
+            if let Ok(n) = v.parse() {
+                self.recon_freq_max_hz = n;
+            }
+        }
+        if let Some(v) = map.get("recon_freq_count") {
+            if let Ok(n) = v.parse() {
+                self.recon_freq_count = n;
+            }
+        }
 
         // Audio
-        if let Some(v) = map.get("normalize_audio") { self.normalize_audio = v == "true"; }
-        if let Some(v) = map.get("normalize_peak") { if let Ok(n) = v.parse() { self.normalize_peak = n; } }
+        if let Some(v) = map.get("normalize_audio") {
+            self.normalize_audio = v == "true";
+        }
+        if let Some(v) = map.get("normalize_peak") {
+            if let Ok(n) = v.parse() {
+                self.normalize_peak = n;
+            }
+        }
 
         // Zoom
-        if let Some(v) = map.get("time_zoom_factor") { if let Ok(n) = v.parse() { self.time_zoom_factor = n; } }
-        if let Some(v) = map.get("freq_zoom_factor") { if let Ok(n) = v.parse() { self.freq_zoom_factor = n; } }
-        if let Some(v) = map.get("mouse_zoom_factor") { if let Ok(n) = v.parse() { self.mouse_zoom_factor = n; } }
+        if let Some(v) = map.get("time_zoom_factor") {
+            if let Ok(n) = v.parse() {
+                self.time_zoom_factor = n;
+            }
+        }
+        if let Some(v) = map.get("freq_zoom_factor") {
+            if let Ok(n) = v.parse() {
+                self.freq_zoom_factor = n;
+            }
+        }
+        if let Some(v) = map.get("mouse_zoom_factor") {
+            if let Ok(n) = v.parse() {
+                self.mouse_zoom_factor = n;
+            }
+        }
 
         // Window
-        if let Some(v) = map.get("window_width") { if let Ok(n) = v.parse() { self.window_width = n; } }
-        if let Some(v) = map.get("window_height") { if let Ok(n) = v.parse() { self.window_height = n; } }
-        if let Some(v) = map.get("sidebar_width") { if let Ok(n) = v.parse() { self.sidebar_width = n; } }
+        if let Some(v) = map.get("window_width") {
+            if let Ok(n) = v.parse() {
+                self.window_width = n;
+            }
+        }
+        if let Some(v) = map.get("window_height") {
+            if let Ok(n) = v.parse() {
+                self.window_height = n;
+            }
+        }
+        if let Some(v) = map.get("sidebar_width") {
+            if let Ok(n) = v.parse() {
+                self.sidebar_width = n;
+            }
+        }
 
         // Axis Labels
-        if let Some(v) = map.get("axis_font_size") { if let Ok(n) = v.parse() { self.axis_font_size = n; } }
-        if let Some(v) = map.get("freq_axis_width") { if let Ok(n) = v.parse() { self.freq_axis_width = n; } }
-        if let Some(v) = map.get("time_axis_height") { if let Ok(n) = v.parse() { self.time_axis_height = n; } }
+        if let Some(v) = map.get("axis_font_size") {
+            if let Ok(n) = v.parse() {
+                self.axis_font_size = n;
+            }
+        }
+        if let Some(v) = map.get("freq_axis_width") {
+            if let Ok(n) = v.parse() {
+                self.freq_axis_width = n;
+            }
+        }
+        if let Some(v) = map.get("time_axis_height") {
+            if let Ok(n) = v.parse() {
+                self.time_axis_height = n;
+            }
+        }
 
         // Waveform
-        if let Some(v) = map.get("waveform_height") { if let Ok(n) = v.parse() { self.waveform_height = n; } }
+        if let Some(v) = map.get("waveform_height") {
+            if let Ok(n) = v.parse() {
+                self.waveform_height = n;
+            }
+        }
 
         // UI
-        if let Some(v) = map.get("show_tooltips") { self.show_tooltips = v == "true"; }
-        if let Some(v) = map.get("lock_to_active") { self.lock_to_active = v == "true"; }
-        if let Some(v) = map.get("repeat_playback") { self.repeat_playback = v == "true"; }
+        if let Some(v) = map.get("show_tooltips") {
+            self.show_tooltips = v == "true";
+        }
+        if let Some(v) = map.get("lock_to_active") {
+            self.lock_to_active = v == "true";
+        }
+        if let Some(v) = map.get("repeat_playback") {
+            self.repeat_playback = v == "true";
+        }
 
         // Custom Gradient
-        if let Some(v) = map.get("custom_gradient") { self.custom_gradient = v.clone(); }
+        if let Some(v) = map.get("custom_gradient") {
+            self.custom_gradient = v.clone();
+        }
 
         // Colors
-        if let Some(v) = map.get("color_background") { if let Some(n) = parse_hex(v) { self.color_background = n; } }
-        if let Some(v) = map.get("color_panel") { if let Some(n) = parse_hex(v) { self.color_panel = n; } }
-        if let Some(v) = map.get("color_widget") { if let Some(n) = parse_hex(v) { self.color_widget = n; } }
-        if let Some(v) = map.get("color_text_primary") { if let Some(n) = parse_hex(v) { self.color_text_primary = n; } }
-        if let Some(v) = map.get("color_text_secondary") { if let Some(n) = parse_hex(v) { self.color_text_secondary = n; } }
-        if let Some(v) = map.get("color_accent") { if let Some(n) = parse_hex(v) { self.color_accent = n; } }
-        if let Some(v) = map.get("color_waveform") { if let Some(n) = parse_hex(v) { self.color_waveform = n; } }
-        if let Some(v) = map.get("color_cursor") { if let Some(n) = parse_hex(v) { self.color_cursor = n; } }
-        if let Some(v) = map.get("color_center_line") { if let Some(n) = parse_hex(v) { self.color_center_line = n; } }
+        if let Some(v) = map.get("color_background") {
+            if let Some(n) = parse_hex(v) {
+                self.color_background = n;
+            }
+        }
+        if let Some(v) = map.get("color_panel") {
+            if let Some(n) = parse_hex(v) {
+                self.color_panel = n;
+            }
+        }
+        if let Some(v) = map.get("color_widget") {
+            if let Some(n) = parse_hex(v) {
+                self.color_widget = n;
+            }
+        }
+        if let Some(v) = map.get("color_text_primary") {
+            if let Some(n) = parse_hex(v) {
+                self.color_text_primary = n;
+            }
+        }
+        if let Some(v) = map.get("color_text_secondary") {
+            if let Some(n) = parse_hex(v) {
+                self.color_text_secondary = n;
+            }
+        }
+        if let Some(v) = map.get("color_accent") {
+            if let Some(n) = parse_hex(v) {
+                self.color_accent = n;
+            }
+        }
+        if let Some(v) = map.get("color_waveform") {
+            if let Some(n) = parse_hex(v) {
+                self.color_waveform = n;
+            }
+        }
+        if let Some(v) = map.get("color_cursor") {
+            if let Some(n) = parse_hex(v) {
+                self.color_cursor = n;
+            }
+        }
+        if let Some(v) = map.get("color_center_line") {
+            if let Some(n) = parse_hex(v) {
+                self.color_center_line = n;
+            }
+        }
     }
 
     /// Convert window_type string to the WindowType enum value index
@@ -472,7 +680,8 @@ fn parse_hex(s: &str) -> Option<u32> {
 
 /// Serialize gradient stops to string: "pos:r:g:b|pos:r:g:b|..."
 fn serialize_gradient(stops: &[GradientStop]) -> String {
-    stops.iter()
+    stops
+        .iter()
         .map(|s| format!("{:.4}:{:.4}:{:.4}:{:.4}", s.position, s.r, s.g, s.b))
         .collect::<Vec<_>>()
         .join("|")
@@ -485,7 +694,8 @@ fn deserialize_gradient(s: &str) -> Vec<GradientStop> {
     }
     let mut stops = Vec::new();
     for part in s.split('|') {
-        let vals: Vec<f32> = part.split(':')
+        let vals: Vec<f32> = part
+            .split(':')
             .filter_map(|v| v.trim().parse().ok())
             .collect();
         if vals.len() == 4 {
@@ -497,4 +707,51 @@ fn deserialize_gradient(s: &str) -> Vec<GradientStop> {
     }
     stops.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
     stops
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segmentation_solver_fields_roundtrip_in_ini_text() {
+        let ini = "[Analysis]
+window_length = 8192
+overlap_percent = 75
+window_type = Hann
+kaiser_beta = 8.6
+center_pad = false
+zero_pad_factor = 1
+target_segments_per_active = 19
+target_bins_per_segment = 513
+last_edited_field = BinsPerSegment
+";
+        let mut restored = Settings::default();
+        restored.parse_ini(ini);
+
+        assert_eq!(restored.target_segments_per_active, 19);
+        assert_eq!(restored.target_bins_per_segment, 513);
+        assert_eq!(restored.last_edited_field, "BinsPerSegment");
+    }
+
+    #[test]
+    fn segmentation_solver_fields_default_when_missing_in_ini() {
+        let ini = "[Analysis]
+window_length = 8192
+overlap_percent = 75
+window_type = Hann
+kaiser_beta = 8.6
+center_pad = false
+zero_pad_factor = 1
+";
+        let mut restored = Settings::default();
+        restored.target_segments_per_active = 99;
+        restored.target_bins_per_segment = 999;
+        restored.last_edited_field = "BinsPerSegment".to_string();
+        restored.parse_ini(ini);
+
+        assert_eq!(restored.target_segments_per_active, 99);
+        assert_eq!(restored.target_bins_per_segment, 999);
+        assert_eq!(restored.last_edited_field, "BinsPerSegment");
+    }
 }

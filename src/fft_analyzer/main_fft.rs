@@ -1,17 +1,17 @@
+mod app_state;
+mod callbacks_draw;
+mod callbacks_file;
+mod callbacks_nav;
+mod callbacks_ui;
+mod csv_export;
 mod data;
+mod layout;
+mod playback;
 mod processing;
 mod rendering;
-mod playback;
-mod ui;
-mod csv_export;
-mod app_state;
-mod validation;
-mod layout;
-mod callbacks_file;
-mod callbacks_ui;
-mod callbacks_draw;
-mod callbacks_nav;
 mod settings;
+mod ui;
+mod validation;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,9 +19,9 @@ use std::sync::{mpsc, Arc};
 
 use fltk::{app, prelude::*};
 
-use app_state::{AppState, SharedCb, SharedCallbacks, WorkerMessage, format_time};
+use app_state::{format_time, AppState, SharedCallbacks, SharedCb, WorkerMessage};
 use data::TimeUnit;
-use layout::Widgets;
+use layout::{Widgets, STATUS_FFT_OFFSET};
 use playback::audio_player::PlaybackState;
 use processing::reconstructor::Reconstructor;
 
@@ -29,7 +29,11 @@ use processing::reconstructor::Reconstructor;
 //  CREATE SHARED CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> SharedCallbacks {
+fn create_shared_callbacks(
+    widgets: &Widgets,
+    state: &Rc<RefCell<AppState>>,
+    win: &fltk::window::Window,
+) -> SharedCallbacks {
     // Track whether the user has manually edited the freq count field.
     // If not, it always syncs to max bins. If yes, it only clamps down.
     let freq_count_user_adjusted = Rc::new(Cell::new(false));
@@ -49,6 +53,12 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
         let mut lbl_resolution_info = widgets.lbl_resolution_info.clone();
         let mut lbl_hop_info = widgets.lbl_hop_info.clone();
         let mut input_freq_count = widgets.input_freq_count.clone();
+        let mut input_segments_per_active = widgets.input_segments_per_active.clone();
+        let mut input_bins_per_segment = widgets.input_bins_per_segment.clone();
+        let mut status_fft = widgets.status_fft.clone();
+        let mut status_bar = widgets.status_bar.clone();
+        let mut root = widgets.root.clone();
+        let win = win.clone();
         let flag = freq_count_user_adjusted.clone();
         Rc::new(RefCell::new(Box::new(move || {
             let st = state.borrow();
@@ -68,6 +78,31 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
                 // User adjusted, but current exceeds new max: clamp down
                 input_freq_count.set_value(&info.freq_bins.to_string());
             }
+
+            input_segments_per_active.set_value(&info.segments.to_string());
+            input_bins_per_segment.set_value(&info.freq_bins.to_string());
+
+            let sentence = info.format_segmentation_sentence();
+            status_fft.set_label(&sentence);
+            let width_chars = ((win.w() - 16).max(40) / 7).max(20) as usize;
+            let line_count = sentence
+                .split('\n')
+                .map(|line| ((line.chars().count().max(1) - 1) / width_chars) + 1)
+                .sum::<usize>()
+                .max(1) as i32;
+            let fft_h = (line_count * 17 + 8).max(24);
+            let base_h = 25;
+            let menu_h = 25;
+            let win_h = win.h();
+            let win_w = win.w();
+            root.resize(
+                0,
+                menu_h,
+                win_w,
+                win_h - menu_h - base_h - fft_h - STATUS_FFT_OFFSET,
+            );
+            status_fft.resize(0, win_h - base_h - fft_h - STATUS_FFT_OFFSET, win_w, fft_h);
+            status_bar.resize(0, win_h - base_h, win_w, base_h);
         })))
     };
 
@@ -81,8 +116,15 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
             input_seg_size.set_value(&wl.to_string());
             // Sync preset dropdown
             let preset_idx = match wl {
-                256 => 0, 512 => 1, 1024 => 2, 2048 => 3, 4096 => 4,
-                8192 => 5, 16384 => 6, 32768 => 7, 65536 => 8,
+                256 => 0,
+                512 => 1,
+                1024 => 2,
+                2048 => 3,
+                4096 => 4,
+                8192 => 5,
+                16384 => 6,
+                32768 => 7,
+                65536 => 8,
                 _ => 9, // Custom
             };
             seg_preset_choice.set_value(preset_idx);
@@ -98,6 +140,8 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
         let mut input_seg_size = widgets.input_seg_size.clone();
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
         let mut slider_overlap = widgets.slider_overlap.clone();
+        let mut input_segments_per_active = widgets.input_segments_per_active.clone();
+        let mut input_bins_per_segment = widgets.input_bins_per_segment.clone();
         let mut window_type_choice = widgets.window_type_choice.clone();
         let mut check_center = widgets.check_center.clone();
         let mut zero_pad_choice = widgets.zero_pad_choice.clone();
@@ -111,6 +155,8 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
             input_seg_size.activate();
             seg_preset_choice.activate();
             slider_overlap.activate();
+            input_segments_per_active.activate();
+            input_bins_per_segment.activate();
             window_type_choice.activate();
             check_center.activate();
             zero_pad_choice.activate();
@@ -166,9 +212,14 @@ fn create_shared_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) -> 
 fn main() {
     // Load settings from INI (or create default INI if missing)
     let cfg = settings::Settings::load_or_create();
-    eprintln!("[Settings] Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
-        cfg.recon_freq_max_hz, cfg.view_freq_min_hz, cfg.view_freq_max_hz,
-        cfg.window_width, cfg.window_height);
+    eprintln!(
+        "[Settings] Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
+        cfg.recon_freq_max_hz,
+        cfg.view_freq_min_hz,
+        cfg.view_freq_max_hz,
+        cfg.window_width,
+        cfg.window_height
+    );
 
     let app = app::App::default();
 
@@ -206,12 +257,27 @@ fn main() {
         st.normalize_peak = cfg.normalize_peak;
         st.view.db_ceiling = cfg.db_ceiling;
         st.fft_params.zero_pad_factor = cfg.zero_pad_factor;
+        st.fft_params.target_segments_per_active = if cfg.target_segments_per_active > 0 {
+            Some(cfg.target_segments_per_active)
+        } else {
+            None
+        };
+        st.fft_params.target_bins_per_segment = if cfg.target_bins_per_segment > 0 {
+            Some(cfg.target_bins_per_segment)
+        } else {
+            None
+        };
+        st.fft_params.last_edited_field = match cfg.last_edited_field.as_str() {
+            "SegmentsPerActive" => data::LastEditedField::SegmentsPerActive,
+            "BinsPerSegment" => data::LastEditedField::BinsPerSegment,
+            _ => data::LastEditedField::Overlap,
+        };
         Rc::new(RefCell::new(st))
     };
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
 
     // Create shared callbacks
-    let shared = create_shared_callbacks(&widgets, &state);
+    let shared = create_shared_callbacks(&widgets, &state, &win);
 
     // Wire up all callbacks
     callbacks_nav::setup_menu_callbacks(&widgets, &state);
@@ -260,6 +326,7 @@ fn main() {
         let mut last_y_gen: u64 = 0;
 
         app::add_timeout3(0.016, move |handle| {
+            (update_info.borrow_mut())();
             // ── Sync scrollbars with view state ──
             let cur_x_gen = x_scroll_gen.get();
             let cur_y_gen = y_scroll_gen.get();
@@ -278,23 +345,35 @@ fn main() {
                     let ratio = (vis_time / data_time_range).clamp(0.02, 1.0) as f32;
                     let scroll_range = (data_time_range - vis_time).max(0.0);
                     let frac = if scroll_range > 0.001 {
-                        ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range).clamp(0.0, 1.0)
-                    } else { 0.0 };
+                        ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range)
+                            .clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     Some((ratio, frac * 10000.0))
-                } else { None };
+                } else {
+                    None
+                };
 
                 let y_data = if data_freq_range > 1.0 {
                     let vis_freq = st.view.visible_freq_range();
                     let ratio = (vis_freq / data_freq_range).clamp(0.02, 1.0);
                     let scroll_range = (data_freq_range - vis_freq).max(0.0);
                     let frac = if scroll_range > 0.1 {
-                        ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0) as f64
-                    } else { 0.0 };
+                        ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0)
+                            as f64
+                    } else {
+                        0.0
+                    };
                     Some((ratio, (1.0 - frac) * 10000.0))
-                } else { None };
+                } else {
+                    None
+                };
 
                 Some((x_data, y_data))
-            } else { None };
+            } else {
+                None
+            };
 
             if let Some((x_data, y_data)) = scroll_data {
                 if let Some((sz, pos)) = x_data {
@@ -330,7 +409,8 @@ fn main() {
                             }
 
                             let spec_arc = Arc::new(spectrogram);
-                            let (min_t, max_t, max_f) = (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
+                            let (min_t, max_t, max_f) =
+                                (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
 
                             st.spectrogram = Some(spec_arc);
 
@@ -342,7 +422,9 @@ fn main() {
                             }
 
                             // Set viewport to full file range on first load
-                            if st.view.time_max_sec <= 0.0 || st.view.time_max_sec == st.view.time_min_sec {
+                            if st.view.time_max_sec <= 0.0
+                                || st.view.time_max_sec == st.view.time_min_sec
+                            {
                                 st.view.time_min_sec = min_t;
                                 st.view.time_max_sec = max_t;
                             }
@@ -389,8 +471,12 @@ fn main() {
                         let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
 
                         // Pre-filter frames on main thread
-                        let filtered_frames: Vec<_> = spec.frames.iter()
-                            .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
+                        let filtered_frames: Vec<_> = spec
+                            .frames
+                            .iter()
+                            .filter(|f| {
+                                f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max
+                            })
                             .cloned()
                             .collect();
 
@@ -398,13 +484,17 @@ fn main() {
                         // (frame time = center_sample / sample_rate, so round-trip is exact for practical lengths)
                         if let Some(first) = filtered_frames.first() {
                             let sr = params.sample_rate as f64;
-                            state.borrow_mut().recon_start_sample = (first.time_seconds * sr).round() as usize;
+                            state.borrow_mut().recon_start_sample =
+                                (first.time_seconds * sr).round() as usize;
                         }
 
                         std::thread::spawn(move || {
                             let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
-                            let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
-                            tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
+                            let reconstructed =
+                                Reconstructor::reconstruct(&filtered_spec, &params, &view);
+                            tx_clone
+                                .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                                .ok();
                         });
                     }
                     WorkerMessage::ReconstructionComplete(mut reconstructed) => {
@@ -466,12 +556,15 @@ fn main() {
                                         let proc_min = st.recon_start_seconds();
                                         let proc_max = proc_min + st.transport.duration_seconds();
                                         if proc_max > proc_min {
-                                            st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
-                                            st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
+                                            st.view.time_min_sec =
+                                                proc_min.max(st.view.data_time_min_sec);
+                                            st.view.time_max_sec =
+                                                proc_max.min(st.view.data_time_max_sec);
                                         }
                                         // Snap frequency to reconstruction range
                                         st.view.freq_min_hz = st.view.recon_freq_min_hz.max(1.0);
-                                        st.view.freq_max_hz = st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
+                                        st.view.freq_max_hz =
+                                            st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
                                         st.spec_renderer.invalidate();
                                         st.wave_renderer.invalidate();
                                         drop(st);
@@ -484,7 +577,10 @@ fn main() {
                             }
                             Err(e) => {
                                 status_bar.set_label(&format!("Reconstruction error: {}", e));
-                                fltk::dialog::alert_default(&format!("Failed to load reconstructed audio:\n{}", e));
+                                fltk::dialog::alert_default(&format!(
+                                    "Failed to load reconstructed audio:\n{}",
+                                    e
+                                ));
                             }
                         }
                     }
@@ -505,7 +601,14 @@ fn main() {
                     let dur_samples = st.transport.duration_samples;
                     let sr = st.transport.sample_rate;
                     let time_unit = st.fft_params.time_unit;
-                    Some((local_samples, dur_samples, global_samples, sr, playing, time_unit))
+                    Some((
+                        local_samples,
+                        dur_samples,
+                        global_samples,
+                        sr,
+                        playing,
+                        time_unit,
+                    ))
                 } else {
                     None
                 }
@@ -516,10 +619,7 @@ fn main() {
                 }
                 let label = match time_unit {
                     TimeUnit::Samples => {
-                        format!(
-                            "L {} / {}\nG {}",
-                            local_smp, dur_smp, global_smp,
-                        )
+                        format!("L {} / {}\nG {}", local_smp, dur_smp, global_smp,)
                     }
                     TimeUnit::Seconds => {
                         let sr_f = sr.max(1) as f64;
