@@ -5,6 +5,7 @@ use fltk::{
     group::Flex,
     input::{FloatInput, Input},
     menu::{Choice, MenuBar},
+    output::{MultilineOutput, Output},
     prelude::*,
     valuator::{HorNiceSlider, HorSlider},
     widget::Widget,
@@ -18,7 +19,7 @@ use crate::validation::{attach_float_validation, attach_uint_validation};
 
 // ─── Window Layout Constants ────────────────────────────────────────────────────
 pub const WIN_W: i32 = 1200;
-pub const WIN_H: i32 = 1200;
+pub const WIN_H: i32 = 1555;
 const MENU_H: i32 = 25;
 const STATUS_H: i32 = 25;
 const STATUS_FFT_MIN_H: i32 = 0;
@@ -53,7 +54,7 @@ pub struct Widgets {
     pub input_kaiser_beta: FloatInput,
     pub check_center: fltk::button::CheckButton,
     pub zero_pad_choice: Choice,
-    pub lbl_resolution_info: Frame,
+    pub lbl_resolution_info: MultilineOutput,
     pub btn_rerun: Button,
     pub colormap_choice: Choice,
     pub gradient_preview: Widget,
@@ -71,7 +72,7 @@ pub struct Widgets {
     pub input_recon_freq_min: FloatInput,
     pub input_recon_freq_max: FloatInput,
     pub btn_snap_to_view: Button,
-    pub lbl_info: Frame,
+    pub lbl_info: MultilineOutput,
     pub btn_tooltips: fltk::button::CheckButton,
     pub check_lock_active: fltk::button::CheckButton,
     pub btn_home: Button,
@@ -92,8 +93,8 @@ pub struct Widgets {
     pub scrub_slider: HorSlider,
     pub lbl_time: Frame,
     pub repeat_choice: Choice,
-    pub status_fft: Frame,
-    pub status_bar: Frame,
+    pub status_fft: MultilineOutput,
+    pub status_bar: Output,
 }
 
 // ─── Build UI ───────────────────────────────────────────────────────────────────
@@ -347,16 +348,17 @@ Editing this keeps overlap fixed and adjusts segment size.",
     attach_uint_validation(&mut input_segments_per_active);
     left.fixed(&input_segments_per_active, 25);
 
-    let mut input_bins_per_segment = Input::default().with_label("Bins/Segment:");
+    let mut input_bins_per_segment = Input::default().with_label("Freq Bins/Segment:");
     input_bins_per_segment.set_value("0");
     input_bins_per_segment.set_color(theme::color(theme::BG_WIDGET));
     input_bins_per_segment.set_text_color(theme::color(theme::TEXT_PRIMARY));
     input_bins_per_segment.deactivate();
     set_tooltip(
         &mut input_bins_per_segment,
-        "Target FFT bins per segment.
-Last edited field drives solver.
-Initial solver pass maps bins target to segment size using current zero-pad factor.",
+        "Frequency bins per segment (FFT bins), not time slices.
+`bins = (window_length * zero_pad_factor)/2 + 1`.
+This value is mathematically tied to segment size + zero-pad.
+If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     );
     attach_uint_validation(&mut input_bins_per_segment);
     left.fixed(&input_bins_per_segment, 25);
@@ -421,10 +423,11 @@ Initial solver pass maps bins target to segment size using current zero-pad fact
     left.fixed(&zero_pad_choice, 25);
 
     // Resolution trade-off display (live feedback)
-    let mut lbl_resolution_info = Frame::default().with_label("--");
-    lbl_resolution_info.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_resolution_info.set_label_size(9);
-    lbl_resolution_info.set_align(Align::Inside | Align::Left | Align::Top);
+    let mut lbl_resolution_info = MultilineOutput::default();
+    lbl_resolution_info.set_value("--");
+    lbl_resolution_info.set_text_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_resolution_info.set_text_size(9);
+    lbl_resolution_info.set_color(theme::color(theme::BG_WIDGET));
     left.fixed(&lbl_resolution_info, 56);
 
     let mut btn_rerun = Button::default().with_label("Recompute + Rebuild (Space)");
@@ -675,10 +678,11 @@ Initial solver pass maps bins target to segment size using current zero-pad fact
     lbl_info_header.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_info_header, 18);
 
-    let mut lbl_info = Frame::default().with_label("No audio loaded");
-    lbl_info.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_info.set_label_size(10);
-    lbl_info.set_align(Align::Inside | Align::Left | Align::Top);
+    let mut lbl_info = MultilineOutput::default();
+    lbl_info.set_value("No audio loaded");
+    lbl_info.set_text_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_info.set_text_size(10);
+    lbl_info.set_color(theme::color(theme::BG_WIDGET));
     left.fixed(&lbl_info, 110);
 
     // Separator
@@ -893,15 +897,12 @@ Initial solver pass maps bins target to segment size using current zero-pad fact
 
     // ─── FFT STATUS READOUT (auto-expanded height controlled by callback) ───
 
-    let mut status_fft = Frame::default()
+    let mut status_fft = MultilineOutput::default()
         .with_pos(0, WIN_H - STATUS_H - STATUS_FFT_MIN_H - STATUS_FFT_OFFSET)
-        .with_size(WIN_W, STATUS_FFT_MIN_H)
-        .with_label("");
-    status_fft.set_frame(FrameType::FlatBox);
+        .with_size(WIN_W, STATUS_FFT_MIN_H);
     status_fft.set_color(theme::color(theme::BG_PANEL));
-    status_fft.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    status_fft.set_label_size(11);
-    status_fft.set_align(Align::Inside | Align::Left | Align::Wrap | Align::Top);
+    status_fft.set_text_color(theme::color(theme::TEXT_SECONDARY));
+    status_fft.set_text_size(11);
     set_tooltip(
         &mut status_fft,
         "My active time range (the selected portion of the full audio) is divided into overlapping segments; each segment is then transformed into a set of frequency bins – the vertical columns of the spectrogram.",
@@ -909,15 +910,13 @@ Initial solver pass maps bins target to segment size using current zero-pad fact
 
     // ─── STATUS BAR ───────────────────────────────────────────────────────────
 
-    let mut status_bar = Frame::default()
+    let mut status_bar = Output::default()
         .with_pos(0, WIN_H - STATUS_H)
-        .with_size(WIN_W, STATUS_H)
-        .with_label("Ready | Load an audio file to begin");
-    status_bar.set_frame(FrameType::FlatBox);
+        .with_size(WIN_W, STATUS_H);
+    status_bar.set_value("Ready | Load an audio file to begin");
     status_bar.set_color(theme::color(theme::BG_PANEL));
-    status_bar.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    status_bar.set_label_size(11);
-    status_bar.set_align(Align::Inside | Align::Left);
+    status_bar.set_text_color(theme::color(theme::TEXT_SECONDARY));
+    status_bar.set_text_size(11);
 
     win.end();
 

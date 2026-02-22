@@ -68,7 +68,7 @@ fn setup_open_callback(
         {
             let st = state.borrow();
             if st.is_processing {
-                status_bar.set_label("Still processing... please wait.");
+                status_bar.set_value("Still processing... please wait.");
                 eprintln!("[Open] Blocked: still processing");
                 return;
             }
@@ -83,7 +83,7 @@ fn setup_open_callback(
             return;
         }
 
-        status_bar.set_label("Loading audio...");
+        status_bar.set_value("Loading audio...");
         app::awake();
 
         eprintln!("[Open] Loading file: {:?}", filename);
@@ -182,7 +182,7 @@ fn setup_open_callback(
                     tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
                 });
 
-                status_bar.set_label(&format!(
+                status_bar.set_value(&format!(
                     "Processing FFT... | {:.2}s | {} Hz | {}",
                     duration, sample_rate,
                     filename.file_name().unwrap_or_default().to_string_lossy()
@@ -192,7 +192,7 @@ fn setup_open_callback(
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error loading audio:\n{}", e));
-                status_bar.set_label("Load failed");
+                status_bar.set_value("Load failed");
             }
         }
     });
@@ -237,7 +237,7 @@ fn setup_save_fft_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
         match csv_export::export_to_csv(&filtered_spec, &st.fft_params, &st.view, &filename) {
             Ok(_) => {
-                status_bar.set_label(&format!(
+                status_bar.set_value(&format!(
                     "FFT saved ({} frames, {:.2}s-{:.2}s)",
                     filtered_spec.num_frames(),
                     proc_time_min,
@@ -246,7 +246,7 @@ fn setup_save_fft_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error saving CSV:\n{}", e));
-                status_bar.set_label("Save failed");
+                status_bar.set_value("Save failed");
             }
         }
     });
@@ -282,7 +282,7 @@ fn setup_load_fft_callback(
             return;
         }
 
-        status_bar.set_label("Loading CSV...");
+        status_bar.set_value("Loading CSV...");
         app::awake();
 
         match csv_export::import_from_csv(&filename) {
@@ -345,7 +345,7 @@ fn setup_load_fft_callback(
                 (update_info.borrow_mut())();
                 (update_seg_label.borrow_mut())();
 
-                status_bar.set_label(&format!(
+                status_bar.set_value(&format!(
                     "Loaded {} frames from CSV | Reconstructing...",
                     num_frames
                 ));
@@ -378,7 +378,7 @@ fn setup_load_fft_callback(
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error loading CSV:\n{}", e));
-                status_bar.set_label("CSV load failed");
+                status_bar.set_value("CSV load failed");
             }
         }
     });
@@ -410,11 +410,11 @@ fn setup_save_wav_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
         match st.reconstructed_audio.as_ref().unwrap().save_wav(&filename) {
             Ok(_) => {
-                status_bar.set_label(&format!("WAV saved: {:?}", filename));
+                status_bar.set_value(&format!("WAV saved: {:?}", filename));
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error saving WAV:\n{}", e));
-                status_bar.set_label("WAV save failed");
+                status_bar.set_value("WAV save failed");
             }
         }
     });
@@ -539,7 +539,7 @@ pub fn setup_rerun_callback(
 
         (update_info.borrow_mut())();
         (update_seg_label.borrow_mut())();
-        status_bar.set_label("Processing FFT + Reconstruct...");
+        status_bar.set_value("Processing FFT + Reconstruct...");
         app::awake();
 
         let tx_clone = tx.clone();

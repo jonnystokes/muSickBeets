@@ -42,6 +42,7 @@ fn create_shared_callbacks(
     {
         let flag = freq_count_user_adjusted.clone();
         let mut input_freq_count = widgets.input_freq_count.clone();
+        input_freq_count.set_trigger(fltk::enums::CallbackTrigger::Changed);
         input_freq_count.set_callback(move |_| {
             flag.set(true);
         });
@@ -65,8 +66,8 @@ fn create_shared_callbacks(
                 let st = state.borrow();
                 st.derived_info()
             };
-            lbl_info.set_label(&info.format_info());
-            lbl_resolution_info.set_label(&info.format_resolution());
+            lbl_info.set_value(&info.format_info());
+            lbl_resolution_info.set_value(&info.format_resolution());
 
             // Update hop display
             let hop_ms = info.hop_length as f64 / info.sample_rate.max(1) as f64 * 1000.0;
@@ -91,7 +92,7 @@ fn create_shared_callbacks(
             }
 
             let sentence = info.format_segmentation_sentence();
-            status_fft.set_label(&sentence);
+            status_fft.set_value(&sentence);
             let width_chars = ((win.w() - 16).max(40) / 7).max(20) as usize;
             let line_count = sentence
                 .split('\n')
@@ -466,7 +467,7 @@ fn main() {
 
                         (enable_spec_widgets.borrow_mut())();
                         (update_info.borrow_mut())();
-                        status_bar.set_label(&format!(
+                        status_bar.set_value(&format!(
                             "FFT done ({} frames) | Reconstructing...",
                             num_frames
                         ));
@@ -539,7 +540,7 @@ fn main() {
                             Ok((num_smp, sr)) => {
                                 let duration_sec = num_smp as f64 / sr.max(1) as f64;
                                 (enable_wav_export.borrow_mut())();
-                                status_bar.set_label(&format!(
+                                status_bar.set_value(&format!(
                                     "Reconstructed | {:.2}s | {} samples",
                                     duration_sec, num_smp
                                 ));
@@ -584,7 +585,7 @@ fn main() {
                                 }
                             }
                             Err(e) => {
-                                status_bar.set_label(&format!("Reconstruction error: {}", e));
+                                status_bar.set_value(&format!("Reconstruction error: {}", e));
                                 fltk::dialog::alert_default(&format!(
                                     "Failed to load reconstructed audio:\n{}",
                                     e
