@@ -1,13 +1,16 @@
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::cell::RefCell;
 
-use fltk::prelude::*;
+use fltk::{enums::CallbackTrigger, prelude::*};
 
 use crate::app_state::{AppState, SharedCallbacks, UpdateThrottle};
-use crate::data::{ColormapId, FreqScale, GradientStop, TimeUnit, WindowType, eval_gradient};
+use crate::data::{
+    eval_gradient, ColormapId, FreqScale, GradientStop, LastEditedField, SolverConstraints,
+    TimeUnit, WindowType,
+};
 use crate::layout::Widgets;
 use crate::settings::Settings;
-use crate::validation::{attach_float_validation, parse_or_zero_f32};
+use crate::validation::{attach_float_validation, parse_or_zero_f32, parse_or_zero_usize};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  PARAMETER CALLBACKS
@@ -18,6 +21,7 @@ pub fn setup_parameter_callbacks(
     state: &Rc<RefCell<AppState>>,
     shared: &SharedCallbacks,
 ) {
+    let suppress_solver_inputs = Rc::new(Cell::new(false));
     // Time unit toggle
     {
         let state = state.clone();
@@ -27,7 +31,6 @@ pub fn setup_parameter_callbacks(
         let mut btn_time_unit = widgets.btn_time_unit.clone();
         btn_time_unit.set_callback(move |btn| {
             let mut st = state.borrow_mut();
-            // Internal storage (start_sample/stop_sample) never changes — only the display
             match st.fft_params.time_unit {
                 TimeUnit::Seconds => {
                     st.fft_params.time_unit = TimeUnit::Samples;
@@ -45,12 +48,16 @@ pub fn setup_parameter_callbacks(
         });
     }
 
-    // Overlap (with hop info update)
+    // Overlap (last-edited solver path)
     {
         let mut lbl = widgets.lbl_overlap_val.clone();
         let mut lbl_hop = widgets.lbl_hop_info.clone();
         let state = state.clone();
         let update_info = shared.update_info.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut input_segments = widgets.input_segments_per_active.clone();
+        let mut input_bins = widgets.input_bins_per_segment.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut slider_overlap = widgets.slider_overlap.clone();
         slider_overlap.set_callback(move |s| {
@@ -59,6 +66,17 @@ pub fn setup_parameter_callbacks(
             {
                 let mut st = state.borrow_mut();
                 st.fft_params.overlap_percent = val;
+                st.fft_params.last_edited_field = LastEditedField::Overlap;
+                apply_segmentation_solver(&mut st);
+                suppress_solver_inputs.set(true);
+                input_seg_size.set_value(&st.fft_params.window_length.to_string());
+                if let Some(seg) = st.fft_params.target_segments_per_active {
+                    input_segments.set_value(&seg.to_string());
+                }
+                if let Some(b) = st.fft_params.target_bins_per_segment {
+                    input_bins.set_value(&b.to_string());
+                }
+                suppress_solver_inputs.set(false);
                 let hop = st.fft_params.hop_length();
                 let hop_ms = hop as f64 / st.fft_params.sample_rate.max(1) as f64 * 1000.0;
                 lbl_hop.set_label(&format!("Hop: {} smp ({:.1} ms)", hop, hop_ms));
@@ -67,7 +85,89 @@ pub fn setup_parameter_callbacks(
         });
     }
 
-    // Window type (kaiser beta is read at recompute time from the field)
+    // Segments per active area (live while typing)
+    {
+        let state = state.clone();
+        let update_info = shared.update_info.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut input_bins = widgets.input_bins_per_segment.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
+
+        let mut input_segments = widgets.input_segments_per_active.clone();
+        input_segments.set_trigger(CallbackTrigger::Changed);
+        input_segments.set_callback(move |inp| {
+            if inp.value().contains(' ') {
+                inp.set_value(&inp.value().replace(' ', ""));
+                return;
+            }
+            if suppress_solver_inputs.get() {
+                return;
+            }
+            if inp.value().trim().is_empty() {
+                return;
+            }
+            let mut st = state.borrow_mut();
+            let target = parse_or_zero_usize(&inp.value()).max(1);
+            st.fft_params.target_segments_per_active = Some(target);
+            st.fft_params.last_edited_field = LastEditedField::SegmentsPerActive;
+            apply_segmentation_solver(&mut st);
+
+            suppress_solver_inputs.set(true);
+            input_seg_size.set_value(&st.fft_params.window_length.to_string());
+            input_bins.set_value(
+                &st.fft_params
+                    .target_bins_per_segment
+                    .unwrap_or(st.fft_params.num_frequency_bins())
+                    .to_string(),
+            );
+            suppress_solver_inputs.set(false);
+            drop(st);
+            (update_info.borrow_mut())();
+        });
+    }
+
+    // Bins per segment (live while typing)
+    {
+        let state = state.clone();
+        let update_info = shared.update_info.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut input_segments = widgets.input_segments_per_active.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
+
+        let mut input_bins = widgets.input_bins_per_segment.clone();
+        input_bins.set_trigger(CallbackTrigger::Changed);
+        input_bins.set_callback(move |inp| {
+            if inp.value().contains(' ') {
+                inp.set_value(&inp.value().replace(' ', ""));
+                return;
+            }
+            if suppress_solver_inputs.get() {
+                return;
+            }
+            if inp.value().trim().is_empty() {
+                return;
+            }
+            let mut st = state.borrow_mut();
+            let target = parse_or_zero_usize(&inp.value()).max(1);
+            st.fft_params.target_bins_per_segment = Some(target);
+            st.fft_params.last_edited_field = LastEditedField::BinsPerSegment;
+            apply_segmentation_solver(&mut st);
+
+            suppress_solver_inputs.set(true);
+            input_seg_size.set_value(&st.fft_params.window_length.to_string());
+            input_segments.set_value(
+                &st.fft_params
+                    .target_segments_per_active
+                    .unwrap_or(st.fft_params.num_segments(current_active_samples(&st)))
+                    .to_string(),
+            );
+            suppress_solver_inputs.set(false);
+            drop(st);
+            (update_info.borrow_mut())();
+        });
+    }
+
+    // Window type
     {
         let state = state.clone();
         let mut input_kaiser_beta = widgets.input_kaiser_beta.clone();
@@ -76,9 +176,18 @@ pub fn setup_parameter_callbacks(
         window_type_choice.set_callback(move |c| {
             let mut st = state.borrow_mut();
             st.fft_params.window_type = match c.value() {
-                0 => { input_kaiser_beta.deactivate(); WindowType::Hann }
-                1 => { input_kaiser_beta.deactivate(); WindowType::Hamming }
-                2 => { input_kaiser_beta.deactivate(); WindowType::Blackman }
+                0 => {
+                    input_kaiser_beta.deactivate();
+                    WindowType::Hann
+                }
+                1 => {
+                    input_kaiser_beta.deactivate();
+                    WindowType::Hamming
+                }
+                2 => {
+                    input_kaiser_beta.deactivate();
+                    WindowType::Blackman
+                }
                 3 => {
                     input_kaiser_beta.activate();
                     let beta = parse_or_zero_f32(&input_kaiser_beta.value());
@@ -101,58 +210,90 @@ pub fn setup_parameter_callbacks(
             if idx >= 0 && idx < 9 {
                 let size = SEG_PRESETS[idx as usize];
                 input_seg_size.set_value(&size.to_string());
-                state.borrow_mut().fft_params.window_length = size;
+                let mut st = state.borrow_mut();
+                st.fft_params.window_length = size;
+                st.fft_params.last_edited_field = LastEditedField::Overlap;
+                apply_segmentation_solver(&mut st);
                 (update_info.borrow_mut())();
             }
-            // idx == 9 is "Custom" - leave input as-is
         });
     }
 
-    // Segment size typed input (on Enter)
+    // Segment size typed input
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut input_seg_size = widgets.input_seg_size.clone();
+        input_seg_size.set_trigger(CallbackTrigger::Changed);
         input_seg_size.set_callback(move |inp| {
+            if inp.value().contains(' ') {
+                inp.set_value(&inp.value().replace(' ', ""));
+                return;
+            }
+            if suppress_solver_inputs.get() {
+                return;
+            }
+            if inp.value().trim().is_empty() {
+                return;
+            }
+
             let raw: usize = inp.value().parse().unwrap_or(8192);
-            let clamped = raw.clamp(2, 131072);
+            let mut st = state.borrow_mut();
+            let max_window = current_active_samples(&st).max(2);
+            let clamped = raw.clamp(2, max_window);
             let even = round_even(clamped);
-            inp.set_value(&even.to_string());
-            state.borrow_mut().fft_params.window_length = even;
 
-            // Sync preset dropdown
-            let preset_idx = find_preset_index(even).map(|i| i as i32).unwrap_or(9);
+            st.fft_params.window_length = even;
+            st.fft_params.last_edited_field = LastEditedField::Overlap;
+            apply_segmentation_solver(&mut st);
+
+            let preset_idx = find_preset_index(st.fft_params.window_length)
+                .map(|i| i as i32)
+                .unwrap_or(9);
+            suppress_solver_inputs.set(true);
+            inp.set_value(&st.fft_params.window_length.to_string());
             seg_preset_choice.set_value(preset_idx);
+            suppress_solver_inputs.set(false);
 
+            drop(st);
             (update_info.borrow_mut())();
         });
     }
 
-    // Segment size +/- buttons (step through presets)
+    // Segment size +/- buttons
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
         let update_seg_label = shared.update_seg_label.clone();
         let mut input_seg_size = widgets.input_seg_size.clone();
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut btn_seg_minus = widgets.btn_seg_minus.clone();
         btn_seg_minus.set_callback(move |_| {
             let mut st = state.borrow_mut();
             let cur = st.fft_params.window_length;
             let new_wl = if let Some(idx) = find_preset_index(cur) {
-                if idx > 0 { SEG_PRESETS[idx - 1] } else { SEG_PRESETS[0] }
+                if idx > 0 {
+                    SEG_PRESETS[idx - 1]
+                } else {
+                    SEG_PRESETS[0]
+                }
             } else {
-                // Custom: halve
                 round_even((cur / 2).max(2))
             };
             st.fft_params.window_length = new_wl;
+            st.fft_params.last_edited_field = LastEditedField::Overlap;
+            apply_segmentation_solver(&mut st);
             drop(st);
+            suppress_solver_inputs.set(true);
             input_seg_size.set_value(&new_wl.to_string());
             let preset_idx = find_preset_index(new_wl).map(|i| i as i32).unwrap_or(9);
             seg_preset_choice.set_value(preset_idx);
+            suppress_solver_inputs.set(false);
             (update_info.borrow_mut())();
             (update_seg_label.borrow_mut())();
         });
@@ -163,34 +304,41 @@ pub fn setup_parameter_callbacks(
         let update_seg_label = shared.update_seg_label.clone();
         let mut input_seg_size = widgets.input_seg_size.clone();
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut btn_seg_plus = widgets.btn_seg_plus.clone();
         btn_seg_plus.set_callback(move |_| {
             let mut st = state.borrow_mut();
             let cur = st.fft_params.window_length;
+            let max_window = current_active_samples(&st).max(2);
             let new_wl = if let Some(idx) = find_preset_index(cur) {
-                if idx < SEG_PRESETS.len() - 1 { SEG_PRESETS[idx + 1] } else { SEG_PRESETS[SEG_PRESETS.len() - 1] }
+                if idx < SEG_PRESETS.len() - 1 {
+                    SEG_PRESETS[idx + 1].min(max_window)
+                } else {
+                    max_window
+                }
             } else {
-                // Custom: double
-                round_even((cur * 2).min(131072))
+                round_even((cur * 2).min(max_window))
             };
             st.fft_params.window_length = new_wl;
+            st.fft_params.last_edited_field = LastEditedField::Overlap;
+            apply_segmentation_solver(&mut st);
             drop(st);
+            suppress_solver_inputs.set(true);
             input_seg_size.set_value(&new_wl.to_string());
             let preset_idx = find_preset_index(new_wl).map(|i| i as i32).unwrap_or(9);
             seg_preset_choice.set_value(preset_idx);
+            suppress_solver_inputs.set(false);
             (update_info.borrow_mut())();
             (update_seg_label.borrow_mut())();
         });
     }
 
-    // Kaiser beta - read at recompute time, but also sync when window type changes
     {
         let mut input_kaiser_beta = widgets.input_kaiser_beta.clone();
         attach_float_validation(&mut input_kaiser_beta);
     }
 
-    // Center/Pad
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
@@ -202,7 +350,6 @@ pub fn setup_parameter_callbacks(
         });
     }
 
-    // Zero-padding factor
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
@@ -216,10 +363,51 @@ pub fn setup_parameter_callbacks(
                 3 => 8,
                 _ => 1,
             };
-            state.borrow_mut().fft_params.zero_pad_factor = factor;
+            let mut st = state.borrow_mut();
+            st.fft_params.zero_pad_factor = factor;
+            apply_segmentation_solver(&mut st);
             (update_info.borrow_mut())();
         });
     }
+}
+
+fn current_active_samples(st: &AppState) -> usize {
+    if let Some(ref audio) = st.audio_data {
+        let start = st.fft_params.start_sample.min(audio.num_samples());
+        let stop = st.fft_params.stop_sample.min(audio.num_samples());
+        stop.saturating_sub(start)
+    } else {
+        0
+    }
+}
+
+fn apply_segmentation_solver(st: &mut AppState) {
+    let active_samples = current_active_samples(st);
+    let max_window = active_samples.max(2);
+    let out =
+        crate::data::segmentation_solver::solve(crate::data::segmentation_solver::SolverInput {
+            active_samples,
+            window_length: st.fft_params.window_length,
+            overlap_percent: st.fft_params.overlap_percent,
+            zero_pad_factor: st.fft_params.zero_pad_factor,
+            target_segments_per_active: st.fft_params.target_segments_per_active,
+            target_bins_per_segment: st.fft_params.target_bins_per_segment,
+            last_edited: st.fft_params.last_edited_field,
+            constraints: SolverConstraints {
+                max_window,
+                ..SolverConstraints::default()
+            },
+        });
+
+    st.fft_params.window_length = out.window_length;
+    st.fft_params.overlap_percent = out.overlap_percent;
+    if st.fft_params.target_segments_per_active.is_none() {
+        st.fft_params.target_segments_per_active = Some(out.segments_per_active.max(1));
+    }
+    if st.fft_params.target_bins_per_segment.is_none() {
+        st.fft_params.target_bins_per_segment = Some(out.bins_per_segment.max(1));
+    }
+    st.dirty = true;
 }
 
 // ─── Segment size helpers ─────────────────────────────────────────────────────
@@ -231,17 +419,20 @@ fn find_preset_index(size: usize) -> Option<usize> {
 }
 
 fn round_even(n: usize) -> usize {
-    if n < 2 { 2 } else if n % 2 != 0 { n + 1 } else { n }
+    if n < 2 {
+        2
+    } else if n % 2 != 0 {
+        n + 1
+    } else {
+        n
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  DISPLAY CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_display_callbacks(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+pub fn setup_display_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     // Colormap
     {
         let state = state.clone();
@@ -270,9 +461,13 @@ pub fn setup_display_callbacks(
         let mut slider_scale = widgets.slider_scale.clone();
         slider_scale.set_callback(move |s| {
             let val = s.value() as f32;
-            let label = if val <= 0.01 { "Scale: Linear".to_string() }
-                       else if val >= 0.99 { "Scale: Log".to_string() }
-                       else { format!("Scale: {:.0}%", val * 100.0) };
+            let label = if val <= 0.01 {
+                "Scale: Linear".to_string()
+            } else if val >= 0.99 {
+                "Scale: Log".to_string()
+            } else {
+                format!("Scale: {:.0}%", val * 100.0)
+            };
             lbl.set_label(&label);
             state.borrow_mut().view.freq_scale = FreqScale::Power(val);
 
@@ -369,10 +564,7 @@ pub fn setup_display_callbacks(
 //  PLAYBACK CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_playback_callbacks(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+pub fn setup_playback_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     {
         let state = state.clone();
         let mut btn_rerun = widgets.btn_rerun.clone();
@@ -423,7 +615,10 @@ pub fn setup_playback_callbacks(
             if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
                 return match ev {
                     fltk::enums::Event::KeyDown | fltk::enums::Event::Shortcut => true,
-                    fltk::enums::Event::KeyUp => { btn_rerun_scrub.do_callback(); true }
+                    fltk::enums::Event::KeyUp => {
+                        btn_rerun_scrub.do_callback();
+                        true
+                    }
                     _ => false,
                 };
             }
@@ -551,16 +746,13 @@ struct GradientEditorState {
     dragging: bool,
 }
 
-const GRAD_BAR_H: i32 = 20;   // height of the gradient bar
+const GRAD_BAR_H: i32 = 20; // height of the gradient bar
 const STOP_HANDLE_H: i32 = 10; // height of the triangle handles below
 
 /// Pixel margin from widget left/right edges for the gradient bar
 const GRAD_MARGIN: i32 = 4;
 
-pub fn setup_gradient_editor(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+pub fn setup_gradient_editor(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let editor_state = Rc::new(RefCell::new(GradientEditorState {
         selected_stop: None,
         dragging: false,
@@ -586,7 +778,9 @@ pub fn setup_gradient_editor(
 
             let bar_x = x + GRAD_MARGIN;
             let bar_w = ww - GRAD_MARGIN * 2;
-            if bar_w <= 0 { return; }
+            if bar_w <= 0 {
+                return;
+            }
 
             // Draw gradient bar pixel by pixel
             let st = state.borrow();
@@ -671,7 +865,10 @@ pub fn setup_gradient_editor(
             if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
                 return match ev {
                     fltk::enums::Event::KeyDown | fltk::enums::Event::Shortcut => true,
-                    fltk::enums::Event::KeyUp => { btn_rerun_grad.do_callback(); true }
+                    fltk::enums::Event::KeyUp => {
+                        btn_rerun_grad.do_callback();
+                        true
+                    }
                     _ => false,
                 };
             }
@@ -687,7 +884,9 @@ pub fn setup_gradient_editor(
             let ww = w.w();
             let bar_x = x + GRAD_MARGIN;
             let bar_w = ww - GRAD_MARGIN * 2;
-            if bar_w <= 0 { return false; }
+            if bar_w <= 0 {
+                return false;
+            }
 
             match ev {
                 fltk::enums::Event::Push => {
@@ -767,7 +966,9 @@ pub fn setup_gradient_editor(
                         let (r, g, b) = eval_gradient(&st.view.custom_gradient, pos_t);
                         let new_stop = GradientStop::new(pos_t, r, g, b);
                         // Insert sorted by position
-                        let insert_idx = st.view.custom_gradient
+                        let insert_idx = st
+                            .view
+                            .custom_gradient
                             .iter()
                             .position(|s| s.position > pos_t)
                             .unwrap_or(st.view.custom_gradient.len());
@@ -805,7 +1006,9 @@ pub fn setup_gradient_editor(
                         st.view.custom_gradient[idx].position = pos_t;
                         // Re-sort stops and update selected index
                         let stop = st.view.custom_gradient[idx];
-                        st.view.custom_gradient.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+                        st.view
+                            .custom_gradient
+                            .sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
                         // Find where our stop ended up after sort
                         let new_idx = st.view.custom_gradient.iter().position(|s| {
                             (s.position - stop.position).abs() < 1e-6

@@ -1,16 +1,16 @@
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 
 use fltk::{app, dialog, prelude::*};
 
 use crate::app_state::{AppState, SharedCallbacks, WorkerMessage};
+use crate::csv_export;
 use crate::data::{self, AudioData, TimeUnit, WindowType};
 use crate::layout::Widgets;
 use crate::processing::fft_engine::FftEngine;
 use crate::processing::reconstructor::Reconstructor;
-use crate::validation::{parse_or_zero_f64, parse_or_zero_f32, parse_or_zero_usize};
-use crate::csv_export;
+use crate::validation::{parse_or_zero_f32, parse_or_zero_f64, parse_or_zero_usize};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  FILE OPERATION CALLBACKS
@@ -68,7 +68,7 @@ fn setup_open_callback(
         {
             let st = state.borrow();
             if st.is_processing {
-                status_bar.set_label("Still processing... please wait.");
+                status_bar.set_value("Still processing... please wait.");
                 eprintln!("[Open] Blocked: still processing");
                 return;
             }
@@ -83,7 +83,7 @@ fn setup_open_callback(
             return;
         }
 
-        status_bar.set_label("Loading audio...");
+        status_bar.set_value("Loading audio...");
         app::awake();
 
         eprintln!("[Open] Loading file: {:?}", filename);
@@ -182,7 +182,7 @@ fn setup_open_callback(
                     tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
                 });
 
-                status_bar.set_label(&format!(
+                status_bar.set_value(&format!(
                     "Processing FFT... | {:.2}s | {} Hz | {}",
                     duration, sample_rate,
                     filename.file_name().unwrap_or_default().to_string_lossy()
@@ -192,17 +192,14 @@ fn setup_open_callback(
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error loading audio:\n{}", e));
-                status_bar.set_label("Load failed");
+                status_bar.set_value("Load failed");
             }
         }
     });
 }
 
 // ── Save FFT to CSV ──
-fn setup_save_fft_callback(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+fn setup_save_fft_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
 
@@ -214,7 +211,8 @@ fn setup_save_fft_callback(
             return;
         }
 
-        let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+        let mut chooser =
+            dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
         chooser.set_filter("*.csv");
         chooser.set_preset_file("fft_data.csv");
         chooser.show();
@@ -229,7 +227,9 @@ fn setup_save_fft_callback(
         let spec_full = st.spectrogram.as_ref().unwrap();
         let proc_time_min = st.fft_params.start_seconds();
         let proc_time_max = st.fft_params.stop_seconds();
-        let filtered_frames: Vec<_> = spec_full.frames.iter()
+        let filtered_frames: Vec<_> = spec_full
+            .frames
+            .iter()
             .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
             .cloned()
             .collect();
@@ -237,14 +237,16 @@ fn setup_save_fft_callback(
 
         match csv_export::export_to_csv(&filtered_spec, &st.fft_params, &st.view, &filename) {
             Ok(_) => {
-                status_bar.set_label(&format!(
+                status_bar.set_value(&format!(
                     "FFT saved ({} frames, {:.2}s-{:.2}s)",
-                    filtered_spec.num_frames(), proc_time_min, proc_time_max
+                    filtered_spec.num_frames(),
+                    proc_time_min,
+                    proc_time_max
                 ));
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error saving CSV:\n{}", e));
-                status_bar.set_label("Save failed");
+                status_bar.set_value("Save failed");
             }
         }
     });
@@ -280,7 +282,7 @@ fn setup_load_fft_callback(
             return;
         }
 
-        status_bar.set_label("Loading CSV...");
+        status_bar.set_value("Loading CSV...");
         app::awake();
 
         match csv_export::import_from_csv(&filename) {
@@ -343,7 +345,7 @@ fn setup_load_fft_callback(
                 (update_info.borrow_mut())();
                 (update_seg_label.borrow_mut())();
 
-                status_bar.set_label(&format!(
+                status_bar.set_value(&format!(
                     "Loaded {} frames from CSV | Reconstructing...",
                     num_frames
                 ));
@@ -354,34 +356,36 @@ fn setup_load_fft_callback(
                 let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
 
                 // Pre-filter and set recon_start_sample from actual first frame
-                let filtered_frames: Vec<_> = spec.frames.iter()
+                let filtered_frames: Vec<_> = spec
+                    .frames
+                    .iter()
                     .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
                     .cloned()
                     .collect();
                 if let Some(first) = filtered_frames.first() {
                     let frame_sr = params.sample_rate as f64;
-                    state.borrow_mut().recon_start_sample = (first.time_seconds * frame_sr).round() as usize;
+                    state.borrow_mut().recon_start_sample =
+                        (first.time_seconds * frame_sr).round() as usize;
                 }
 
                 std::thread::spawn(move || {
                     let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
                     let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
-                    tx_clone.send(WorkerMessage::ReconstructionComplete(reconstructed)).ok();
+                    tx_clone
+                        .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                        .ok();
                 });
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error loading CSV:\n{}", e));
-                status_bar.set_label("CSV load failed");
+                status_bar.set_value("CSV load failed");
             }
         }
     });
 }
 
 // ── Export WAV ──
-fn setup_save_wav_callback(
-    widgets: &Widgets,
-    state: &Rc<RefCell<AppState>>,
-) {
+fn setup_save_wav_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
 
@@ -393,7 +397,8 @@ fn setup_save_wav_callback(
             return;
         }
 
-        let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+        let mut chooser =
+            dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
         chooser.set_filter("*.wav");
         chooser.set_preset_file("reconstructed.wav");
         chooser.show();
@@ -405,11 +410,11 @@ fn setup_save_wav_callback(
 
         match st.reconstructed_audio.as_ref().unwrap().save_wav(&filename) {
             Ok(_) => {
-                status_bar.set_label(&format!("WAV saved: {:?}", filename));
+                status_bar.set_value(&format!("WAV saved: {:?}", filename));
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error saving WAV:\n{}", e));
-                status_bar.set_label("WAV save failed");
+                status_bar.set_value("WAV save failed");
             }
         }
     });
@@ -449,15 +454,21 @@ pub fn setup_rerun_callback(
         // Sync all field values into state before running
         {
             let mut st = state.borrow_mut();
-            if st.audio_data.is_none() { return; }
-            if st.is_processing { return; }
+            if st.audio_data.is_none() {
+                return;
+            }
+            if st.is_processing {
+                return;
+            }
 
             // Read current field values and convert to sample counts
             let sr = st.fft_params.sample_rate as f64;
             match st.fft_params.time_unit {
                 TimeUnit::Seconds => {
-                    st.fft_params.start_sample = (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
-                    st.fft_params.stop_sample = (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
+                    st.fft_params.start_sample =
+                        (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
+                    st.fft_params.stop_sample =
+                        (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
                 }
                 TimeUnit::Samples => {
                     st.fft_params.start_sample = parse_or_zero_usize(&input_start.value());
@@ -467,12 +478,25 @@ pub fn setup_rerun_callback(
 
             // Read segment size from input field, validate
             let seg_size: usize = parse_or_zero_usize(&input_seg_size.value()).max(2);
-            let seg_size = if seg_size % 2 != 0 { seg_size + 1 } else { seg_size };
-            st.fft_params.window_length = seg_size.min(131072);
+            let seg_size = if seg_size % 2 != 0 {
+                seg_size + 1
+            } else {
+                seg_size
+            };
+            let active_len = st
+                .fft_params
+                .stop_sample
+                .saturating_sub(st.fft_params.start_sample)
+                .max(2);
+            st.fft_params.window_length = seg_size.min(active_len);
 
             // Read zero-pad factor from dropdown
             st.fft_params.zero_pad_factor = match zero_pad_choice.value() {
-                0 => 1, 1 => 2, 2 => 4, 3 => 8, _ => 1,
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                3 => 8,
+                _ => 1,
             };
 
             st.fft_params.overlap_percent = slider_overlap.value() as f32;
@@ -515,7 +539,7 @@ pub fn setup_rerun_callback(
 
         (update_info.borrow_mut())();
         (update_seg_label.borrow_mut())();
-        status_bar.set_label("Processing FFT + Reconstruct...");
+        status_bar.set_value("Processing FFT + Reconstruct...");
         app::awake();
 
         let tx_clone = tx.clone();

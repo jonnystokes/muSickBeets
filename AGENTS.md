@@ -70,7 +70,7 @@ The **top-level menu bar** (File, Analyze, Display) is NOT guarded. It must rema
 **For text input fields (`FloatInput` or `Input`):**
 1. In `layout.rs`: call `attach_float_validation()` or `attach_uint_validation()` as usual
 2. In `setup_spacebar_guards()`: call `attach_float_validation_with_recompute()` or `attach_uint_validation_with_recompute()` — this REPLACES the plain handler with one that also triggers `btn_rerun.do_callback()` on space KeyUp
-3. If the field also uses a live `set_callback()` with `CallbackTrigger::Changed`, that callback MUST strip spaces from `inp.value()` and return early to prevent transient space insertion.
+3. If the field also has a `set_callback()` with `CallbackTrigger::Changed`, that callback MUST defensively strip spaces from `inp.value()` and return early. This avoids any race where widget callbacks observe a transient space before handle()-level guards run.
 
 **For widgets with custom `handle()` callbacks (like scrub_slider, gradient_preview):**
 Add this at the top of the existing handle closure:
@@ -103,7 +103,7 @@ Validation uses `handle()` (NOT `set_callback()`) so it survives when functional
 
 However, calling `handle()` twice on the same widget DOES overwrite the first handler. This is why `setup_spacebar_guards()` uses `attach_float_validation_with_recompute()` to REPLACE the plain validation handler — the new handler includes both validation AND space blocking with recompute trigger.
 
-Additionally, live `Changed` callbacks must defensively sanitize spaces (`replace(' ', "")`) before parsing. Treat this as mandatory redundant protection alongside handle()-level guards.
+In addition, any text field with live `Changed` callbacks must sanitize spaces in the callback itself (`replace(' ', "")`) before numeric parsing. This double-layer rule is mandatory for robust spacebar behavior under all FLTK event orders.
 
 **When adding new text input fields:**
 1. In `layout.rs`: call `attach_float_validation(&mut field)` or `attach_uint_validation(&mut field)`
