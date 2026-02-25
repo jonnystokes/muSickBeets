@@ -42,6 +42,7 @@ pub struct Settings {
     pub time_zoom_factor: f32, // multiplier per click, e.g. 1.5
     pub freq_zoom_factor: f32,
     pub mouse_zoom_factor: f32, // for scroll wheel
+    pub swap_zoom_axes: bool,   // swap which axis Alt vs Alt+Ctrl zooms
 
     // ── Window ──
     pub window_width: i32,
@@ -118,6 +119,7 @@ impl Default for Settings {
             time_zoom_factor: 1.5,
             freq_zoom_factor: 1.5,
             mouse_zoom_factor: 1.2,
+            swap_zoom_axes: false,
 
             // Window
             window_width: 1200,
@@ -252,6 +254,7 @@ impl Settings {
         cfg.time_zoom_factor = st.time_zoom_factor;
         cfg.freq_zoom_factor = st.freq_zoom_factor;
         cfg.mouse_zoom_factor = st.mouse_zoom_factor;
+        cfg.swap_zoom_axes = st.swap_zoom_axes;
 
         // UI
         cfg.lock_to_active = st.lock_to_active;
@@ -328,6 +331,10 @@ impl Settings {
         s.push_str(&format!("time_zoom_factor = {}\n", self.time_zoom_factor));
         s.push_str(&format!("freq_zoom_factor = {}\n", self.freq_zoom_factor));
         s.push_str(&format!("mouse_zoom_factor = {}\n", self.mouse_zoom_factor));
+        s.push_str(
+            "# swap_zoom_axes: false = Alt zooms freq, Alt+Ctrl zooms time; true = swapped\n",
+        );
+        s.push_str(&format!("swap_zoom_axes = {}\n", self.swap_zoom_axes));
         s.push('\n');
 
         s.push_str("[Window]\n");
@@ -514,6 +521,9 @@ impl Settings {
             if let Ok(n) = v.parse() {
                 self.mouse_zoom_factor = n;
             }
+        }
+        if let Some(v) = map.get("swap_zoom_axes") {
+            self.swap_zoom_axes = v == "true";
         }
 
         // Window

@@ -52,16 +52,41 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 ### Category 1: Input Validation & Edge Cases
 - **Items:** 7
 - **Estimated Difficulty:** Trivial–Easy
+- **Category CMDL Total:** 19 (sum of all item T values)
 - **Description:** Boundary conditions, degenerate inputs, missing defensive checks, and fragile API contracts. These are localized fixes — typically adding a guard clause, a clamp, or a defensive sort at a single code location.
 - **Why this difficulty:** Most fixes are 1–3 line additions in a single file with no signature changes. Things like adding a `sort_by` call, clamping a value, or adding a NaN check.
-- **Status:** NOT STARTED
+- **Status:** COMPLETE
+
+#### Items (sorted by CMDL T, easiest first):
+
+| # | Issue | CMDL | Band | Files Changed | What Was Done |
+|---|-------|------|------|---------------|---------------|
+| 1 | EDGE-4: `freq_min_hz` stored as 0.0 but displayed as 1.0 | CMDL(2 \| 1, 1, 0) | Trivial | `view_state.rs` | Changed `reset_zoom()` to set `freq_min_hz = 1.0` instead of 0.0, matching the internal clamp in `y_to_freq`/`freq_to_y`. |
+| 2 | EDGE-1: No rejection of sample_rate==0 in WAV loading | CMDL(2 \| 1, 1, 0) | Trivial | `audio_data.rs` | Added early `bail!` if WAV header reports sample_rate==0, preventing nonsensical time calculations downstream. |
+| 3 | EDGE-6: `reconstructed_audio.take()` pattern loses data on panic | CMDL(2 \| 1, 1, 0) | Trivial | `callbacks_draw.rs` | Added explanatory comment documenting why `take()+put-back` is the correct pattern here (borrow checker constraint, single-threaded FLTK). Not a code change — the pattern itself is the best available option. |
+| 4 | EDGE-5: NaN panic in `frame_at_time` binary search | CMDL(2 \| 1, 1, 0) | Trivial | `spectrogram.rs` | Replaced `.unwrap()` on `partial_cmp` with `.unwrap_or(Equal)`. Added NaN guard on input `time_seconds`. |
+| 5 | BUG-7: `from_frames` assumes sorted input | CMDL(2 \| 1, 1, 0) | Trivial | `spectrogram.rs` | Added defensive `sort_by` on `time_seconds` with NaN-safe comparison. Signature changed from `frames: Vec` to `mut frames: Vec` (no external ripple — callers pass owned Vecs). |
+| 6 | EDGE-2: Minimum window length of 2 is useless | CMDL(3 \| 1, 2, 0) | Trivial | `segmentation_solver.rs` | Raised `min_window` default from 2 to 4. Updated `clamp_even()` floor from 2 to 4. Updated one test assertion. |
+| 7 | EDGE-3: No warning for enormous zero-padded FFT sizes | CMDL(2 \| 1, 1, 0) | Trivial | `callbacks_file.rs` | Added `eprintln!` warning when estimated peak FFT buffer memory exceeds 256 MB (computed from `n_fft * cores * 8 bytes`). |
+
+**Category 1 actual effort band: Trivial** (all items T=2 or T=3, total=15, avg=2.1)
 
 ### Category 2: Idle/Polling Overhead
-- **Items:** 2
-- **Estimated Difficulty:** Trivial–Easy
+- **Items:** 2 (1 fixed, 1 assessed as not worth changing)
+- **Estimated Difficulty:** Trivial
+- **Category CMDL Total:** 3 (one real fix)
 - **Description:** Wasted CPU cycles when the application is idle (no file loaded, no playback). The 16ms poll timer runs unconditionally, and ViewState is cloned every draw frame even during playback.
-- **Why this difficulty:** The timer fix is adding an early-return condition check. The ViewState clone is a minor refactor to use references instead of cloning.
-- **Status:** NOT STARTED
+- **Why this difficulty:** The timer fix is adding an early-return condition check. The ViewState clone was assessed and found to be ~200 bytes per frame — not worth the refactoring complexity.
+- **Status:** COMPLETE
+
+#### Items (sorted by CMDL T, easiest first):
+
+| # | Issue | CMDL | Band | Files Changed | What Was Done |
+|---|-------|------|------|---------------|---------------|
+| 1 | PERF-9: 16ms poll timer runs when idle | CMDL(3 \| 1, 2, 0) | Trivial | `main_fft.rs` | Added `is_idle` check (no audio loaded AND not processing). When idle, skips `update_info()` and scrollbar sync. Worker message polling still runs so FFT completion is never missed. |
+| 2 | PERF-10: ViewState cloned every draw frame | — | N/A | — | **Not fixed.** Assessed the actual cost: ViewState contains a few floats and a 7-element `Vec<GradientStop>`. Total clone is ~200 bytes. At 60 FPS this is 12 KB/s — negligible. The clone is necessary because `spec_renderer.draw(&mut self)` conflicts with an immutable borrow of `st.view`. Eliminating it would require unsafe code or a major refactor of the renderer API for no measurable gain. |
+
+**Category 2 actual effort band: Trivial** (T=3 for the one real fix)
 
 ### Category 3: Data Correctness
 - **Items:** 4
@@ -118,8 +143,8 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 
 | # | Category                         | Items | Est. Band        | Status      |
 |---|----------------------------------|-------|------------------|-------------|
-| 1 | Input Validation & Edge Cases    | 7     | Trivial–Easy     | NOT STARTED |
-| 2 | Idle/Polling Overhead            | 2     | Trivial–Easy     | NOT STARTED |
+| 1 | Input Validation & Edge Cases    | 7     | Trivial (avg T=2.1) | **COMPLETE** |
+| 2 | Idle/Polling Overhead            | 2     | Trivial (T=3)    | **COMPLETE** |
 | 3 | Data Correctness                 | 4     | Easy–Moderate    | NOT STARTED |
 | 4 | Error Handling & Resilience      | 4     | Easy–Moderate    | NOT STARTED |
 | 5 | Audio Playback                   | 3     | Easy–Moderate    | NOT STARTED |

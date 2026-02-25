@@ -1,9 +1,9 @@
-use rayon::prelude::*;
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
+use rayon::prelude::*;
 
-use crate::data::{Spectrogram, ViewState};
 use super::color_lut::ColorLUT;
+use crate::data::{Spectrogram, ViewState};
 
 pub struct SpectrogramRenderer {
     color_lut: ColorLUT,
@@ -31,7 +31,13 @@ impl SpectrogramRenderer {
     }
 
     pub fn update_lut(&mut self, view: &ViewState) {
-        if self.color_lut.set_params(view.threshold_db, view.db_ceiling, view.brightness, view.gamma, view.colormap) {
+        if self.color_lut.set_params(
+            view.threshold_db,
+            view.db_ceiling,
+            view.brightness,
+            view.gamma,
+            view.colormap,
+        ) {
             self.cache_valid = false;
         }
         if self.color_lut.set_custom_stops(&view.custom_gradient) {
@@ -41,30 +47,58 @@ impl SpectrogramRenderer {
 
     fn view_hash(view: &ViewState, proc_time_min: f64, proc_time_max: f64, w: i32, h: i32) -> u64 {
         let mut hash: u64 = 0;
-        hash = hash.wrapping_mul(31).wrapping_add((view.freq_min_hz * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.freq_max_hz * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.time_min_sec * 10000.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.time_max_sec * 10000.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.freq_min_hz * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.freq_max_hz * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.time_min_sec * 10000.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.time_max_sec * 10000.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add(match view.freq_scale {
             crate::data::FreqScale::Linear => 0,
             crate::data::FreqScale::Log => 1,
             crate::data::FreqScale::Power(p) => (p * 10000.0) as u64 + 2,
         });
-        hash = hash.wrapping_mul(31).wrapping_add((view.threshold_db * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.db_ceiling * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.brightness * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.gamma * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.threshold_db * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.db_ceiling * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.brightness * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.gamma * 100.0) as u64);
         hash = hash.wrapping_mul(31).wrapping_add(view.colormap as u64);
         hash = hash.wrapping_mul(31).wrapping_add(w as u64);
         hash = hash.wrapping_mul(31).wrapping_add(h as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((proc_time_min * 10000.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((proc_time_max * 10000.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(view.recon_freq_count as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_min_hz * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add((view.recon_freq_max_hz * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((proc_time_min * 10000.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((proc_time_max * 10000.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add(view.recon_freq_count as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.recon_freq_min_hz * 100.0) as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add((view.recon_freq_max_hz * 100.0) as u64);
         // Include custom gradient in hash
         for stop in &view.custom_gradient {
-            hash = hash.wrapping_mul(31).wrapping_add((stop.position * 10000.0) as u64);
+            hash = hash
+                .wrapping_mul(31)
+                .wrapping_add((stop.position * 10000.0) as u64);
             hash = hash.wrapping_mul(31).wrapping_add((stop.r * 255.0) as u64);
             hash = hash.wrapping_mul(31).wrapping_add((stop.g * 255.0) as u64);
             hash = hash.wrapping_mul(31).wrapping_add((stop.b * 255.0) as u64);
@@ -72,7 +106,14 @@ impl SpectrogramRenderer {
         hash
     }
 
-    fn needs_rebuild(&self, view: &ViewState, proc_time_min: f64, proc_time_max: f64, width: i32, height: i32) -> bool {
+    fn needs_rebuild(
+        &self,
+        view: &ViewState,
+        proc_time_min: f64,
+        proc_time_max: f64,
+        width: i32,
+        height: i32,
+    ) -> bool {
         if !self.cache_valid {
             return true;
         }
@@ -89,7 +130,10 @@ impl SpectrogramRenderer {
         view: &ViewState,
         proc_time_min: f64,
         proc_time_max: f64,
-        x: i32, y: i32, w: i32, h: i32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
     ) {
         if w <= 0 || h <= 0 {
             return;
@@ -102,7 +146,14 @@ impl SpectrogramRenderer {
 
         if self.needs_rebuild(view, proc_time_min, proc_time_max, w, h) {
             self.update_lut(view);
-            self.rebuild_cache(spec, view, proc_time_min, proc_time_max, w as usize, h as usize);
+            self.rebuild_cache(
+                spec,
+                view,
+                proc_time_min,
+                proc_time_max,
+                w as usize,
+                h as usize,
+            );
             self.last_widget_size = (w, h);
             self.last_view_hash = Self::view_hash(view, proc_time_min, proc_time_max, w, h);
             self.cache_valid = true;
@@ -146,9 +197,13 @@ impl SpectrogramRenderer {
         let freq_max = view.recon_freq_max_hz;
         let freq_count = view.recon_freq_count;
 
-        let active_bins: Vec<Vec<bool>> = spec.frames.par_iter()
+        let active_bins: Vec<Vec<bool>> = spec
+            .frames
+            .par_iter()
             .map(|frame| {
-                let mut bin_mags: Vec<(usize, f32)> = frame.magnitudes.iter()
+                let mut bin_mags: Vec<(usize, f32)> = frame
+                    .magnitudes
+                    .iter()
                     .zip(frame.frequencies.iter())
                     .enumerate()
                     .filter_map(|(i, (&mag, &freq))| {
@@ -240,7 +295,8 @@ impl SpectrogramRenderer {
                         row[idx + 2] = b;
                     } else {
                         // Grayed out: desaturate and dim to ~35%
-                        let gray = ((r as f32 * 0.3 + g as f32 * 0.59 + b as f32 * 0.11) * 0.35) as u8;
+                        let gray =
+                            ((r as f32 * 0.3 + g as f32 * 0.59 + b as f32 * 0.11) * 0.35) as u8;
                         row[idx] = gray;
                         row[idx + 1] = gray;
                         row[idx + 2] = gray;
@@ -263,7 +319,6 @@ impl SpectrogramRenderer {
             }
         }
     }
-
 }
 
 impl Default for SpectrogramRenderer {

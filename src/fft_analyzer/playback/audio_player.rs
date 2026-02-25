@@ -1,4 +1,4 @@
-use miniaudio::{DeviceConfig, DeviceType, Format, Device};
+use miniaudio::{Device, DeviceConfig, DeviceType, Format};
 use std::sync::{Arc, Mutex};
 
 use crate::data::AudioData;
@@ -107,7 +107,8 @@ impl AudioPlayer {
         let device = Device::new(None, &config)
             .map_err(|e| anyhow::anyhow!("Failed to create audio device: {:?}", e))?;
 
-        device.start()
+        device
+            .start()
             .map_err(|e| anyhow::anyhow!("Failed to start audio device: {:?}", e))?;
 
         self.device = Some(device);

@@ -1,4 +1,4 @@
-use crate::data::{ColormapId, GradientStop, eval_gradient};
+use crate::data::{eval_gradient, ColormapId, GradientStop};
 
 const LUT_SIZE: usize = 1024;
 
@@ -14,7 +14,13 @@ pub struct ColorLUT {
 }
 
 impl ColorLUT {
-    pub fn new(threshold_db: f32, db_ceiling: f32, brightness: f32, gamma: f32, colormap: ColormapId) -> Self {
+    pub fn new(
+        threshold_db: f32,
+        db_ceiling: f32,
+        brightness: f32,
+        gamma: f32,
+        colormap: ColormapId,
+    ) -> Self {
         let mut lut = Self {
             table: vec![(0, 0, 0); LUT_SIZE],
             threshold_db: threshold_db.clamp(-200.0, 0.0),
@@ -42,7 +48,14 @@ impl ColorLUT {
         }
     }
 
-    pub fn set_params(&mut self, threshold_db: f32, db_ceiling: f32, brightness: f32, gamma: f32, colormap: ColormapId) -> bool {
+    pub fn set_params(
+        &mut self,
+        threshold_db: f32,
+        db_ceiling: f32,
+        brightness: f32,
+        gamma: f32,
+        colormap: ColormapId,
+    ) -> bool {
         let new_threshold = threshold_db.clamp(-200.0, 0.0);
         let new_ceiling = db_ceiling.clamp(-200.0, 0.0);
         let new_brightness = brightness.clamp(0.1, 3.0);
@@ -69,7 +82,11 @@ impl ColorLUT {
     /// Update the custom gradient stops. Returns true if the LUT was rebuilt.
     pub fn set_custom_stops(&mut self, stops: &[GradientStop]) -> bool {
         if self.custom_stops.len() != stops.len()
-            || self.custom_stops.iter().zip(stops.iter()).any(|(a, b)| a != b)
+            || self
+                .custom_stops
+                .iter()
+                .zip(stops.iter())
+                .any(|(a, b)| a != b)
         {
             self.custom_stops = stops.to_vec();
             if self.colormap == ColormapId::Custom {
@@ -253,7 +270,6 @@ impl ColorLUT {
             )
         }
     }
-
 }
 
 impl Default for ColorLUT {

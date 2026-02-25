@@ -91,6 +91,7 @@ pub struct Widgets {
     pub btn_pause: Button,
     pub btn_stop: Button,
     pub scrub_slider: HorSlider,
+    pub cursor_readout: Frame,
     pub lbl_time: Frame,
     pub repeat_choice: Choice,
     pub status_fft: MultilineOutput,
@@ -832,10 +833,29 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     time_zoom_row.end();
     right.fixed(&time_zoom_row, 20);
 
-    // ── Transport bar ──
+    // ── Scrubber row (full-width playback position slider) ──
+    let mut scrub_row = Flex::default().row();
+    scrub_row.set_color(theme::color(theme::BG_PANEL));
+    right.fixed(&scrub_row, 18);
+
+    let mut scrub_slider = HorSlider::default();
+    scrub_slider.set_minimum(0.0);
+    scrub_slider.set_maximum(1.0);
+    scrub_slider.set_value(0.0);
+    scrub_slider.set_color(theme::color(theme::BG_WIDGET));
+    scrub_slider.set_selection_color(theme::color(theme::ACCENT_RED));
+    scrub_slider.deactivate();
+    set_tooltip(
+        &mut scrub_slider,
+        "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.",
+    );
+
+    scrub_row.end();
+
+    // ── Transport controls row (buttons | cursor readout | time | repeat) ──
     let mut transport_row = Flex::default().row();
     transport_row.set_color(theme::color(theme::BG_PANEL));
-    right.fixed(&transport_row, 32);
+    right.fixed(&transport_row, 28);
 
     let mut btn_play = Button::default().with_label("@>");
     btn_play.set_color(theme::color(theme::BG_WIDGET));
@@ -858,23 +878,21 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     set_tooltip(&mut btn_stop, "Stop playback and reset to start.");
     transport_row.fixed(&btn_stop, 36);
 
-    // Scrub slider
-    let mut scrub_slider = HorSlider::default();
-    scrub_slider.set_minimum(0.0);
-    scrub_slider.set_maximum(1.0);
-    scrub_slider.set_value(0.0);
-    scrub_slider.set_color(theme::color(theme::BG_WIDGET));
-    scrub_slider.set_selection_color(theme::color(theme::ACCENT_RED));
-    scrub_slider.deactivate();
-    set_tooltip(
-        &mut scrub_slider,
-        "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.",
-    );
+    // Flexible spacer pushes everything after it to the right
+    Frame::default();
+
+    // Cursor readout — shows freq/dB/time under mouse on spectrogram.
+    // Takes remaining flex space; text is right-aligned to sit flush
+    // against lbl_time.
+    let mut cursor_readout = Frame::default();
+    cursor_readout.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    cursor_readout.set_label_size(10);
+    cursor_readout.set_align(Align::Inside | Align::Right);
 
     let mut lbl_time = Frame::default().with_label("L 0:00.00 / 0:00.00\nG 0:00.00");
     lbl_time.set_label_color(theme::color(theme::TEXT_SECONDARY));
     lbl_time.set_label_size(10);
-    lbl_time.set_align(Align::Inside | Align::Left);
+    lbl_time.set_align(Align::Inside | Align::Right);
     transport_row.fixed(&lbl_time, 170);
 
     let mut repeat_choice = Choice::default();
@@ -983,6 +1001,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         btn_pause,
         btn_stop,
         scrub_slider,
+        cursor_readout,
         lbl_time,
         repeat_choice,
         status_fft,

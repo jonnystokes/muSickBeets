@@ -45,6 +45,10 @@ pub struct AppState {
     pub freq_zoom_factor: f32,
     pub mouse_zoom_factor: f32,
 
+    // When true: Alt+scroll zooms time, Alt+Ctrl+scroll zooms frequency
+    // When false (default): Alt+scroll zooms frequency, Alt+Ctrl+scroll zooms time
+    pub swap_zoom_axes: bool,
+
     // Audio normalization settings
     pub normalize_audio: bool,
     pub normalize_peak: f32,
@@ -76,6 +80,7 @@ impl AppState {
             time_zoom_factor: 1.5,
             freq_zoom_factor: 1.5,
             mouse_zoom_factor: 1.2,
+            swap_zoom_axes: false,
 
             normalize_audio: true,
             normalize_peak: 0.97,

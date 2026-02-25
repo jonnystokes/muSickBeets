@@ -15,7 +15,7 @@ pub struct Spectrogram {
 }
 
 impl Spectrogram {
-    pub fn from_frames(frames: Vec<FftFrame>) -> Self {
+    pub fn from_frames(mut frames: Vec<FftFrame>) -> Self {
         if frames.is_empty() {
             return Self {
                 frames: Vec::new(),
@@ -24,6 +24,16 @@ impl Spectrogram {
                 max_time: 0.0,
             };
         }
+
+        // Defensive sort: guarantee frames are ordered by time.
+        // In normal usage frames arrive pre-sorted (rayon preserves index order,
+        // CSV import uses BTreeMap), but from_frames is a public API and callers
+        // should not be required to uphold a sorting invariant.
+        frames.sort_by(|a, b| {
+            a.time_seconds
+                .partial_cmp(&b.time_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let min_time = frames.first().unwrap().time_seconds;
         let max_time = frames.last().unwrap().time_seconds;
@@ -54,26 +64,31 @@ impl Spectrogram {
 
     pub fn bin_at_freq(&self, freq_hz: f32) -> Option<usize> {
         let frame = self.frames.first()?;
-        frame.frequencies
-            .iter()
-            .position(|&f| f >= freq_hz)
+        frame.frequencies.iter().position(|&f| f >= freq_hz)
     }
 
     /// Find the maximum magnitude across all frames and bins
     pub fn max_magnitude(&self) -> f32 {
-        self.frames.iter()
+        self.frames
+            .iter()
             .flat_map(|f| f.magnitudes.iter())
             .copied()
             .fold(0.0f32, f32::max)
     }
 
-    /// Find the frame index closest to the given time
+    /// Find the frame index closest to the given time.
+    /// Returns None for empty spectrograms or NaN input.
     pub fn frame_at_time(&self, time_seconds: f64) -> Option<usize> {
-        if self.frames.is_empty() {
+        if self.frames.is_empty() || time_seconds.is_nan() {
             return None;
         }
-        let idx = self.frames
-            .binary_search_by(|f| f.time_seconds.partial_cmp(&time_seconds).unwrap())
+        let idx = self
+            .frames
+            .binary_search_by(|f| {
+                f.time_seconds
+                    .partial_cmp(&time_seconds)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .unwrap_or_else(|i| i.min(self.frames.len() - 1));
         Some(idx)
     }
@@ -84,4 +99,3 @@ impl Default for Spectrogram {
         Self::from_frames(Vec::new())
     }
 }
-

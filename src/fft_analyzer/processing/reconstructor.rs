@@ -53,7 +53,9 @@ impl Reconstructor {
                 // First, determine which bins to include based on frequency range
                 let mut bin_mags: Vec<(usize, f32)> = Vec::new();
 
-                for (i, (&mag, &freq)) in frame.magnitudes.iter()
+                for (i, (&mag, &freq)) in frame
+                    .magnitudes
+                    .iter()
                     .zip(frame.frequencies.iter())
                     .enumerate()
                 {
@@ -68,10 +70,8 @@ impl Reconstructor {
                 // Sort by magnitude descending, keep only top N
                 bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
                 let keep_count = view.recon_freq_count.min(bin_mags.len());
-                let kept_bins: Vec<usize> = bin_mags[..keep_count]
-                    .iter()
-                    .map(|&(idx, _)| idx)
-                    .collect();
+                let kept_bins: Vec<usize> =
+                    bin_mags[..keep_count].iter().map(|&(idx, _)| idx).collect();
 
                 // Zero the spectrum, then fill in kept bins
                 for s in spectrum.iter_mut() {
@@ -100,7 +100,8 @@ impl Reconstructor {
 
                 // Apply synthesis window to first window_len samples only
                 // (discard zero-padding extension from IFFT output)
-                let windowed: Vec<f32> = time_buffer.iter()
+                let windowed: Vec<f32> = time_buffer
+                    .iter()
                     .take(window_len)
                     .zip(window.iter())
                     .map(|(&s, &w)| s * w)

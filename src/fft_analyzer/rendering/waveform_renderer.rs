@@ -5,10 +5,10 @@ use crate::data::ViewState;
 
 /// Colors for the dark theme waveform
 const BG_COLOR: (u8, u8, u8) = (0x1e, 0x1e, 0x2e);
-const WAVE_COLOR: (u8, u8, u8) = (0x89, 0xb4, 0xfa);  // accent blue
-const DOT_COLOR: (u8, u8, u8) = (0xf9, 0xe2, 0xaf);   // warm yellow for sample dots
+const WAVE_COLOR: (u8, u8, u8) = (0x89, 0xb4, 0xfa); // accent blue
+const DOT_COLOR: (u8, u8, u8) = (0xf9, 0xe2, 0xaf); // warm yellow for sample dots
 const CENTER_LINE_COLOR: (u8, u8, u8) = (0x45, 0x47, 0x5a);
-const CURSOR_COLOR: (u8, u8, u8) = (0xf3, 0x8b, 0xa8);  // red-pink
+const CURSOR_COLOR: (u8, u8, u8) = (0xf3, 0x8b, 0xa8); // red-pink
 
 pub struct WaveformRenderer {
     cached_image: Option<RgbImage>,
@@ -33,12 +33,25 @@ impl WaveformRenderer {
         self.cache_valid = false;
     }
 
-    fn view_hash(view: &ViewState, sample_count: usize, audio_time_start: f64, audio_time_end: f64) -> u64 {
+    fn view_hash(
+        view: &ViewState,
+        sample_count: usize,
+        audio_time_start: f64,
+        audio_time_end: f64,
+    ) -> u64 {
         let mut h: u64 = 0;
-        h = h.wrapping_mul(31).wrapping_add((view.time_min_sec * 10000.0) as u64);
-        h = h.wrapping_mul(31).wrapping_add((view.time_max_sec * 10000.0) as u64);
-        h = h.wrapping_mul(31).wrapping_add((audio_time_start * 10000.0) as u64);
-        h = h.wrapping_mul(31).wrapping_add((audio_time_end * 10000.0) as u64);
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add((view.time_min_sec * 10000.0) as u64);
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add((view.time_max_sec * 10000.0) as u64);
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add((audio_time_start * 10000.0) as u64);
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add((audio_time_end * 10000.0) as u64);
         h = h.wrapping_mul(31).wrapping_add(sample_count as u64);
         h
     }
@@ -54,7 +67,10 @@ impl WaveformRenderer {
         audio_time_start: f64,
         view: &ViewState,
         cursor_x: Option<i32>,
-        x: i32, y: i32, w: i32, h: i32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
     ) {
         if w <= 0 || h <= 0 {
             return;
@@ -67,12 +83,19 @@ impl WaveformRenderer {
 
         let audio_time_end = audio_time_start + samples.len() as f64 / sample_rate.max(1) as f64;
         let hash = Self::view_hash(view, samples.len(), audio_time_start, audio_time_end);
-        let needs_rebuild = !self.cache_valid
-            || self.last_size != (w, h)
-            || self.last_view_hash != hash;
+        let needs_rebuild =
+            !self.cache_valid || self.last_size != (w, h) || self.last_view_hash != hash;
 
         if needs_rebuild {
-            self.rebuild_cache(samples, sample_rate, audio_time_start, audio_time_end, view, w as usize, h as usize);
+            self.rebuild_cache(
+                samples,
+                sample_rate,
+                audio_time_start,
+                audio_time_end,
+                view,
+                w as usize,
+                h as usize,
+            );
             self.last_size = (w, h);
             self.last_view_hash = hash;
             self.cache_valid = true;
@@ -87,7 +110,9 @@ impl WaveformRenderer {
             if cx >= 0 && cx < w {
                 use fltk::draw;
                 draw::set_draw_color(fltk::enums::Color::from_rgb(
-                    CURSOR_COLOR.0, CURSOR_COLOR.1, CURSOR_COLOR.2,
+                    CURSOR_COLOR.0,
+                    CURSOR_COLOR.1,
+                    CURSOR_COLOR.2,
                 ));
                 draw::draw_line(x + cx, y, x + cx, y + h);
             }
@@ -156,11 +181,30 @@ impl WaveformRenderer {
 
         if samples_per_pixel > 4.0 {
             // Zoomed out: min/max peak rendering for each pixel column
-            self.draw_peaks(samples, sr, audio_time_start, audio_time_end, view, width, height, center_y);
+            self.draw_peaks(
+                samples,
+                sr,
+                audio_time_start,
+                audio_time_end,
+                view,
+                width,
+                height,
+                center_y,
+            );
         } else {
             // Zoomed in: draw individual sample lines, with dots when very zoomed in
             let show_dots = samples_per_pixel < 0.33; // >3px per sample
-            self.draw_samples(samples, sr, audio_time_start, audio_time_end, view, width, height, center_y, show_dots);
+            self.draw_samples(
+                samples,
+                sr,
+                audio_time_start,
+                audio_time_end,
+                view,
+                width,
+                height,
+                center_y,
+                show_dots,
+            );
         }
 
         self.finalize_image(width, height);
@@ -203,8 +247,12 @@ impl WaveformRenderer {
             let mut min_val = f32::MAX;
             let mut max_val = f32::MIN;
             for &s in &samples[s0..s1] {
-                if s < min_val { min_val = s; }
-                if s > max_val { max_val = s; }
+                if s < min_val {
+                    min_val = s;
+                }
+                if s > max_val {
+                    max_val = s;
+                }
             }
 
             // Map -1..1 to pixel Y (inverted: top = positive)
@@ -247,7 +295,8 @@ impl WaveformRenderer {
         let last_sample = if view_end >= audio_time_end {
             total_samples.saturating_sub(1)
         } else {
-            (((view_end - audio_time_start) * sr).ceil() as usize).min(total_samples.saturating_sub(1))
+            (((view_end - audio_time_start) * sr).ceil() as usize)
+                .min(total_samples.saturating_sub(1))
         };
 
         // Add 1-sample margin on each side for connecting lines at edges
@@ -266,9 +315,8 @@ impl WaveformRenderer {
         };
 
         // Convert sample value to pixel y position
-        let val_to_py = |val: f32| -> i32 {
-            (center_y as f32 - val.clamp(-1.0, 1.0) * center_y as f32) as i32
-        };
+        let val_to_py =
+            |val: f32| -> i32 { (center_y as f32 - val.clamp(-1.0, 1.0) * center_y as f32) as i32 };
 
         // Draw connecting lines between consecutive samples
         for i in first_sample..last_sample {
@@ -277,10 +325,7 @@ impl WaveformRenderer {
             let py0 = val_to_py(samples[i]);
             let py1 = val_to_py(samples[i + 1]);
 
-            self.draw_line(
-                px0 as i32, py0, px1 as i32, py1,
-                width, height, WAVE_COLOR,
-            );
+            self.draw_line(px0 as i32, py0, px1 as i32, py1, width, height, WAVE_COLOR);
         }
 
         // Draw dots at sample positions when very zoomed in
@@ -296,7 +341,11 @@ impl WaveformRenderer {
                     for dx in -1..=1i32 {
                         let dx_pos = ipx + dx;
                         let dy_pos = ipy + dy;
-                        if dx_pos >= 0 && (dx_pos as usize) < width && dy_pos >= 0 && (dy_pos as usize) < height {
+                        if dx_pos >= 0
+                            && (dx_pos as usize) < width
+                            && dy_pos >= 0
+                            && (dy_pos as usize) < height
+                        {
                             self.set_pixel(dx_pos as usize, dy_pos as usize, width, DOT_COLOR);
                         }
                     }
@@ -306,7 +355,16 @@ impl WaveformRenderer {
     }
 
     /// Bresenham's line algorithm for pixel buffer
-    fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: usize, height: usize, color: (u8, u8, u8)) {
+    fn draw_line(
+        &mut self,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        width: usize,
+        height: usize,
+        color: (u8, u8, u8),
+    ) {
         let mut x0 = x0;
         let mut y0 = y0;
         let dx = (x1 - x0).abs();
@@ -319,15 +377,21 @@ impl WaveformRenderer {
             if x0 >= 0 && (x0 as usize) < width && y0 >= 0 && (y0 as usize) < height {
                 self.set_pixel(x0 as usize, y0 as usize, width, color);
             }
-            if x0 == x1 && y0 == y1 { break; }
+            if x0 == x1 && y0 == y1 {
+                break;
+            }
             let e2 = 2 * err;
             if e2 >= dy {
-                if x0 == x1 { break; }
+                if x0 == x1 {
+                    break;
+                }
                 err += dy;
                 x0 += sx;
             }
             if e2 <= dx {
-                if y0 == y1 { break; }
+                if y0 == y1 {
+                    break;
+                }
                 err += dx;
                 y0 += sy;
             }

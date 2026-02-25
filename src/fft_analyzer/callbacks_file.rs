@@ -537,6 +537,20 @@ pub fn setup_rerun_callback(
             (st.audio_data.clone().unwrap(), fft_params)
         };
 
+        // Warn if zero-padded FFT size is very large (memory estimate).
+        // Each rayon thread allocates ~2 buffers of n_fft f32s.
+        let n_fft = params.n_fft_padded();
+        let per_thread_bytes = n_fft * 4 * 2; // input + output buffers
+        let est_cores = rayon::current_num_threads();
+        let est_peak_mb = (per_thread_bytes * est_cores) / (1024 * 1024);
+        if est_peak_mb > 256 {
+            eprintln!(
+                "[FFT] Warning: large zero-padded FFT (n_fft={}, {}x pad). \
+                 Estimated peak FFT buffer memory: ~{} MB across {} threads.",
+                n_fft, params.zero_pad_factor, est_peak_mb, est_cores,
+            );
+        }
+
         (update_info.borrow_mut())();
         (update_seg_label.borrow_mut())();
         status_bar.set_value("Processing FFT + Reconstruct...");

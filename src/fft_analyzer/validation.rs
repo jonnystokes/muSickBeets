@@ -4,7 +4,7 @@ use std::rc::Rc;
 use fltk::{
     button::Button,
     enums::{Event, Key},
-    input::{Input, FloatInput},
+    input::{FloatInput, Input},
     prelude::*,
 };
 
@@ -20,10 +20,17 @@ use fltk::{
 
 pub fn is_valid_float_input(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
-    if digits.is_empty() { return true; }
-    if digits.starts_with('.') { return false; }
+    if digits.is_empty() {
+        return true;
+    }
+    if digits.starts_with('.') {
+        return false;
+    }
     let parts: Vec<&str> = digits.split('.').collect();
-    parts.len() <= 2 && parts.iter().all(|p| p.is_empty() || p.chars().all(|c| c.is_ascii_digit()))
+    parts.len() <= 2
+        && parts
+            .iter()
+            .all(|p| p.is_empty() || p.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub fn is_valid_uint_input(text: &str) -> bool {
@@ -106,7 +113,10 @@ pub fn attach_float_validation_with_recompute(input: &mut FloatInput, btn_rerun:
         if fltk::app::event_key() == Key::from_char(' ') {
             return match ev {
                 Event::KeyDown | Event::Shortcut => true,
-                Event::KeyUp => { btn.do_callback(); true }
+                Event::KeyUp => {
+                    btn.do_callback();
+                    true
+                }
                 _ => false,
             };
         }
@@ -114,7 +124,9 @@ pub fn attach_float_validation_with_recompute(input: &mut FloatInput, btn_rerun:
             Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
                 let current = field.value();
                 let lv = last_valid.borrow().clone();
-                if current == lv { return false; }
+                if current == lv {
+                    return false;
+                }
                 let minus_just_added = current.contains('-') && !lv.contains('-');
                 let typed_at_start = field.position() == 1;
                 if is_valid_float_input(&current) && !(minus_just_added && !typed_at_start) {
@@ -139,7 +151,10 @@ pub fn attach_uint_validation_with_recompute(input: &mut Input, btn_rerun: &Butt
         if fltk::app::event_key() == Key::from_char(' ') {
             return match ev {
                 Event::KeyDown | Event::Shortcut => true,
-                Event::KeyUp => { btn.do_callback(); true }
+                Event::KeyUp => {
+                    btn.do_callback();
+                    true
+                }
                 _ => false,
             };
         }
@@ -147,7 +162,9 @@ pub fn attach_uint_validation_with_recompute(input: &mut Input, btn_rerun: &Butt
             Event::KeyUp | Event::Paste | Event::Shortcut | Event::Unfocus => {
                 let current = field.value();
                 let lv = last_valid.borrow().clone();
-                if current == lv { return false; }
+                if current == lv {
+                    return false;
+                }
                 if is_valid_uint_input(&current) {
                     *last_valid.borrow_mut() = current;
                 } else {
@@ -164,13 +181,25 @@ pub fn attach_uint_validation_with_recompute(input: &mut Input, btn_rerun: &Butt
 
 // Helper: parse a field value, treating empty as 0
 pub fn parse_or_zero_f64(s: &str) -> f64 {
-    if s.is_empty() { 0.0 } else { s.parse().unwrap_or(0.0) }
+    if s.is_empty() {
+        0.0
+    } else {
+        s.parse().unwrap_or(0.0)
+    }
 }
 
 pub fn parse_or_zero_usize(s: &str) -> usize {
-    if s.is_empty() { 0 } else { s.parse().unwrap_or(0) }
+    if s.is_empty() {
+        0
+    } else {
+        s.parse().unwrap_or(0)
+    }
 }
 
 pub fn parse_or_zero_f32(s: &str) -> f32 {
-    if s.is_empty() { 0.0 } else { s.parse().unwrap_or(0.0) }
+    if s.is_empty() {
+        0.0
+    } else {
+        s.parse().unwrap_or(0.0)
+    }
 }

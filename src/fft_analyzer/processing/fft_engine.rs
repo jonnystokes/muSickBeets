@@ -2,7 +2,7 @@ use rayon::prelude::*;
 use realfft::RealFftPlanner;
 use std::sync::Arc;
 
-use crate::data::{AudioData, FftParams, FftFrame, Spectrogram};
+use crate::data::{AudioData, FftFrame, FftParams, Spectrogram};
 
 pub struct FftEngine;
 
@@ -77,7 +77,11 @@ impl FftEngine {
                     frequencies.push(bin_idx as f32 * freq_resolution);
 
                     // Normalize magnitude by FFT size and scale by 2 for non-DC/Nyquist bins
-                    let amplitude_scale = if bin_idx == 0 || bin_idx == num_bins - 1 { 1.0 } else { 2.0 };
+                    let amplitude_scale = if bin_idx == 0 || bin_idx == num_bins - 1 {
+                        1.0
+                    } else {
+                        2.0
+                    };
                     magnitudes.push((complex_val.norm() / n_fft as f32) * amplitude_scale);
 
                     phases.push(complex_val.arg());
@@ -95,4 +99,3 @@ impl FftEngine {
         Spectrogram::from_frames(frames)
     }
 }
-

@@ -9,7 +9,12 @@ pub struct GradientStop {
 
 impl GradientStop {
     pub fn new(position: f32, r: f32, g: f32, b: f32) -> Self {
-        Self { position: position.clamp(0.0, 1.0), r, g, b }
+        Self {
+            position: position.clamp(0.0, 1.0),
+            r,
+            g,
+            b,
+        }
     }
 }
 
@@ -49,7 +54,11 @@ pub fn eval_gradient(stops: &[GradientStop], t: f32) -> (f32, f32, f32) {
     let s0 = &stops[idx];
     let s1 = &stops[(idx + 1).min(stops.len() - 1)];
     let seg_len = s1.position - s0.position;
-    let seg_t = if seg_len.abs() < 1e-6 { 0.0 } else { ((t - s0.position) / seg_len).clamp(0.0, 1.0) };
+    let seg_t = if seg_len.abs() < 1e-6 {
+        0.0
+    } else {
+        ((t - s0.position) / seg_len).clamp(0.0, 1.0)
+    };
     (
         s0.r + (s1.r - s0.r) * seg_t,
         s0.g + (s1.g - s0.g) * seg_t,
@@ -177,12 +186,8 @@ impl ViewState {
         let max = self.freq_max_hz.max(min + 1.0);
 
         match self.freq_scale {
-            FreqScale::Linear => {
-                min + (max - min) * t
-            }
-            FreqScale::Log => {
-                min * (max / min).powf(t)
-            }
+            FreqScale::Linear => min + (max - min) * t,
+            FreqScale::Log => min * (max / min).powf(t),
             FreqScale::Power(power) => {
                 let p = power.clamp(0.0, 1.0);
                 if p <= 0.001 {
@@ -203,16 +208,16 @@ impl ViewState {
     pub fn freq_to_y(&self, freq_hz: f32) -> f32 {
         let min = self.freq_min_hz.max(1.0);
         let max = self.freq_max_hz.max(min + 1.0);
-        if freq_hz <= min { return 0.0; }
-        if freq_hz >= max { return 1.0; }
+        if freq_hz <= min {
+            return 0.0;
+        }
+        if freq_hz >= max {
+            return 1.0;
+        }
 
         match self.freq_scale {
-            FreqScale::Linear => {
-                ((freq_hz - min) / (max - min)).clamp(0.0, 1.0)
-            }
-            FreqScale::Log => {
-                ((freq_hz / min).ln() / (max / min).ln()).clamp(0.0, 1.0)
-            }
+            FreqScale::Linear => ((freq_hz - min) / (max - min)).clamp(0.0, 1.0),
+            FreqScale::Log => ((freq_hz / min).ln() / (max / min).ln()).clamp(0.0, 1.0),
             FreqScale::Power(power) => {
                 let p = power.clamp(0.0, 1.0);
                 if p <= 0.001 {
@@ -248,12 +253,16 @@ impl ViewState {
     /// Map time in seconds to normalized t (0..1)
     pub fn time_to_x(&self, time_sec: f64) -> f64 {
         let range = self.time_max_sec - self.time_min_sec;
-        if range <= 0.0 { return 0.0; }
+        if range <= 0.0 {
+            return 0.0;
+        }
         ((time_sec - self.time_min_sec) / range).clamp(0.0, 1.0)
     }
 
     pub fn reset_zoom(&mut self) {
-        self.freq_min_hz = 0.0;
+        // Use 1.0 Hz (not 0.0) so stored value matches what log-scale rendering
+        // actually displays (y_to_freq/freq_to_y clamp min to 1.0 internally).
+        self.freq_min_hz = 1.0;
         self.freq_max_hz = self.data_freq_max_hz;
         self.time_min_sec = self.data_time_min_sec;
         self.time_max_sec = self.data_time_max_sec;

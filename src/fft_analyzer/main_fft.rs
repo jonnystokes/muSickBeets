@@ -5,6 +5,7 @@ mod callbacks_nav;
 mod callbacks_ui;
 mod csv_export;
 mod data;
+mod debug_flags;
 mod layout;
 mod playback;
 mod processing;
@@ -271,6 +272,7 @@ fn main() {
         st.time_zoom_factor = cfg.time_zoom_factor;
         st.freq_zoom_factor = cfg.freq_zoom_factor;
         st.mouse_zoom_factor = cfg.mouse_zoom_factor;
+        st.swap_zoom_axes = cfg.swap_zoom_axes;
         st.normalize_audio = cfg.normalize_audio;
         st.normalize_peak = cfg.normalize_peak;
         st.view.db_ceiling = cfg.db_ceiling;
@@ -344,66 +346,78 @@ fn main() {
         let mut last_y_gen: u64 = 0;
 
         app::add_timeout3(0.016, move |handle| {
-            (update_info.borrow_mut())();
-            // ── Sync scrollbars with view state ──
-            let cur_x_gen = x_scroll_gen.get();
-            let cur_y_gen = y_scroll_gen.get();
-            let x_user_active = cur_x_gen != last_x_gen;
-            let y_user_active = cur_y_gen != last_y_gen;
-            last_x_gen = cur_x_gen;
-            last_y_gen = cur_y_gen;
+            // Skip expensive per-tick work when idle: no audio loaded means
+            // no scrollbars to sync, no transport to update, no info to refresh.
+            // Worker messages (rx) are still polled so FFT completion is handled.
+            let is_idle = state
+                .try_borrow()
+                .map(|st| st.audio_data.is_none() && !st.is_processing)
+                .unwrap_or(false);
 
-            let scroll_data = if let Ok(st) = state.try_borrow() {
-                let data_time_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
-                let data_freq_min = 1.0_f32;
-                let data_freq_range = st.view.data_freq_max_hz - data_freq_min;
+            if !is_idle {
+                (update_info.borrow_mut())();
+            }
+            // ── Sync scrollbars with view state (skip when idle) ──
+            if !is_idle {
+                let cur_x_gen = x_scroll_gen.get();
+                let cur_y_gen = y_scroll_gen.get();
+                let x_user_active = cur_x_gen != last_x_gen;
+                let y_user_active = cur_y_gen != last_y_gen;
+                last_x_gen = cur_x_gen;
+                last_y_gen = cur_y_gen;
 
-                let x_data = if data_time_range > 0.001 {
-                    let vis_time = st.view.visible_time_range();
-                    let ratio = (vis_time / data_time_range).clamp(0.02, 1.0) as f32;
-                    let scroll_range = (data_time_range - vis_time).max(0.0);
-                    let frac = if scroll_range > 0.001 {
-                        ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range)
-                            .clamp(0.0, 1.0)
+                let scroll_data = if let Ok(st) = state.try_borrow() {
+                    let data_time_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
+                    let data_freq_min = 1.0_f32;
+                    let data_freq_range = st.view.data_freq_max_hz - data_freq_min;
+
+                    let x_data = if data_time_range > 0.001 {
+                        let vis_time = st.view.visible_time_range();
+                        let ratio = (vis_time / data_time_range).clamp(0.02, 1.0) as f32;
+                        let scroll_range = (data_time_range - vis_time).max(0.0);
+                        let frac = if scroll_range > 0.001 {
+                            ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range)
+                                .clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        Some((ratio, frac * 10000.0))
                     } else {
-                        0.0
+                        None
                     };
-                    Some((ratio, frac * 10000.0))
+
+                    let y_data = if data_freq_range > 1.0 {
+                        let vis_freq = st.view.visible_freq_range();
+                        let ratio = (vis_freq / data_freq_range).clamp(0.02, 1.0);
+                        let scroll_range = (data_freq_range - vis_freq).max(0.0);
+                        let frac = if scroll_range > 0.1 {
+                            ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0)
+                                as f64
+                        } else {
+                            0.0
+                        };
+                        Some((ratio, (1.0 - frac) * 10000.0))
+                    } else {
+                        None
+                    };
+
+                    Some((x_data, y_data))
                 } else {
                     None
                 };
 
-                let y_data = if data_freq_range > 1.0 {
-                    let vis_freq = st.view.visible_freq_range();
-                    let ratio = (vis_freq / data_freq_range).clamp(0.02, 1.0);
-                    let scroll_range = (data_freq_range - vis_freq).max(0.0);
-                    let frac = if scroll_range > 0.1 {
-                        ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0)
-                            as f64
-                    } else {
-                        0.0
-                    };
-                    Some((ratio, (1.0 - frac) * 10000.0))
-                } else {
-                    None
-                };
-
-                Some((x_data, y_data))
-            } else {
-                None
-            };
-
-            if let Some((x_data, y_data)) = scroll_data {
-                if let Some((sz, pos)) = x_data {
-                    x_scroll.set_slider_size(sz);
-                    if !x_user_active {
-                        x_scroll.set_value(pos);
+                if let Some((x_data, y_data)) = scroll_data {
+                    if let Some((sz, pos)) = x_data {
+                        x_scroll.set_slider_size(sz);
+                        if !x_user_active {
+                            x_scroll.set_value(pos);
+                        }
                     }
-                }
-                if let Some((sz, pos)) = y_data {
-                    y_scroll.set_slider_size(sz);
-                    if !y_user_active {
-                        y_scroll.set_value(pos);
+                    if let Some((sz, pos)) = y_data {
+                        y_scroll.set_slider_size(sz);
+                        if !y_user_active {
+                            y_scroll.set_value(pos);
+                        }
                     }
                 }
             }
