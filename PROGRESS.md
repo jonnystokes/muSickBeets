@@ -32,7 +32,7 @@ Full overhaul of FFT segmentation controls with bidirectional parameter solving.
 ### Segmentation Overhaul Features (Feb 2026)
 - [x] Resolution trade-off display (live multi-line info in ANALYSIS section)
 - [x] dB ceiling slider (DISPLAY section, auto-set from data, user-adjustable)
-- [x] Direct segment size input + presets (typed input + dropdown)
+- [x] Direct segment size input + presets (typed input + dropdown, +/- steps through presets)
 - [x] Zero-padding factor (1x/2x/4x/8x, full FFT pipeline integration)
 - [x] Hop size display (read-only, below overlap slider)
 
@@ -51,7 +51,6 @@ Full overhaul of FFT segmentation controls with bidirectional parameter solving.
 - [x] Volume reduction fix: reconstructor overlap-add normalization uses adaptive threshold
 - [x] Remove 64-sample minimum on segment size (now allows down to 4)
 - [x] Fix Save As Default button (SIDEBAR_INNER_H overflow from gradient widget)
-- [x] GTK file dialog freeze fix: disabled GTK/Zenity file dialogs, uses FLTK built-in chooser
 
 ### Lock to Active v2 (Feb 2026)
 - [x] Matches Home button behavior: snaps both time AND frequency to active range
@@ -73,24 +72,6 @@ Cross-referenced and deduplicated into CATEGORIZED_ISSUES.md (9 categories, 35 i
 - [x] **Category 2** -- Idle/Polling Overhead (2 items)
   - is_idle guard skipping update_info() and scrollbar sync when no audio loaded
   - ViewState clone assessed as not worth fixing (~200 bytes)
-- [x] **Category 3** -- Data Correctness (4 items)
-  - format_with_commas fixed for negative numbers
-  - CSV time key precision increased to {:.10}
-  - source_norm_gain stored in AppState to preserve original peak level
-  - Forward/inverse FFT magnitude scaling mismatch fixed in reconstructor
-- [x] **Category 4** -- Error Handling & Resilience (4 items)
-  - CSV import row 2 skip validates existence
-  - dbg_log! at all try_borrow_mut silent-return sites
-  - All 13 .lock().unwrap() replaced with lock_playback() helper (poisoned mutex safe)
-  - All 4 thread::spawn sites wrapped with catch_unwind, WorkerPanic message variant
-- [x] **Category 5** -- Audio Playback (3 items)
-  - Audio device recreated when sample rate changes
-  - Player uses Arc<Vec<f32>> for zero-copy sample sharing
-  - play_pending flag for auto-play after recompute
-- [x] **Category 6** -- UI Thread Blocking (4 items, 3 fixes)
-  - WAV loading moved to background thread (AudioLoaded message)
-  - WAV saving moved to background thread (WavSaved message)
-  - CSV export moved to background thread (CsvSaved message)
 - [x] **Infrastructure** -- Debug flags system
   - debug_flags.rs with toggleable CURSOR_DBG, FFT_DBG, PLAYBACK_DBG, RENDER_DBG
   - dbg_log! macro for conditional debug output
@@ -110,30 +91,16 @@ Cross-referenced and deduplicated into CATEGORIZED_ISSUES.md (9 categories, 35 i
 - [x] swap_zoom_axes setting (persisted in settings.ini) swaps Alt vs Alt+Ctrl zoom axes
 - [x] Pan step: 15% of visible range per tick; zoom uses mouse_zoom_factor setting
 
-### Segment Size Controls Overhaul (Feb 2026)
-- [x] Fixed root cause: target_segments_per_active one-way latch cleared on explicit user changes
-- [x] Removed +/- buttons (simplified to dropdown + text field)
-- [x] "Custom" dropdown selection now focuses text field
-- [x] Status feedback via msg_bar (top message area, color-coded) when solver adjusts values
-- [x] Added msg_bar widget to menu bar row (right of File/Analysis/Display menus)
-- [x] set_msg() helper with MsgLevel enum (Info/Warning/Error) for color-coded messages
-
-### Documentation Updates (Feb 2026)
-- [x] AGENTS.md: CallbackTrigger rules for text fields (NEVER use EnterKey)
-- [x] AGENTS.md: Sub-agent briefing preamble (LSP tools, Exa tools, tool effectiveness report)
-- [x] AGENTS.md: Harness detection (OpenCode vs Claude Code)
-- [x] CATEGORIZED_ISSUES.md: Session instructions (how-to-test + next-step on completion)
-- [x] CLAUDE.md synced to match AGENTS.md
-- [x] map.md updated with current line counts and architecture descriptions
-- [x] PROGRESS.md updated to reflect all completed work
-
 ---
 
 ## Active Work
 
 ### Code Review Issues (CATEGORIZED_ISSUES.md)
-- [x] Categories 1-6 complete
-- [x] Segment size controls overhaul complete
+- [x] Categories 1-2 complete. Remaining:
+- [ ] Category 3: Data Correctness (4 items)
+- [ ] Category 4: Error Handling & Resilience (4 items)
+- [ ] Category 5: Audio Playback (3 items)
+- [ ] Category 6: UI Thread Blocking (4 items)
 - [ ] Category 7: Memory Efficiency (2 items)
 - [ ] Category 8: Rendering Performance (5 items)
 - [ ] Category 9: FFT/Reconstruction Pipeline (4 items)
@@ -142,9 +109,12 @@ Cross-referenced and deduplicated into CATEGORIZED_ISSUES.md (9 categories, 35 i
 
 ## Backburner
 
+- [ ] File open freeze -- intermittent, debug logging in place but root cause not found
 - [ ] Analysis presets layer (transients, tonal, balanced)
 - [ ] Per-section reset-to-default (Analysis / Display / Reconstruction)
 - [ ] FFT Analyzer user guide (documentation.md is tracker-centric)
+- [ ] Update map.md line counts and architecture summaries after major refactors
+- [ ] Update README.md after this development stage
 
 ---
 
@@ -158,11 +128,6 @@ Cross-referenced and deduplicated into CATEGORIZED_ISSUES.md (9 categories, 35 i
 - Save As Default captures current AppState into Settings struct and writes INI
 - Custom gradient: Vec<GradientStop> in ViewState, piped through ColorLUT and SpectrogramRenderer
 - Settings file: `settings.ini` in working directory (created on first run)
-- Background work pattern: thread::spawn + mpsc::Sender<WorkerMessage> -> poll loop in main_fft.rs
-- Rc<RefCell<AppState>> is !Send — extract owned data, spawn with owned data, send result back
-- GTK file dialogs disabled (FnfcUsesGtk=false, FnfcUsesZenity=false) — uses FLTK built-in chooser
-- All text fields use CallbackTrigger::Changed (NEVER EnterKey — breaks validation/spacebar)
-- Segment size solver: target_segments_per_active cleared when user explicitly changes window_length
 
 ## Attribution
 - Spectrogram visualization and reconstruction inspired by [Audio-Experiments](https://github.com/SebLague/Audio-Experiments) by Sebastian Lague (MIT License)
