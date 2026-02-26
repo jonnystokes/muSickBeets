@@ -4,6 +4,13 @@
 **Scope:** All validated issues from all four AI reviews, deduplicated and verified against actual code.
 **Sort Order:** Easiest category first (by estimated total effort).
 
+## Session Instructions
+
+When marking a category or item COMPLETE, append a short block:
+
+- **How to test:** 1-3 sentences describing what the user should do to verify the fix works.
+- **Next step:** What comes after user confirms it's working (next category, next bug, etc).
+
 ---
 
 ## Difficulty Measurement System (COMPACTION-SAFE)
@@ -145,11 +152,22 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 **Category 5 actual effort band: Trivial–Easy** (T range 3–4, total=10, avg=3.3)
 
 ### Category 6: UI Thread Blocking
-- **Items:** 4
+- **Items:** 4 (3 fixes — items 2 and 4 share one fix)
 - **Estimated Difficulty:** Moderate
+- **Category CMDL Total:** 17 (sum of all item T values)
 - **Description:** Operations that freeze the GUI by running synchronously on the main thread: WAV loading, WAV saving, CSV export, and the RefCell borrow held during WAV save I/O. File dialog blocking is inherent to FLTK and not fixable.
 - **Why this difficulty:** Each fix follows the same pattern (move work to `thread::spawn`, send result back via mpsc), but requires adding new `WorkerMessage` variants, restructuring callbacks, and handling the async completion. The pattern is well-established in the codebase already.
-- **Status:** NOT STARTED
+- **Status:** COMPLETE
+
+#### Items (sorted by CMDL T, easiest first):
+
+| # | Issue | CMDL | Band | Files Changed | What Was Done |
+|---|-------|------|------|---------------|---------------|
+| 1 | WAV loading blocks UI — `AudioData::from_wav_file` runs on main thread | CMDL(7 \| 2, 4, 1) | Moderate | `callbacks_file.rs`, `main_fft.rs`, `app_state.rs` | File I/O + normalization moved to `thread::spawn` in the Open callback. New `AudioLoaded(AudioData, PathBuf, f32)` WorkerMessage variant. The poll loop's `AudioLoaded` handler does all state setup (view bounds, transport, params), UI widget sync (stop input, recon freq max), enables widgets, then spawns the FFT thread — same flow as before but the disk read no longer blocks the GUI. |
+| 2+4 | WAV saving blocks UI + RefCell held during I/O | CMDL(5 \| 2, 3, 1) | Easy | `callbacks_file.rs`, `main_fft.rs`, `app_state.rs` | Audio data cloned out of `state.borrow()`, borrow dropped, then `save_wav` runs in a spawned thread. New `WavSaved(Result<PathBuf, String>)` WorkerMessage variant. The poll loop handler shows success/error status. RefCell issue is automatically fixed: the borrow is released before any I/O. |
+| 3 | CSV export blocks UI — frame filtering + `export_to_csv` runs on main thread | CMDL(5 \| 2, 3, 1) | Easy | `callbacks_file.rs`, `main_fft.rs`, `app_state.rs` | Spectrogram frames filtered and params/view cloned out of `state.borrow()`, borrow dropped, then `export_to_csv` runs in a spawned thread. New `CsvSaved(Result<(PathBuf, usize, f64, f64), String>)` WorkerMessage variant. The poll loop handler shows frame count and time range on success, or alert dialog on error. |
+
+**Category 6 actual effort band: Easy–Moderate** (T range 5–7, total=17, avg=5.7)
 
 ### Category 7: Memory Efficiency
 - **Items:** 2
@@ -183,7 +201,7 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 | 3 | Data Correctness                 | 4     | Trivial–Easy (avg T=2.75) | **COMPLETE** |
 | 4 | Error Handling & Resilience      | 4     | Trivial–Moderate (avg T=4.0) | **COMPLETE** |
 | 5 | Audio Playback                   | 3     | Trivial–Easy (avg T=3.3) | **COMPLETE** |
-| 6 | UI Thread Blocking               | 4     | Moderate         | NOT STARTED |
+| 6 | UI Thread Blocking                   | 4     | Easy–Moderate (avg T=5.7) | **COMPLETE** |
 | 7 | Memory Efficiency                | 2     | Moderate         | NOT STARTED |
 | 8 | Rendering Performance            | 5     | Moderate–Hard    | NOT STARTED |
 | 9 | FFT/Reconstruction Pipeline      | 4     | Moderate–Hard    | NOT STARTED |
@@ -191,4 +209,33 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 
 ---
 
-*Each category will be expanded with individual issues, CMDL scores, and fix descriptions. Categories will receive a combined CMDL score once all items are scored.*
+## STANDALONE FIXES (outside original categories)
+
+### Segment Size Controls Overhaul — COMPLETE
+
+**Root cause:** `target_segments_per_active` was set to `Some(n)` on the first solver run and never reset to `None`. After that, the solver overrode every user change to window_length (dropdown, text field, +/- buttons) to maintain a stale segment count. This made all segment size controls effectively read-only after first use.
+
+**What changed:**
+- Dropdown and text field callbacks now clear `target_segments_per_active = None` and `target_bins_per_segment = None` before calling the solver, so user's explicit size choice is respected
+- Text field changed from `CallbackTrigger::Changed` (per-keystroke) to `CallbackTrigger::EnterKey` — type a full number, press Enter
+- Selecting "Custom" in the dropdown now focuses the text field
+- +/- buttons removed (simplified to just dropdown + text field)
+- Status bar feedback when solver adjusts the user's choice (e.g. clamped to active range)
+
+**Files:** `layout.rs`, `callbacks_ui.rs`, `main_fft.rs`, `callbacks_nav.rs`
+
+**How to test:** Load an audio file. Select different presets from the segment size dropdown — each should apply immediately and the text field should update to match. Type a custom number in the text field and press Enter — it should apply and the dropdown should switch to "Custom" (or the matching preset). Try switching back to a preset after using a custom value — it should work without getting stuck. Check the status bar for feedback if a value gets clamped.
+
+**Next step:** Category 7: Memory Efficiency (2 items — redundant per-frame frequency vectors, frame cloning for reconstruction).
+
+---
+
+## NOTES FOR FUTURE SESSIONS
+
+- Categories 1–6 are COMPLETE. Segment size controls overhaul is COMPLETE. Start from **Category 7: Memory Efficiency** (2 items).
+- After each category, give the user concise testing instructions for the major changes, then mention which category comes next.
+- The codebase uses `thread::spawn` + `mpsc::Sender<WorkerMessage>` for background work. The poll loop in `main_fft.rs` (16ms timer) handles all `WorkerMessage` variants. This pattern was extended in Category 6 with `AudioLoaded`, `WavSaved`, and `CsvSaved`.
+- `Rc<RefCell<AppState>>` is `!Send` — never try to pass it to a thread. Extract owned data on main thread, spawn with owned data, send result back via mpsc.
+- All debug logging uses `debug_flags.rs` flags + `dbg_log!` macro (not raw `eprintln!` — except for `[Open]`/`[FFT thread]` progress messages which are always-on).
+
+*Each category will be expanded with individual issues, CMDL scores, and fix descriptions as work progresses.*

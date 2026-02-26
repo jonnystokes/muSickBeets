@@ -24,6 +24,7 @@ use app_state::{format_time, AppState, SharedCallbacks, SharedCb, WorkerMessage}
 use data::TimeUnit;
 use layout::{Widgets, STATUS_FFT_OFFSET};
 use playback::audio_player::PlaybackState;
+use processing::fft_engine::FftEngine;
 use processing::reconstructor::Reconstructor;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -154,8 +155,6 @@ fn create_shared_callbacks(
         let mut btn_time_unit = widgets.btn_time_unit.clone();
         let mut input_start = widgets.input_start.clone();
         let mut input_stop = widgets.input_stop.clone();
-        let mut btn_seg_minus = widgets.btn_seg_minus.clone();
-        let mut btn_seg_plus = widgets.btn_seg_plus.clone();
         let mut input_seg_size = widgets.input_seg_size.clone();
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
         let mut slider_overlap = widgets.slider_overlap.clone();
@@ -169,8 +168,6 @@ fn create_shared_callbacks(
             btn_time_unit.activate();
             input_start.activate();
             input_stop.activate();
-            btn_seg_minus.activate();
-            btn_seg_plus.activate();
             input_seg_size.activate();
             seg_preset_choice.activate();
             slider_overlap.activate();
@@ -229,11 +226,19 @@ fn create_shared_callbacks(
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn main() {
-    // Suppress GVFS remote volume monitor warnings from GTK file dialogs
-    // (irrelevant in a headless/VNC environment without a running gvfsd).
+    // Disable GTK native file dialogs — they depend on dbus/GVFS volume monitors
+    // which hang or freeze in environments without a full GNOME session
+    // (Termux chroot, VNC, WSL, containers, etc.). FLTK's own file chooser
+    // is used instead, which works reliably everywhere.
+    app::set_option(app::Option::FnfcUsesGtk, false);
+    app::set_option(app::Option::FnfcUsesZenity, false);
+
+    // Also suppress any residual GVFS warnings from GTK libraries loaded elsewhere.
     // SAFETY: called at the very start of main, before any other threads exist.
     unsafe {
         std::env::set_var("GIO_USE_VFS", "local");
+        std::env::set_var("GIO_USE_VOLUME_MONITOR", "unix");
+        std::env::set_var("GVFS_REMOTE_VOLUME_MONITOR_IGNORE", "1");
     }
 
     // Load settings from INI (or create default INI if missing)
@@ -370,12 +375,17 @@ fn main() {
         let mut lbl_ceiling_val = widgets.lbl_ceiling_val.clone();
         let enable_spec_widgets = shared.enable_spec_widgets.clone();
         let enable_wav_export = shared.enable_wav_export.clone();
+        let enable_audio_widgets = shared.enable_audio_widgets.clone();
         let update_info = shared.update_info.clone();
+        let update_seg_label = shared.update_seg_label.clone();
+        let mut input_stop = widgets.input_stop.clone();
+        let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
         let mut x_scroll = widgets.x_scroll.clone();
         let mut y_scroll = widgets.y_scroll.clone();
         let tx = tx.clone();
         let x_scroll_gen = x_scroll_gen.clone();
         let y_scroll_gen = y_scroll_gen.clone();
+        let mut win_poll = win.clone();
 
         // Track last-seen generation to detect user scrollbar interaction
         let mut last_x_gen: u64 = 0;
@@ -686,6 +696,145 @@ fn main() {
                             }
                         }
                     }
+                    WorkerMessage::AudioLoaded(audio, filename, norm_gain) => {
+                        let num_smp = audio.num_samples();
+                        let duration = audio.duration_seconds;
+                        let nyquist = audio.nyquist_freq();
+                        let sample_rate = audio.sample_rate;
+                        let audio = Arc::new(audio);
+
+                        let params_clone;
+                        {
+                            let mut st = state.borrow_mut();
+
+                            st.audio_player.stop();
+                            st.fft_params.sample_rate = sample_rate;
+                            st.fft_params.start_sample = 0;
+                            st.fft_params.stop_sample = num_smp;
+                            st.audio_data = Some(audio.clone());
+                            st.has_audio = true;
+                            st.source_norm_gain = norm_gain;
+
+                            st.view.data_time_min_sec = 0.0;
+                            st.view.data_time_max_sec = duration;
+                            st.view.time_min_sec = 0.0;
+                            st.view.time_max_sec = duration;
+                            st.view.data_freq_max_hz = nyquist;
+                            st.view.freq_min_hz = st.view.freq_min_hz.min(nyquist);
+                            st.view.freq_max_hz = st.view.freq_max_hz.min(nyquist);
+                            st.view.recon_freq_max_hz = st.view.recon_freq_max_hz.min(nyquist);
+                            st.view.max_freq_bins = st.fft_params.num_frequency_bins();
+                            st.view.recon_freq_count = st.fft_params.num_frequency_bins();
+
+                            st.transport.duration_samples = num_smp;
+                            st.transport.sample_rate = sample_rate;
+                            st.transport.position_samples = 0;
+
+                            st.spec_renderer.invalidate();
+                            st.wave_renderer.invalidate();
+
+                            params_clone = st.fft_params.clone();
+                            // is_processing stays true — FFT thread follows
+
+                            let fname = filename
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            st.current_filename = fname.clone();
+                            drop(st);
+                            win_poll.set_label(&format!("muSickBeets - {}", fname));
+                        }
+
+                        // Sync UI widgets
+                        {
+                            let st = state.borrow();
+                            match st.fft_params.time_unit {
+                                crate::data::TimeUnit::Seconds => {
+                                    input_stop.set_value(&format!("{:.5}", duration));
+                                }
+                                crate::data::TimeUnit::Samples => {
+                                    input_stop.set_value(&num_smp.to_string());
+                                }
+                            }
+                            input_recon_freq_max
+                                .set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
+                        }
+
+                        (enable_audio_widgets.borrow_mut())();
+                        (update_info.borrow_mut())();
+                        (update_seg_label.borrow_mut())();
+
+                        // Launch background FFT (reconstruction auto-follows via FftComplete)
+                        eprintln!(
+                            "[Open] Spawning FFT thread (window={}, overlap={}%)",
+                            params_clone.window_length, params_clone.overlap_percent
+                        );
+                        let tx_clone = tx.clone();
+                        let audio_for_fft = audio.clone();
+                        std::thread::spawn(move || {
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    eprintln!("[FFT thread] Started");
+                                    let spectrogram =
+                                        FftEngine::process(&audio_for_fft, &params_clone);
+                                    eprintln!(
+                                        "[FFT thread] Complete: {} frames",
+                                        spectrogram.num_frames()
+                                    );
+                                    spectrogram
+                                }));
+                            match result {
+                                Ok(spectrogram) => {
+                                    tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
+                                }
+                                Err(panic_val) => {
+                                    let msg: String = panic_val
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| {
+                                            panic_val.downcast_ref::<&str>().map(|s| s.to_string())
+                                        })
+                                        .unwrap_or_else(|| "unknown panic".to_string());
+                                    eprintln!("[FFT thread] PANIC: {}", msg);
+                                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                                }
+                            }
+                        });
+
+                        status_bar.set_value(&format!(
+                            "Processing FFT... | {:.2}s | {} Hz | {}",
+                            duration,
+                            sample_rate,
+                            filename.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                        spec_display.redraw();
+                        waveform_display.redraw();
+                    }
+
+                    WorkerMessage::WavSaved(result) => match result {
+                        Ok(path) => {
+                            status_bar.set_value(&format!("WAV saved: {:?}", path));
+                        }
+                        Err(msg) => {
+                            fltk::dialog::alert_default(&format!("Error saving WAV:\n{}", msg));
+                            status_bar.set_value("WAV save failed");
+                        }
+                    },
+
+                    WorkerMessage::CsvSaved(result) => match result {
+                        Ok((_, num_frames, time_min, time_max)) => {
+                            status_bar.set_value(&format!(
+                                "FFT saved ({} frames, {:.2}s-{:.2}s)",
+                                num_frames, time_min, time_max
+                            ));
+                        }
+                        Err(msg) => {
+                            fltk::dialog::alert_default(&format!("Error saving CSV:\n{}", msg));
+                            status_bar.set_value("Save failed");
+                        }
+                    },
+
                     WorkerMessage::WorkerPanic(msg) => {
                         eprintln!("[Worker] PANIC: {}", msg);
                         {

@@ -41,8 +41,6 @@ pub struct Widgets {
     pub btn_time_unit: Button,
     pub input_start: FloatInput,
     pub input_stop: FloatInput,
-    pub btn_seg_minus: Button,
-    pub btn_seg_plus: Button,
     pub input_seg_size: Input,
     pub seg_preset_choice: Choice,
     pub slider_overlap: HorNiceSlider,
@@ -96,6 +94,7 @@ pub struct Widgets {
     pub repeat_choice: Choice,
     pub status_fft: MultilineOutput,
     pub status_bar: Output,
+    pub msg_bar: Frame,
 }
 
 // ─── Build UI ───────────────────────────────────────────────────────────────────
@@ -106,13 +105,34 @@ pub fn build_ui() -> (Window, Widgets) {
     win.set_color(theme::color(theme::BG_DARK));
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  MENU BAR
+    //  MENU BAR + MESSAGE BAR (same row)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    let mut menu = MenuBar::default().with_size(WIN_W, MENU_H);
+    let mut menu_row = Flex::default().with_size(WIN_W, MENU_H).row();
+    menu_row.set_pad(0);
+
+    let mut menu = MenuBar::default();
     menu.set_color(theme::color(theme::BG_PANEL));
     menu.set_text_color(theme::color(theme::TEXT_PRIMARY));
     menu.set_text_size(12);
+    menu_row.fixed(&menu, 180);
+
+    // Separator between menu and message area
+    let mut sep = Frame::default();
+    sep.set_frame(FrameType::FlatBox);
+    sep.set_color(theme::color(theme::SEPARATOR));
+    menu_row.fixed(&sep, 1);
+
+    // Message bar — transient feedback (errors, warnings, notices)
+    let mut msg_bar = Frame::default();
+    msg_bar.set_frame(FrameType::FlatBox);
+    msg_bar.set_color(theme::color(theme::BG_PANEL));
+    msg_bar.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    msg_bar.set_label_size(11);
+    msg_bar.set_align(Align::Inside | Align::Left);
+    // msg_bar gets remaining width (no fixed() call)
+
+    menu_row.end();
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  ROOT LAYOUT (below menu bar)
@@ -269,20 +289,6 @@ pub fn build_ui() -> (Window, Widgets) {
     );
     left.fixed(&seg_preset_choice, 25);
 
-    let mut seg_row = Flex::default().row();
-    seg_row.set_pad(2);
-
-    let mut btn_seg_minus = Button::default().with_label("-");
-    btn_seg_minus.set_color(theme::color(theme::BG_WIDGET));
-    btn_seg_minus.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_seg_minus.set_label_size(14);
-    btn_seg_minus.deactivate();
-    set_tooltip(
-        &mut btn_seg_minus,
-        "Step to previous preset size, or halve if Custom.",
-    );
-    seg_row.fixed(&btn_seg_minus, 30);
-
     let mut input_seg_size = Input::default();
     input_seg_size.set_value("8192");
     input_seg_size.set_color(theme::color(theme::BG_WIDGET));
@@ -290,23 +296,10 @@ pub fn build_ui() -> (Window, Widgets) {
     input_seg_size.deactivate();
     set_tooltip(
         &mut input_seg_size,
-        "Type an exact segment size (samples).\nMust be even (realfft requirement). Range: 2 to active-range sample count.\nPress Enter to apply.",
+        "Type an exact segment size (samples), then press Enter.\nMust be even (realfft requirement). Range: 4 to active-range sample count.\nThe dropdown above selects common presets.",
     );
     crate::validation::attach_uint_validation(&mut input_seg_size);
-
-    let mut btn_seg_plus = Button::default().with_label("+");
-    btn_seg_plus.set_color(theme::color(theme::BG_WIDGET));
-    btn_seg_plus.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_seg_plus.set_label_size(14);
-    btn_seg_plus.deactivate();
-    set_tooltip(
-        &mut btn_seg_plus,
-        "Step to next preset size, or double if Custom.",
-    );
-    seg_row.fixed(&btn_seg_plus, 30);
-
-    seg_row.end();
-    left.fixed(&seg_row, 25);
+    left.fixed(&input_seg_size, 25);
 
     // Overlap
     let mut slider_overlap = HorNiceSlider::default();
@@ -951,8 +944,6 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         btn_time_unit,
         input_start,
         input_stop,
-        btn_seg_minus,
-        btn_seg_plus,
         input_seg_size,
         seg_preset_choice,
         slider_overlap,
@@ -1006,6 +997,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         repeat_choice,
         status_fft,
         status_bar,
+        msg_bar,
     };
 
     (win, widgets)

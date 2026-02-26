@@ -3,6 +3,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use fltk::prelude::WidgetExt;
+
 use crate::data::{AudioData, FftParams, Spectrogram, TransportState, ViewState};
 use crate::playback::audio_player::AudioPlayer;
 use crate::rendering::spectrogram_renderer::SpectrogramRenderer;
@@ -14,6 +16,12 @@ use crate::ui::tooltips::TooltipManager;
 pub enum WorkerMessage {
     FftComplete(Spectrogram),
     ReconstructionComplete(AudioData),
+    /// Audio file loaded from disk. Contains (audio, filename, norm_gain).
+    AudioLoaded(AudioData, std::path::PathBuf, f32),
+    /// WAV export finished. Contains Ok(filename) or Err(message).
+    WavSaved(Result<std::path::PathBuf, String>),
+    /// CSV export finished. Contains Ok((filename, num_frames, time_min, time_max)) or Err(message).
+    CsvSaved(Result<(std::path::PathBuf, usize, f64, f64), String>),
     /// Worker thread panicked. Contains the panic message for logging.
     WorkerPanic(String),
 }
@@ -241,6 +249,42 @@ pub struct SharedCallbacks {
     pub enable_audio_widgets: SharedCb,
     pub enable_spec_widgets: SharedCb,
     pub enable_wav_export: SharedCb,
+}
+
+// ─── Message bar helper ───────────────────────────────────────────────────────
+//
+// Color-coded transient messages in the top message bar (right of menu).
+// Use instead of status_bar for warnings, errors, and parameter-change notices.
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+pub enum MsgLevel {
+    Info,    // neutral notice — dimmed text
+    Warning, // yellow — something was adjusted or unexpected
+    Error,   // red — something failed
+}
+
+/// Set a color-coded message on the top message bar.
+/// Call with an empty string to clear.
+pub fn set_msg(bar: &mut fltk::frame::Frame, level: MsgLevel, text: &str) {
+    use crate::ui::theme;
+    let color = match level {
+        MsgLevel::Info => theme::TEXT_SECONDARY,
+        MsgLevel::Warning => theme::ACCENT_YELLOW,
+        MsgLevel::Error => theme::ACCENT_RED,
+    };
+    bar.set_label_color(fltk::enums::Color::from_hex(color));
+    if text.is_empty() {
+        bar.set_label("");
+    } else {
+        let prefix = match level {
+            MsgLevel::Info => "",
+            MsgLevel::Warning => " Warning: ",
+            MsgLevel::Error => " Error: ",
+        };
+        bar.set_label(&format!("{}{}", prefix, text));
+    }
+    bar.redraw();
 }
 
 // ─── Format time as M:SS.ms ───────────────────────────────────────────────────

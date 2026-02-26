@@ -437,8 +437,6 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.btn_load_fft.clone(), btn_rerun);
     block_space!(widgets.btn_save_wav.clone(), btn_rerun);
     block_space!(widgets.btn_time_unit.clone(), btn_rerun);
-    block_space!(widgets.btn_seg_minus.clone(), btn_rerun);
-    block_space!(widgets.btn_seg_plus.clone(), btn_rerun);
     block_space!(widgets.btn_rerun.clone(), btn_rerun);
     block_space!(widgets.btn_snap_to_view.clone(), btn_rerun);
     block_space!(widgets.btn_home.clone(), btn_rerun);
@@ -455,8 +453,6 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     widgets.btn_load_fft.clone().clear_visible_focus();
     widgets.btn_save_wav.clone().clear_visible_focus();
     widgets.btn_time_unit.clone().clear_visible_focus();
-    widgets.btn_seg_minus.clone().clear_visible_focus();
-    widgets.btn_seg_plus.clone().clear_visible_focus();
     widgets.btn_rerun.clone().clear_visible_focus();
     widgets.btn_snap_to_view.clone().clear_visible_focus();
     widgets.btn_home.clone().clear_visible_focus();

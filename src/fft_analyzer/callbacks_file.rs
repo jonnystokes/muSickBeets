@@ -24,9 +24,9 @@ pub fn setup_file_callbacks(
     win: &fltk::window::Window,
 ) {
     setup_open_callback(widgets, state, tx, shared, win);
-    setup_save_fft_callback(widgets, state);
+    setup_save_fft_callback(widgets, state, tx);
     setup_load_fft_callback(widgets, state, tx, shared);
-    setup_save_wav_callback(widgets, state);
+    setup_save_wav_callback(widgets, state, tx);
 }
 
 // ── Open Audio File ──
@@ -34,21 +34,12 @@ fn setup_open_callback(
     widgets: &Widgets,
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
-    shared: &SharedCallbacks,
-    win: &fltk::window::Window,
+    _shared: &SharedCallbacks,
+    _win: &fltk::window::Window,
 ) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
-    let mut input_stop = widgets.input_stop.clone();
-    let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
-    let mut spec_display = widgets.spec_display.clone();
-    let mut waveform_display = widgets.waveform_display.clone();
     let tx = tx.clone();
-    let update_info = shared.update_info.clone();
-    let update_seg_label = shared.update_seg_label.clone();
-    let enable_audio_widgets = shared.enable_audio_widgets.clone();
-
-    let mut win = win.clone();
 
     let mut btn_open = widgets.btn_open.clone();
     btn_open.set_callback(move |_| {
@@ -83,152 +74,102 @@ fn setup_open_callback(
             return;
         }
 
+        // Read normalization settings before spawning thread
+        let (do_normalize, norm_peak) = {
+            let st = state.borrow();
+            (st.normalize_audio, st.normalize_peak)
+        };
+
+        // Mark as processing so re-entry is blocked
+        {
+            let mut st = state.borrow_mut();
+            st.is_processing = true;
+        }
+
         status_bar.set_value("Loading audio...");
         app::awake();
 
+        // Move file I/O + normalization to a background thread to keep the GUI responsive.
+        // The heavy work (disk read + peak scan) runs off the main thread.
+        // State setup happens later in the AudioLoaded handler (main_fft.rs poll loop).
         eprintln!("[Open] Loading file: {:?}", filename);
-        match AudioData::from_wav_file(&filename) {
-            Ok(mut audio) => {
+        let tx_clone = tx.clone();
+        let filename_for_thread = filename.clone();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut audio = AudioData::from_wav_file(&filename_for_thread)
+                    .unwrap_or_else(|e| panic!("Failed to load: {}", e));
                 eprintln!("[Open] File loaded: {} samples, {} Hz, {:.2}s",
                     audio.num_samples(), audio.sample_rate, audio.duration_seconds);
 
-                // Peak normalize audio to fix quiet playback.
-                // Store the gain so the original level can be recovered if needed.
-                let norm_gain = {
-                    let st = state.borrow();
-                    if st.normalize_audio {
-                        let gain = audio.normalize(st.normalize_peak);
-                        if gain != 1.0 {
-                            eprintln!("[Open] Audio normalized: gain = {:.3}x (original peak = {:.3})",
-                                gain, st.normalize_peak / gain);
-                        }
-                        gain
-                    } else {
-                        1.0
+                let norm_gain = if do_normalize {
+                    let gain = audio.normalize(norm_peak);
+                    if gain != 1.0 {
+                        eprintln!("[Open] Audio normalized: gain = {:.3}x (original peak = {:.3})",
+                            gain, norm_peak / gain);
                     }
+                    gain
+                } else {
+                    1.0
                 };
-
-                let num_smp = audio.num_samples();
-                let duration = audio.duration_seconds;
-                let nyquist = audio.nyquist_freq();
-                let sample_rate = audio.sample_rate;
-                let audio = Arc::new(audio);
-
-                let params_clone;
-                {
-                    let mut st = state.borrow_mut();
-
-                    // Stop any current playback before loading new audio
-                    st.audio_player.stop();
-                    st.fft_params.sample_rate = sample_rate;
-                    st.fft_params.start_sample = 0;
-                    st.fft_params.stop_sample = num_smp;
-                    st.audio_data = Some(audio.clone());
-                    st.has_audio = true;
-                    st.source_norm_gain = norm_gain;
-
-                    // Set view bounds — clamp existing values to nyquist, don't override saved settings
-                    st.view.data_time_min_sec = 0.0;
-                    st.view.data_time_max_sec = duration;
-                    st.view.time_min_sec = 0.0;
-                    st.view.time_max_sec = duration;
-                    st.view.data_freq_max_hz = nyquist;
-                    st.view.freq_min_hz = st.view.freq_min_hz.min(nyquist);
-                    st.view.freq_max_hz = st.view.freq_max_hz.min(nyquist);
-                    st.view.recon_freq_max_hz = st.view.recon_freq_max_hz.min(nyquist);
-                    st.view.max_freq_bins = st.fft_params.num_frequency_bins();
-                    st.view.recon_freq_count = st.fft_params.num_frequency_bins();
-
-                    st.transport.duration_samples = num_smp;
-                    st.transport.sample_rate = sample_rate;
-                    st.transport.position_samples = 0;
-
-                    st.spec_renderer.invalidate();
-                    st.wave_renderer.invalidate();
-
-                    params_clone = st.fft_params.clone();
-                    st.is_processing = true;
-
-                    // Store filename for window title
-                    let fname = filename.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    st.current_filename = fname.clone();
-                    drop(st);
-                    win.set_label(&format!("muSickBeets - {}", fname));
+                (audio, norm_gain)
+            }));
+            match result {
+                Ok((audio, norm_gain)) => {
+                    tx_clone.send(WorkerMessage::AudioLoaded(
+                        audio, filename_for_thread, norm_gain
+                    )).ok();
                 }
-
-                // Display stop value based on current time unit
-                {
-                    let st = state.borrow();
-                    match st.fft_params.time_unit {
-                        TimeUnit::Seconds => input_stop.set_value(&format!("{:.5}", duration)),
-                        TimeUnit::Samples => input_stop.set_value(&num_smp.to_string()),
-                    }
+                Err(panic) => {
+                    let msg = panic.downcast_ref::<String>()
+                        .map(|s| s.clone())
+                        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    eprintln!("[Open] PANIC: {}", msg);
+                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
                 }
-                {
-                    let st = state.borrow();
-                    input_recon_freq_max.set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
-                }
-
-                (enable_audio_widgets.borrow_mut())();
-                (update_info.borrow_mut())();
-                (update_seg_label.borrow_mut())();
-
-                // Launch background FFT (reconstruction auto-follows via FftComplete handler)
-                eprintln!("[Open] Spawning FFT thread (window={}, overlap={}%)",
-                    params_clone.window_length, params_clone.overlap_percent);
-                let tx_clone = tx.clone();
-                let audio_for_fft = audio.clone();
-                std::thread::spawn(move || {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        eprintln!("[FFT thread] Started");
-                        let spectrogram = FftEngine::process(&audio_for_fft, &params_clone);
-                        eprintln!("[FFT thread] Complete: {} frames", spectrogram.num_frames());
-                        spectrogram
-                    }));
-                    match result {
-                        Ok(spectrogram) => { tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok(); }
-                        Err(panic) => {
-                            let msg = panic.downcast_ref::<String>()
-                                .map(|s| s.clone())
-                                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                                .unwrap_or_else(|| "unknown panic".to_string());
-                            eprintln!("[FFT thread] PANIC: {}", msg);
-                            tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-                        }
-                    }
-                });
-
-                status_bar.set_value(&format!(
-                    "Processing FFT... | {:.2}s | {} Hz | {}",
-                    duration, sample_rate,
-                    filename.file_name().unwrap_or_default().to_string_lossy()
-                ));
-                spec_display.redraw();
-                waveform_display.redraw();
             }
-            Err(e) => {
-                dialog::alert_default(&format!("Error loading audio:\n{}", e));
-                status_bar.set_value("Load failed");
-            }
-        }
+        });
+
+        status_bar.set_value("Loading audio file...");
     });
 }
 
 // ── Save FFT to CSV ──
-fn setup_save_fft_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+fn setup_save_fft_callback(
+    widgets: &Widgets,
+    state: &Rc<RefCell<AppState>>,
+    tx: &mpsc::Sender<WorkerMessage>,
+) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
+    let tx = tx.clone();
 
     let mut btn_save_fft = widgets.btn_save_fft.clone();
     btn_save_fft.set_callback(move |_| {
-        let st = state.borrow();
-        if st.spectrogram.is_none() {
-            dialog::alert_default("No FFT data to save!");
-            return;
-        }
+        // Extract everything needed from state, then drop the borrow before spawning.
+        let export_data = {
+            let st = state.borrow();
+            if st.spectrogram.is_none() {
+                dialog::alert_default("No FFT data to save!");
+                return;
+            }
+
+            let spec_full = st.spectrogram.as_ref().unwrap();
+            let proc_time_min = st.fft_params.start_seconds();
+            let proc_time_max = st.fft_params.stop_seconds();
+            let filtered_frames: Vec<_> = spec_full
+                .frames
+                .iter()
+                .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
+                .cloned()
+                .collect();
+            let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
+            let params = st.fft_params.clone();
+            let view = st.view.clone();
+            (filtered_spec, params, view, proc_time_min, proc_time_max)
+        };
+        // state borrow is dropped here
 
         let mut chooser =
             dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
@@ -241,33 +182,30 @@ fn setup_save_fft_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             return;
         }
 
-        // Filter spectrogram frames to processing time range (sidebar Start/Stop)
-        // so the CSV only contains the section the user cares about.
-        let spec_full = st.spectrogram.as_ref().unwrap();
-        let proc_time_min = st.fft_params.start_seconds();
-        let proc_time_max = st.fft_params.stop_seconds();
-        let filtered_frames: Vec<_> = spec_full
-            .frames
-            .iter()
-            .filter(|f| f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max)
-            .cloned()
-            .collect();
-        let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
-
-        match csv_export::export_to_csv(&filtered_spec, &st.fft_params, &st.view, &filename) {
-            Ok(_) => {
-                status_bar.set_value(&format!(
-                    "FFT saved ({} frames, {:.2}s-{:.2}s)",
-                    filtered_spec.num_frames(),
-                    proc_time_min,
-                    proc_time_max
-                ));
+        status_bar.set_value("Saving CSV...");
+        let tx_clone = tx.clone();
+        let (filtered_spec, params, view, proc_time_min, proc_time_max) = export_data;
+        let num_frames = filtered_spec.num_frames();
+        std::thread::spawn(move || {
+            let result = csv_export::export_to_csv(&filtered_spec, &params, &view, &filename);
+            match result {
+                Ok(_) => {
+                    tx_clone
+                        .send(WorkerMessage::CsvSaved(Ok((
+                            filename,
+                            num_frames,
+                            proc_time_min,
+                            proc_time_max,
+                        ))))
+                        .ok();
+                }
+                Err(e) => {
+                    tx_clone
+                        .send(WorkerMessage::CsvSaved(Err(format!("{}", e))))
+                        .ok();
+                }
             }
-            Err(e) => {
-                dialog::alert_default(&format!("Error saving CSV:\n{}", e));
-                status_bar.set_value("Save failed");
-            }
-        }
+        });
     });
 }
 
@@ -419,17 +357,32 @@ fn setup_load_fft_callback(
 }
 
 // ── Export WAV ──
-fn setup_save_wav_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+fn setup_save_wav_callback(
+    widgets: &Widgets,
+    state: &Rc<RefCell<AppState>>,
+    tx: &mpsc::Sender<WorkerMessage>,
+) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
+    let tx = tx.clone();
 
     let mut btn_save_wav = widgets.btn_save_wav.clone();
     btn_save_wav.set_callback(move |_| {
-        let st = state.borrow();
-        if st.reconstructed_audio.is_none() {
-            dialog::alert_default("No reconstructed audio to save!\n\nReconstruct audio first.");
-            return;
-        }
+        // Clone audio data out of borrow, then drop the borrow before spawning.
+        // This fixes the RefCell-held-during-I/O issue (the borrow is NOT held
+        // while the file is being written to disk).
+        let audio_clone = {
+            let st = state.borrow();
+            match st.reconstructed_audio.as_ref() {
+                Some(audio) => audio.clone(),
+                None => {
+                    dialog::alert_default(
+                        "No reconstructed audio to save!\n\nReconstruct audio first.",
+                    );
+                    return;
+                }
+            }
+        };
 
         let mut chooser =
             dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
@@ -442,15 +395,21 @@ fn setup_save_wav_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             return;
         }
 
-        match st.reconstructed_audio.as_ref().unwrap().save_wav(&filename) {
-            Ok(_) => {
-                status_bar.set_value(&format!("WAV saved: {:?}", filename));
+        status_bar.set_value("Saving WAV...");
+        let tx_clone = tx.clone();
+        std::thread::spawn(move || {
+            let result = audio_clone.save_wav(&filename);
+            match result {
+                Ok(_) => {
+                    tx_clone.send(WorkerMessage::WavSaved(Ok(filename))).ok();
+                }
+                Err(e) => {
+                    tx_clone
+                        .send(WorkerMessage::WavSaved(Err(format!("{}", e))))
+                        .ok();
+                }
             }
-            Err(e) => {
-                dialog::alert_default(&format!("Error saving WAV:\n{}", e));
-                status_bar.set_value("WAV save failed");
-            }
-        }
+        });
     });
 }
 

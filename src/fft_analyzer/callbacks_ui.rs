@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use fltk::{enums::CallbackTrigger, prelude::*};
 
-use crate::app_state::{AppState, SharedCallbacks, UpdateThrottle};
+use crate::app_state::{set_msg, AppState, MsgLevel, SharedCallbacks, UpdateThrottle};
 use crate::data::{
     eval_gradient, ColormapId, FreqScale, GradientStop, LastEditedField, SolverConstraints,
     TimeUnit, WindowType,
@@ -204,15 +204,26 @@ pub fn setup_parameter_callbacks(
         let update_info = shared.update_info.clone();
         let update_seg_label = shared.update_seg_label.clone();
         let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut msg_bar = widgets.msg_bar.clone();
         let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
         seg_preset_choice.set_callback(move |c| {
             let idx = c.value();
+            if idx == 9 {
+                // "Custom" selected — just focus the text field so user can type
+                input_seg_size.take_focus().ok();
+                return;
+            }
             if idx >= 0 && idx < 9 {
-                let size = SEG_PRESETS[idx as usize];
+                let requested_size = SEG_PRESETS[idx as usize];
                 let mut st = state.borrow_mut();
-                st.fft_params.window_length = size;
+
+                // Clear stale segment target — user is explicitly choosing a size
+                st.fft_params.target_segments_per_active = None;
+                st.fft_params.target_bins_per_segment = None;
+
+                st.fft_params.window_length = requested_size;
                 st.fft_params.last_edited_field = LastEditedField::Overlap;
                 apply_segmentation_solver(&mut st);
 
@@ -220,10 +231,25 @@ pub fn setup_parameter_callbacks(
                 let final_wl = st.fft_params.window_length;
                 let preset_idx = find_preset_index(final_wl).map(|i| i as i32).unwrap_or(9);
                 drop(st);
+
                 suppress_solver_inputs.set(true);
                 input_seg_size.set_value(&final_wl.to_string());
                 c.set_value(preset_idx);
                 suppress_solver_inputs.set(false);
+
+                // Message bar feedback if solver changed the user's choice
+                if final_wl != requested_size {
+                    set_msg(
+                        &mut msg_bar,
+                        MsgLevel::Warning,
+                        &format!(
+                            "Segment size {} -> {} (clamped to active range)",
+                            requested_size, final_wl
+                        ),
+                    );
+                } else {
+                    set_msg(&mut msg_bar, MsgLevel::Info, "");
+                }
 
                 (update_info.borrow_mut())();
                 (update_seg_label.borrow_mut())();
@@ -231,16 +257,19 @@ pub fn setup_parameter_callbacks(
         });
     }
 
-    // Segment size typed input
+    // Segment size typed input (fires on every change, like all other text fields)
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
+        let update_seg_label = shared.update_seg_label.clone();
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        let mut msg_bar = widgets.msg_bar.clone();
         let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut input_seg_size = widgets.input_seg_size.clone();
         input_seg_size.set_trigger(CallbackTrigger::Changed);
         input_seg_size.set_callback(move |inp| {
+            // Space defense-in-depth: strip any spaces that sneak through handle()
             if inp.value().contains(' ') {
                 inp.set_value(&inp.value().replace(' ', ""));
                 return;
@@ -252,95 +281,45 @@ pub fn setup_parameter_callbacks(
                 return;
             }
 
-            let raw: usize = inp.value().parse().unwrap_or(8192);
+            let raw: usize = inp.value().parse().unwrap_or(0);
+            if raw == 0 {
+                return; // partial input like "" after delete — wait for more
+            }
             let mut st = state.borrow_mut();
-            let max_window = current_active_samples(&st).max(2);
-            let clamped = raw.clamp(2, max_window);
+            let max_window = current_active_samples(&st).max(4);
+            let clamped = raw.clamp(4, max_window);
             let even = round_even(clamped);
+
+            // Clear stale segment target — user is explicitly choosing a size
+            st.fft_params.target_segments_per_active = None;
+            st.fft_params.target_bins_per_segment = None;
 
             st.fft_params.window_length = even;
             st.fft_params.last_edited_field = LastEditedField::Overlap;
             apply_segmentation_solver(&mut st);
 
-            let preset_idx = find_preset_index(st.fft_params.window_length)
-                .map(|i| i as i32)
-                .unwrap_or(9);
+            let final_wl = st.fft_params.window_length;
+            let preset_idx = find_preset_index(final_wl).map(|i| i as i32).unwrap_or(9);
+
             suppress_solver_inputs.set(true);
-            inp.set_value(&st.fft_params.window_length.to_string());
             seg_preset_choice.set_value(preset_idx);
             suppress_solver_inputs.set(false);
 
-            drop(st);
-            (update_info.borrow_mut())();
-        });
-    }
-
-    // Segment size +/- buttons
-    {
-        let state = state.clone();
-        let update_info = shared.update_info.clone();
-        let update_seg_label = shared.update_seg_label.clone();
-        let mut input_seg_size = widgets.input_seg_size.clone();
-        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
-        let suppress_solver_inputs = suppress_solver_inputs.clone();
-
-        let mut btn_seg_minus = widgets.btn_seg_minus.clone();
-        btn_seg_minus.set_callback(move |_| {
-            let mut st = state.borrow_mut();
-            let cur = st.fft_params.window_length;
-            let new_wl = if let Some(idx) = find_preset_index(cur) {
-                if idx > 0 {
-                    SEG_PRESETS[idx - 1]
-                } else {
-                    SEG_PRESETS[0]
-                }
+            // Message bar feedback if solver clamped
+            if final_wl != raw {
+                set_msg(
+                    &mut msg_bar,
+                    MsgLevel::Warning,
+                    &format!(
+                        "Segment size {} -> {} (must be even, range 4..{})",
+                        raw, final_wl, max_window
+                    ),
+                );
             } else {
-                round_even((cur / 2).max(2))
-            };
-            st.fft_params.window_length = new_wl;
-            st.fft_params.last_edited_field = LastEditedField::Overlap;
-            apply_segmentation_solver(&mut st);
-            drop(st);
-            suppress_solver_inputs.set(true);
-            input_seg_size.set_value(&new_wl.to_string());
-            let preset_idx = find_preset_index(new_wl).map(|i| i as i32).unwrap_or(9);
-            seg_preset_choice.set_value(preset_idx);
-            suppress_solver_inputs.set(false);
-            (update_info.borrow_mut())();
-            (update_seg_label.borrow_mut())();
-        });
-    }
-    {
-        let state = state.clone();
-        let update_info = shared.update_info.clone();
-        let update_seg_label = shared.update_seg_label.clone();
-        let mut input_seg_size = widgets.input_seg_size.clone();
-        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
-        let suppress_solver_inputs = suppress_solver_inputs.clone();
+                set_msg(&mut msg_bar, MsgLevel::Info, "");
+            }
 
-        let mut btn_seg_plus = widgets.btn_seg_plus.clone();
-        btn_seg_plus.set_callback(move |_| {
-            let mut st = state.borrow_mut();
-            let cur = st.fft_params.window_length;
-            let max_window = current_active_samples(&st).max(2);
-            let new_wl = if let Some(idx) = find_preset_index(cur) {
-                if idx < SEG_PRESETS.len() - 1 {
-                    SEG_PRESETS[idx + 1].min(max_window)
-                } else {
-                    max_window
-                }
-            } else {
-                round_even((cur * 2).min(max_window))
-            };
-            st.fft_params.window_length = new_wl;
-            st.fft_params.last_edited_field = LastEditedField::Overlap;
-            apply_segmentation_solver(&mut st);
             drop(st);
-            suppress_solver_inputs.set(true);
-            input_seg_size.set_value(&new_wl.to_string());
-            let preset_idx = find_preset_index(new_wl).map(|i| i as i32).unwrap_or(9);
-            seg_preset_choice.set_value(preset_idx);
-            suppress_solver_inputs.set(false);
             (update_info.borrow_mut())();
             (update_seg_label.borrow_mut())();
         });

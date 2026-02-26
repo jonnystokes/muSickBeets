@@ -12,7 +12,7 @@ The correct commit sequence is:
 ```bash
 git add .
 git commit -m "Your commit message here"
-git push -u origin <branch-name>
+git push
 ```
 
 **Why:** Using specific file names causes forgotten files (e.g., updating code but forgetting to commit a modified progress/notes file). `git add .` catches everything.
@@ -70,7 +70,7 @@ The **top-level menu bar** (File, Analyze, Display) is NOT guarded. It must rema
 **For text input fields (`FloatInput` or `Input`):**
 1. In `layout.rs`: call `attach_float_validation()` or `attach_uint_validation()` as usual
 2. In `setup_spacebar_guards()`: call `attach_float_validation_with_recompute()` or `attach_uint_validation_with_recompute()` — this REPLACES the plain handler with one that also triggers `btn_rerun.do_callback()` on space KeyUp
-3. If the field also uses a live `set_callback()` with `CallbackTrigger::Changed`, that callback MUST strip spaces from `inp.value()` and return early to prevent transient space insertion.
+3. If the field also has a `set_callback()` with `CallbackTrigger::Changed`, that callback MUST defensively strip spaces from `inp.value()` and return early. This avoids any race where widget callbacks observe a transient space before handle()-level guards run.
 
 **For widgets with custom `handle()` callbacks (like scrub_slider, gradient_preview):**
 Add this at the top of the existing handle closure:
@@ -97,17 +97,30 @@ All text input fields MUST be controlled — they may only accept valid numeric 
 - **No spaces ever.** Spacebar is blocked by the validation handler.
 - **No letters, symbols, or other characters.**
 
+### CRITICAL: CallbackTrigger Rules for Text Fields
+
+**ALL text fields MUST use `CallbackTrigger::Changed`.** This is not optional.
+
+**NEVER use `CallbackTrigger::EnterKey` or `CallbackTrigger::EnterKeyAlways` on text fields.** These triggers change FLTK's internal event processing for the widget in ways that break the validation/spacebar system:
+- `EnterKey` causes Enter to select-all (highlight text) instead of behaving normally
+- `EnterKey` disrupts the `handle()` event flow, allowing spaces and invalid characters to bypass the validation handler and insert into the field
+- The validation handler (`attach_uint_validation_with_recompute` / `attach_float_validation_with_recompute`) depends on receiving events in the sequence that `CallbackTrigger::Changed` provides
+
+**If you want "apply on Enter" behavior:** Keep `CallbackTrigger::Changed` and add Enter-key detection inside the `handle()` callback, NOT by changing the trigger. Or simply let the value apply live on every keystroke (which is the existing pattern for all text fields in this app).
+
 ### Implementation Details
 
 Validation uses `handle()` (NOT `set_callback()`) so it survives when functional callbacks are later attached via `set_callback()` on the same widget. In FLTK-rs, `handle()` and `set_callback()` are independent — setting one does not overwrite the other.
 
 However, calling `handle()` twice on the same widget DOES overwrite the first handler. This is why `setup_spacebar_guards()` uses `attach_float_validation_with_recompute()` to REPLACE the plain validation handler — the new handler includes both validation AND space blocking with recompute trigger.
 
-Additionally, live `Changed` callbacks must defensively sanitize spaces (`replace(' ', "")`) before parsing. Treat this as mandatory redundant protection alongside handle()-level guards.
+In addition, any text field with live `Changed` callbacks must sanitize spaces in the callback itself (`replace(' ', "")`) before numeric parsing. This double-layer rule is mandatory for robust spacebar behavior under all FLTK event orders.
 
 **When adding new text input fields:**
 1. In `layout.rs`: call `attach_float_validation(&mut field)` or `attach_uint_validation(&mut field)`
 2. In `setup_spacebar_guards()` (callbacks_nav.rs): call `attach_float_validation_with_recompute()` or `attach_uint_validation_with_recompute()` to replace with the recompute-aware version
+3. In the callback setup: use `set_trigger(CallbackTrigger::Changed)` — **never EnterKey**
+4. In the callback body: first line must be the space-stripping defense: `if inp.value().contains(' ') { inp.set_value(&inp.value().replace(' ', "")); return; }`
 
 See `src/fft_analyzer/validation.rs` for all four functions.
 
@@ -129,42 +142,141 @@ The delay and Home-equivalent logic lives in the `ReconstructionComplete` handle
 
 `settings.ini` (or legacy `muSickBeets.ini`) is auto-generated at runtime. It is in `.gitignore` and must NEVER be committed.
 
-## OpenCode Environment
+## Harness Detection — DO NOT ASSUME, VERIFY
 
-This project may be edited using **OpenCode** (https://opencode.ai), an open-source AI coding agent. If the `OPENCODE=1` environment variable is set, you are running inside OpenCode rather than Claude Code (even though your system prompt may say otherwise).
+Your system prompt and training say "Claude Code" but that may be wrong. You MUST check which harness you are actually running in. **Do not guess. Do not assume based on your system prompt.**
 
-### Detecting OpenCode
-
-Check for OpenCode at session start:
+**How to verify (run this early in the session):**
 ```bash
-echo $OPENCODE        # "1" if running in OpenCode
-opencode --version    # e.g. "1.2.14"
+echo $OPENCODE
+echo $CLAUDE
 ```
 
-### Tools Available in OpenCode
+| `OPENCODE` | `CLAUDE` | You are in |
+|------------|----------|------------|
+| `1`        | empty    | **OpenCode** (https://opencode.ai) |
+| empty      | `1`      | **Claude Code** (Anthropic's CLI) |
+| both set   | both set | Check which tool schema you have (see below) |
 
-OpenCode provides the standard tool set (bash, read, write, edit, grep, glob, webfetch, question, todowrite, task/sub-agents) plus these extras:
+OpenCode and Claude Code share the same model (Claude) and similar tool names, but they are **different harnesses** with different capabilities. Your training environment was Claude Code. If `OPENCODE=1` is set, you woke up in a different bed — accept it and follow the OpenCode-specific instructions below.
 
-| Tool | Status | What it does |
-|------|--------|--------------|
-| **LSP (passive)** | Always on | rust-analyzer runs automatically. Diagnostics (type errors, missing fields) appear after edits. Rustfmt auto-formats edited code. |
-| **LSP (explicit tool)** | Requires `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` | Enables `goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`. Set the env var before launching OpenCode. |
-| **websearch** | Requires `OPENCODE_ENABLE_EXA=1` or OpenCode provider | Web search via Exa AI for researching docs, APIs, etc. |
-| **patch** | Always on | Apply unified diffs to files. |
-| **list** | Always on | Directory listing with glob filtering. |
-| **skill** | Always on | Load SKILL.md files for domain-specific instructions. |
+**If you are in Claude Code:** Skip all OpenCode-specific sections below. They do not apply.
 
-### LSP Servers
+**If you are in OpenCode:** Read and follow everything below. The experimental tools and sub-agent rules are critical.
 
-OpenCode auto-detects and starts language servers based on file extensions. For this Rust project, `rust-analyzer` starts automatically when any `.rs` file is opened. Built-in support exists for 35+ languages. Custom LSP servers can be configured in `opencode.json`.
+---
 
-### Configuration
+## Sub-Agent Launch Policy — MANDATORY
 
-OpenCode config lives at `~/.config/opencode/opencode.json`. Project-level config can be placed in `opencode.json` at the project root. The config controls:
-- Tool permissions (allow/deny/ask per tool)
-- LSP server settings (enable/disable, custom commands, env vars)
-- Model selection (75+ providers via Models.dev)
-- Keybinds, themes, formatters
+**Before launching ANY sub-agent (Task tool), you MUST use the Question tool to ask the user for confirmation.**
+
+Why: The user pays for API usage on Anthropic's servers. Usage has a hard cap that resets every 4 hours. Sub-agents consume usage aggressively and **cannot pause/wait if usage runs out** — they crash. The main agent (you) CAN pause and wait for usage to refill, but sub-agents cannot.
+
+**Required flow before every Task tool call:**
+1. Use `mcp_question` to ask: "I'd like to launch a sub-agent for [describe task]. This will consume additional API usage. Proceed?"
+2. Options: "Yes, proceed" / "No, skip this" (plus custom input)
+3. If the user says no or provides custom instructions, follow those instructions.
+4. If the user says yes, proceed with the Task tool call.
+
+This also gives the user an opportunity to:
+- Cancel before you consume usage they don't have
+- Wait at the question prompt for usage to refill (up to 4 hours)
+- Redirect you to do the work yourself instead of delegating
+
+**Never batch-launch multiple sub-agents without asking first.** Even if you want to run 3 agents in parallel, ask once listing all 3, then launch only if approved.
+
+### Sub-Agent Briefing — MANDATORY PREAMBLE FOR EVERY SUB-AGENT PROMPT
+
+Every sub-agent prompt MUST begin with this preamble (adapt the task description):
+
+```
+IMPORTANT CONTEXT: You are NOT Claude Code. You are Claude running inside the OpenCode harness.
+You have access to experimental tools that standard Claude Code does not have.
+
+Before doing anything else:
+1. Read the file AGENTS.md in the project root — it contains critical project rules,
+   architecture documentation, and tool instructions that you MUST follow.
+2. You have access to the LSP tool (mcp_lsp) which talks to rust-analyzer. USE IT
+   for all code navigation — it gives semantic, compiler-accurate results far superior
+   to grep. Use documentSymbol to get file structure, findReferences for usages,
+   incomingCalls/outgoingCalls for call graphs, goToDefinition to jump to definitions,
+   and hover for type info. Prefer LSP over grep/read for understanding code.
+3. You have access to Exa search tools (mcp_websearch, mcp_codesearch) for looking up
+   library docs, API examples, and programming patterns.
+4. At the END of your response, include a brief section titled "## Tool Effectiveness Report"
+   describing which experimental tools you used, how useful they were, and any issues
+   you encountered. This helps us calibrate tool usage for future sessions.
+```
+
+The main agent (you) MUST include this preamble in every Task tool prompt. After compaction, you will lose memory of this rule — that is why it is written here in AGENTS.md. Re-read this file after every compaction.
+
+**Why sub-agents need this:** Sub-agents start with zero context. They don't know they're in OpenCode, don't know about LSP/Exa tools, and won't use them unless explicitly told. The previous pattern of sub-agents using only grep/read when LSP would give better results wastes tokens and produces inferior analysis.
+
+---
+
+## OpenCode Experimental Tools (when `OPENCODE=1`)
+
+These tools are available when the following env vars are set:
+- `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` — Enables LSP operations
+- `OPENCODE_ENABLE_EXA=1` — Enables Exa web/code search
+
+Check `env | grep OPENCODE` to confirm availability. Docs: https://opencode.ai/docs/tools/
+
+### LSP Tool (`mcp_lsp`) — Prefer over grep/read for code navigation
+
+The LSP tool talks to `rust-analyzer` (auto-detected for `.rs` files). It provides semantic, compiler-accurate results — far superior to text-based grep for code navigation.
+
+**All operations require:** `filePath`, `line` (1-based), `character` (1-based).
+Position must land precisely on a symbol name. If you miss, you get irrelevant results (e.g., keyword docs instead of function type info).
+
+**Operations and when to use them:**
+
+| Operation | Use case | Replaces |
+|-----------|----------|----------|
+| `documentSymbol` | Get all structs/fns/fields/enums in a file with line ranges | Reading entire file to understand structure |
+| `findReferences` | Find all usages of a symbol (semantic, not textual) | `grep` for function/type names |
+| `incomingCalls` | "Who calls this function?" with exact call sites | `grep` + manual tracing of callers |
+| `outgoingCalls` | "What does this function call?" | Reading the function body |
+| `goToDefinition` | Jump to where a symbol is defined | `grep` for `fn name` / `struct name` |
+| `hover` | Get type signature + docs for a symbol | Reading surrounding context for types |
+| `workspaceSymbol` | Find any type/fn by name across entire project | `grep` across all files |
+| `goToImplementation` | Find `impl` blocks for a struct/trait | `grep "impl StructName"` |
+| `prepareCallHierarchy` | Get call hierarchy item (setup for incoming/outgoing) | N/A |
+
+**Syntax examples:**
+```
+documentSymbol  — file=any, line=1, char=1 (scans whole file)
+workspaceSymbol — file=any, line=1, char=1 (scans whole workspace)
+findReferences  — cursor on symbol name, e.g. line=58, char=16 for `load_audio`
+incomingCalls   — cursor on function name
+outgoingCalls   — cursor on function name
+goToDefinition  — cursor on any symbol usage
+hover           — cursor on any symbol
+```
+
+**Key gotcha:** LSP line/char are 1-based in this tool. Position must be ON the symbol text. Use `documentSymbol` first to find exact line numbers, then target other operations precisely.
+
+### Exa Search Tools — Web and Code Search
+
+| Tool | When to use | Parameters |
+|------|-------------|------------|
+| `mcp_websearch` | Discovery — find information, current events, general research | `query`, optional: `numResults`, `type` (auto/fast/deep), `livecrawl` |
+| `mcp_codesearch` | Programming — find library docs, API examples, SDK patterns | `query`, `tokensNum` (1000-50000, default 5000) |
+
+**`websearch` vs `webfetch`:** Use `websearch` to discover/find things. Use `webfetch` to retrieve content from a known URL.
+
+**`codesearch` examples:**
+- `"Rust realfft inverse FFT normalization"` — library-specific docs
+- `"FLTK-rs handle event callback Rust"` — framework patterns
+- `"miniaudio Rust device configuration sample rate"` — API reference
+
+Docs: https://opencode.ai/docs/tools/#websearch
+
+### LSP Server Configuration
+
+OpenCode auto-detects `rust-analyzer` for `.rs` files. Config lives in `opencode.json` under `"lsp"`. Full docs: https://opencode.ai/docs/lsp/
+
+---
 
 ### Runtime Environment Notes
 
