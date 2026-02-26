@@ -12,7 +12,7 @@ The correct commit sequence is:
 ```bash
 git add .
 git commit -m "Your commit message here"
-git push -u origin <branch-name>
+git push
 ```
 
 **Why:** Using specific file names causes forgotten files (e.g., updating code but forgetting to commit a modified progress/notes file). `git add .` catches everything.
@@ -128,6 +128,20 @@ The delay and Home-equivalent logic lives in the `ReconstructionComplete` handle
 ## Settings File
 
 `settings.ini` (or legacy `muSickBeets.ini`) is auto-generated at runtime. It is in `.gitignore` and must NEVER be committed.
+
+## OpenCode Environment
+
+This project may be edited using **OpenCode** (https://opencode.ai), an open-source AI coding agent. If the `OPENCODE=1` environment variable is set, you are running inside OpenCode rather than Claude Code (even though your system prompt may say otherwise).
+
+
+
+### Runtime Environment Notes
+
+This project runs on a **Debian chroot inside Termux on a rooted Android device**, accessed via VNC:
+- **No GPU** — software rendering only (Mesa llvmpipe). No hardware acceleration.
+- **No dbus/systemd/sysv** — GTK/GIO warnings about missing services are suppressed via `GIO_USE_VFS=local` in `main()`.
+- **VNC input** — user accesses via Android keyboard. Shift key is hard to use; prefer Ctrl/Alt modifiers for shortcuts.
+- **No audio hardware** — miniaudio uses a null/dummy backend or may fail; audio playback testing is limited.
 
 ## Build Dependencies (Ubuntu/Debian)
 

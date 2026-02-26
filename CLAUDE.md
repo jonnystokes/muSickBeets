@@ -129,6 +129,51 @@ The delay and Home-equivalent logic lives in the `ReconstructionComplete` handle
 
 `settings.ini` (or legacy `muSickBeets.ini`) is auto-generated at runtime. It is in `.gitignore` and must NEVER be committed.
 
+## OpenCode Environment
+
+This project may be edited using **OpenCode** (https://opencode.ai), an open-source AI coding agent. If the `OPENCODE=1` environment variable is set, you are running inside OpenCode rather than Claude Code (even though your system prompt may say otherwise).
+
+### Detecting OpenCode
+
+Check for OpenCode at session start:
+```bash
+echo $OPENCODE        # "1" if running in OpenCode
+opencode --version    # e.g. "1.2.14"
+```
+
+### Tools Available in OpenCode
+
+OpenCode provides the standard tool set (bash, read, write, edit, grep, glob, webfetch, question, todowrite, task/sub-agents) plus these extras:
+
+| Tool | Status | What it does |
+|------|--------|--------------|
+| **LSP (passive)** | Always on | rust-analyzer runs automatically. Diagnostics (type errors, missing fields) appear after edits. Rustfmt auto-formats edited code. |
+| **LSP (explicit tool)** | Requires `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` | Enables `goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`. Set the env var before launching OpenCode. |
+| **websearch** | Requires `OPENCODE_ENABLE_EXA=1` or OpenCode provider | Web search via Exa AI for researching docs, APIs, etc. |
+| **patch** | Always on | Apply unified diffs to files. |
+| **list** | Always on | Directory listing with glob filtering. |
+| **skill** | Always on | Load SKILL.md files for domain-specific instructions. |
+
+### LSP Servers
+
+OpenCode auto-detects and starts language servers based on file extensions. For this Rust project, `rust-analyzer` starts automatically when any `.rs` file is opened. Built-in support exists for 35+ languages. Custom LSP servers can be configured in `opencode.json`.
+
+### Configuration
+
+OpenCode config lives at `~/.config/opencode/opencode.json`. Project-level config can be placed in `opencode.json` at the project root. The config controls:
+- Tool permissions (allow/deny/ask per tool)
+- LSP server settings (enable/disable, custom commands, env vars)
+- Model selection (75+ providers via Models.dev)
+- Keybinds, themes, formatters
+
+### Runtime Environment Notes
+
+This project runs on a **Debian chroot inside Termux on a rooted Android device**, accessed via VNC:
+- **No GPU** — software rendering only (Mesa llvmpipe). No hardware acceleration.
+- **No dbus/systemd/sysv** — GTK/GIO warnings about missing services are suppressed via `GIO_USE_VFS=local` in `main()`.
+- **VNC input** — user accesses via Android keyboard. Shift key is hard to use; prefer Ctrl/Alt modifiers for shortcuts.
+- **No audio hardware** — miniaudio uses a null/dummy backend or may fail; audio playback testing is limited.
+
 ## Build Dependencies (Ubuntu/Debian)
 
 If `cargo build` fails at link time with missing X11/Pango/Cairo libraries (e.g. `-lXinerama`, `-lXcursor`, `-lXfixes`, `-lpango-1.0`, `-lcairo`), install:

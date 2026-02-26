@@ -91,23 +91,58 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 ### Category 3: Data Correctness
 - **Items:** 4
 - **Estimated Difficulty:** Easy–Moderate
+- **Category CMDL Total:** 11 (sum of all item T values)
 - **Description:** Code that produces wrong values — FFT magnitude scaling mismatch between forward and inverse, destructive source normalization, `format_with_commas` breaking for negatives, and CSV time key precision collisions.
 - **Why this difficulty:** Most are small code changes, but the magnitude scaling fix requires understanding the math and testing both forward and inverse paths. The normalization fix needs a design decision (keep original vs. normalized copy).
-- **Status:** NOT STARTED
+- **Status:** COMPLETE
+
+#### Items (sorted by CMDL T, easiest first):
+
+| # | Issue | CMDL | Band | Files Changed | What Was Done |
+|---|-------|------|------|---------------|---------------|
+| 1 | BUG-6: `format_with_commas` breaks for negative numbers | CMDL(2 \| 1, 1, 0) | Trivial | `callbacks_draw.rs` | Separated the minus sign from the digit string before applying comma grouping. The minus is prepended after formatting so it doesn't throw off the `(len - i) % 3` modular arithmetic. |
+| 2 | BUG-8: CSV time key precision collisions | CMDL(2 \| 1, 1, 0) | Trivial | `csv_export.rs` | Increased time format precision from `{:.5}` (10us resolution) to `{:.10}` (0.1ns resolution). At 48kHz with hop=1, frame step is ~20.8us — 5 decimal places could collide with pathological settings. 10 decimal places eliminates collisions for any conceivable sample rate. Backward compatible: old CSVs import fine. |
+| 3 | BUG-2: Destructive source audio normalization | CMDL(3 \| 2, 2, 0) | Trivial | `app_state.rs`, `callbacks_file.rs` | Added `source_norm_gain: f32` field to `AppState` (default 1.0). The normalization gain applied on file load is now stored so the original peak level can be recovered (`original = normalized / gain`). Enhanced the log message to show the original peak. The normalization itself is still in-place (avoiding double memory), but the gain is no longer lost. |
+| 4 | BUG-4: Forward/inverse FFT magnitude scaling mismatch | CMDL(4 \| 1, 2, 0) | Easy | `reconstructor.rs` | Fixed the reconstructor to undo the forward-pass scaling before feeding magnitudes into the IFFT. Forward pass stores `mag = (|X[k]| / N) * amp_scale` where amp_scale is 2 for non-DC/Nyquist, 1 for DC/Nyquist. Reconstructor now multiplies by `N` (DC/Nyquist) or `N/2` (other bins) to recover raw `X[k]` before IFFT. Previously, the double `1/N` division and uncompensated `*2` scaling produced incorrect relative amplitudes between DC/Nyquist and other bins, masked by post-reconstruction normalization. |
+
+**Category 3 actual effort band: Trivial–Easy** (T range 2–4, total=11, avg=2.75)
 
 ### Category 4: Error Handling & Resilience
 - **Items:** 4
 - **Estimated Difficulty:** Easy–Moderate
+- **Category CMDL Total:** 16 (sum of all item T values)
 - **Description:** Missing panic handlers on worker threads (causing stuck `is_processing`), silent rendering skips via `try_borrow_mut`, poisoned mutex propagation in audio callback, and CSV import skipping row 2 without validation.
 - **Why this difficulty:** Adding `catch_unwind` wrappers and `Disconnected` detection is straightforward but touches multiple spawn sites. The try_borrow_mut fix is just adding a debug log.
-- **Status:** NOT STARTED
+- **Status:** COMPLETE
+
+#### Items (sorted by CMDL T, easiest first):
+
+| # | Issue | CMDL | Band | Files Changed | What Was Done |
+|---|-------|------|------|---------------|---------------|
+| 1 | NEW-6: CSV import skips row 2 without validation | CMDL(2 \| 1, 1, 0) | Trivial | `csv_export.rs` | Added validation around `records.next()`: bails with error if file has no data rows, warns if the skipped row looks like data instead of a header (first field parses as a number). |
+| 2 | NEW-4: `try_borrow_mut` silently skips rendering | CMDL(3 \| 1, 4, 0) | Trivial | `callbacks_draw.rs` | Added `dbg_log!(RENDER_DBG, ...)` at all 4 silent-return sites (spectrogram, waveform, freq axis, time axis). Controlled by `debug_flags::RENDER_DBG` flag (default off). |
+| 3 | Poisoned mutex in audio callback | CMDL(3 \| 1, 2, 0) | Trivial | `audio_player.rs` | Replaced all 13 `.lock().unwrap()` calls with a `lock_playback()` helper that uses `.unwrap_or_else(\|e\| e.into_inner())` to recover from poisoned mutexes instead of panicking. Especially critical for the audio device callback (line 71) which runs on a real-time OS thread. |
+| 4 | NEW-3: No panic handler on worker threads | CMDL(8 \| 2, 6, 0) | Moderate | `callbacks_file.rs`, `main_fft.rs` | Wrapped all 4 `thread::spawn` closures with `catch_unwind(AssertUnwindSafe(...))`. On panic, extracts the panic message and sends `WorkerMessage::WorkerPanic(msg)` through the channel. Added `WorkerPanic` variant to `WorkerMessage` enum. Poll loop now handles `WorkerPanic` (resets `is_processing`, shows error in status bar) and detects `TryRecvError::Disconnected` as a fallback for panics that occur before catch_unwind (e.g., in the spawn setup). |
+
+**Category 4 actual effort band: Trivial–Moderate** (T range 2–8, total=16, avg=4.0)
 
 ### Category 5: Audio Playback
 - **Items:** 3
 - **Estimated Difficulty:** Easy–Moderate
+- **Category CMDL Total:** 10 (sum of all item T values)
 - **Description:** Audio device not recreated on sample rate change (wrong-speed playback), audio samples cloned into player unnecessarily (memory duplication), and play-after-dirty not auto-starting playback.
 - **Why this difficulty:** The sample rate fix is a small conditional in `load_audio()`. The memory duplication fix requires changing from `Vec<f32>` to `Arc<Vec<f32>>` which ripples into the playback data callback. Play-after-dirty is a UX logic tweak.
-- **Status:** NOT STARTED
+- **Status:** COMPLETE
+
+#### Items (sorted by CMDL T, easiest first):
+
+| # | Issue | CMDL | Band | Files Changed | What Was Done |
+|---|-------|------|------|---------------|---------------|
+| 1 | BUG-3: Audio device not recreated on sample rate change | CMDL(3 \| 1, 2, 0) | Trivial | `audio_player.rs` | Added `device_sample_rate: u32` field to `AudioPlayer`. In `load_audio()`, the device is now destroyed and recreated when the new sample rate differs from the current device rate. Previously, the device was only created once (`if self.device.is_none()`), so loading a 48kHz file after a 44.1kHz file would play at the wrong speed. |
+| 2 | MEM-3: Audio samples cloned into player | CMDL(4 \| 2, 3, 1) | Easy | `audio_player.rs`, `main_fft.rs` | Changed `PlaybackData.samples` from `Vec<f32>` to `Arc<Vec<f32>>`. The `load_audio()` API now accepts `Arc<Vec<f32>>` + `sample_rate` instead of `&AudioData`. The player's data callback indexes into the Arc without any copy. Full zero-copy sharing (eliminating the clone at the call site) is deferred to Category 7 when `AudioData.samples` is changed to `Arc<Vec<f32>>`. |
+| 3 | Play-after-dirty: No auto-play after recompute triggered by Play | CMDL(3 \| 2, 3, 0) | Trivial | `app_state.rs`, `main_fft.rs`, `callbacks_ui.rs` | Added `play_pending: bool` to `AppState`. The Play callback sets it when triggering a recompute due to dirty state. The `ReconstructionComplete` handler checks and consumes the flag, auto-starting playback. The flag is also cleared on reconstruction error, worker panic, and channel disconnect to prevent stale pending state. |
+
+**Category 5 actual effort band: Trivial–Easy** (T range 3–4, total=10, avg=3.3)
 
 ### Category 6: UI Thread Blocking
 - **Items:** 4
@@ -145,9 +180,9 @@ Sorted by estimated total effort (easiest first). Each category will be populate
 |---|----------------------------------|-------|------------------|-------------|
 | 1 | Input Validation & Edge Cases    | 7     | Trivial (avg T=2.1) | **COMPLETE** |
 | 2 | Idle/Polling Overhead            | 2     | Trivial (T=3)    | **COMPLETE** |
-| 3 | Data Correctness                 | 4     | Easy–Moderate    | NOT STARTED |
-| 4 | Error Handling & Resilience      | 4     | Easy–Moderate    | NOT STARTED |
-| 5 | Audio Playback                   | 3     | Easy–Moderate    | NOT STARTED |
+| 3 | Data Correctness                 | 4     | Trivial–Easy (avg T=2.75) | **COMPLETE** |
+| 4 | Error Handling & Resilience      | 4     | Trivial–Moderate (avg T=4.0) | **COMPLETE** |
+| 5 | Audio Playback                   | 3     | Trivial–Easy (avg T=3.3) | **COMPLETE** |
 | 6 | UI Thread Blocking               | 4     | Moderate         | NOT STARTED |
 | 7 | Memory Efficiency                | 2     | Moderate         | NOT STARTED |
 | 8 | Rendering Performance            | 5     | Moderate–Hard    | NOT STARTED |

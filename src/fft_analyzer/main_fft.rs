@@ -229,6 +229,13 @@ fn create_shared_callbacks(
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn main() {
+    // Suppress GVFS remote volume monitor warnings from GTK file dialogs
+    // (irrelevant in a headless/VNC environment without a running gvfsd).
+    // SAFETY: called at the very start of main, before any other threads exist.
+    unsafe {
+        std::env::set_var("GIO_USE_VFS", "local");
+    }
+
     // Load settings from INI (or create default INI if missing)
     let cfg = settings::Settings::load_or_create();
     eprintln!(
@@ -316,6 +323,35 @@ fn main() {
     // Per-widget spacebar guards MUST be last — they set handle() on widgets,
     // which would be overwritten if any later setup also calls handle().
     callbacks_nav::setup_spacebar_guards(&widgets);
+
+    // ── Sync UI widgets to saved settings ──────────────────────────────────
+    // Layout hardcodes default values (e.g. "8192" for segment size). After
+    // loading the real settings into AppState, push the values into the widgets
+    // so the UI matches state from the start.
+    {
+        let st = state.borrow();
+        widgets
+            .input_seg_size
+            .clone()
+            .set_value(&st.fft_params.window_length.to_string());
+        let preset_idx = match st.fft_params.window_length {
+            256 => 0,
+            512 => 1,
+            1024 => 2,
+            2048 => 3,
+            4096 => 4,
+            8192 => 5,
+            16384 => 6,
+            32768 => 7,
+            65536 => 8,
+            _ => 9,
+        };
+        widgets.seg_preset_choice.clone().set_value(preset_idx);
+        widgets
+            .slider_overlap
+            .clone()
+            .set_value(st.fft_params.overlap_percent as f64);
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  MAIN POLL LOOP (16ms)
@@ -521,12 +557,30 @@ fn main() {
                         }
 
                         std::thread::spawn(move || {
-                            let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
-                            let reconstructed =
-                                Reconstructor::reconstruct(&filtered_spec, &params, &view);
-                            tx_clone
-                                .send(WorkerMessage::ReconstructionComplete(reconstructed))
-                                .ok();
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    let filtered_spec =
+                                        data::Spectrogram::from_frames(filtered_frames);
+                                    Reconstructor::reconstruct(&filtered_spec, &params, &view)
+                                }));
+                            match result {
+                                Ok(reconstructed) => {
+                                    tx_clone
+                                        .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                                        .ok();
+                                }
+                                Err(panic) => {
+                                    let msg = panic
+                                        .downcast_ref::<String>()
+                                        .map(|s| s.clone())
+                                        .or_else(|| {
+                                            panic.downcast_ref::<&str>().map(|s| s.to_string())
+                                        })
+                                        .unwrap_or_else(|| "unknown panic".to_string());
+                                    eprintln!("[Reconstruction thread] PANIC: {}", msg);
+                                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                                }
+                            }
                         });
                     }
                     WorkerMessage::ReconstructionComplete(mut reconstructed) => {
@@ -539,7 +593,14 @@ fn main() {
                         }
                         let recon_result = {
                             let mut st = state.borrow_mut();
-                            match st.audio_player.load_audio(&reconstructed) {
+                            // Wrap samples in Arc for the player. Currently still
+                            // clones the Vec; true zero-copy requires AudioData.samples
+                            // to become Arc<Vec<f32>> (planned for Category 7).
+                            let playback_samples = Arc::new(reconstructed.samples.clone());
+                            match st
+                                .audio_player
+                                .load_audio(playback_samples, reconstructed.sample_rate)
+                            {
                                 Ok(_) => {
                                     let num_smp = reconstructed.num_samples();
                                     let sr = reconstructed.sample_rate;
@@ -551,10 +612,19 @@ fn main() {
                                     st.is_processing = false;
                                     st.dirty = false;
 
+                                    // Auto-start playback if Play was pressed while dirty
+                                    let should_play = st.play_pending;
+                                    st.play_pending = false;
+                                    if should_play {
+                                        st.audio_player.play();
+                                        st.transport.is_playing = true;
+                                    }
+
                                     Ok((num_smp, sr))
                                 }
                                 Err(e) => {
                                     st.is_processing = false;
+                                    st.play_pending = false;
                                     Err(e)
                                 }
                             }
@@ -616,6 +686,28 @@ fn main() {
                             }
                         }
                     }
+                    WorkerMessage::WorkerPanic(msg) => {
+                        eprintln!("[Worker] PANIC: {}", msg);
+                        {
+                            let mut st = state.borrow_mut();
+                            st.is_processing = false;
+                            st.play_pending = false;
+                        }
+                        status_bar.set_value(&format!("Error: worker thread panicked: {}", msg));
+                    }
+                }
+            }
+
+            // Check for disconnected channel (worker panicked without sending)
+            if state.borrow().is_processing {
+                use std::sync::mpsc::TryRecvError;
+                if let Err(TryRecvError::Disconnected) = rx.try_recv() {
+                    eprintln!("[Worker] Channel disconnected — worker thread likely panicked without sending a message");
+                    let mut st = state.borrow_mut();
+                    st.is_processing = false;
+                    st.play_pending = false;
+                    drop(st);
+                    status_bar.set_value("Error: processing failed (worker thread lost)");
                 }
             }
 

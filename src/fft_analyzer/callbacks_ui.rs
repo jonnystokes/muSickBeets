@@ -202,19 +202,31 @@ pub fn setup_parameter_callbacks(
     {
         let state = state.clone();
         let update_info = shared.update_info.clone();
+        let update_seg_label = shared.update_seg_label.clone();
         let mut input_seg_size = widgets.input_seg_size.clone();
+        let suppress_solver_inputs = suppress_solver_inputs.clone();
 
         let mut seg_preset_choice = widgets.seg_preset_choice.clone();
         seg_preset_choice.set_callback(move |c| {
             let idx = c.value();
             if idx >= 0 && idx < 9 {
                 let size = SEG_PRESETS[idx as usize];
-                input_seg_size.set_value(&size.to_string());
                 let mut st = state.borrow_mut();
                 st.fft_params.window_length = size;
                 st.fft_params.last_edited_field = LastEditedField::Overlap;
                 apply_segmentation_solver(&mut st);
+
+                // Re-sync widgets after solver (it may have adjusted window_length)
+                let final_wl = st.fft_params.window_length;
+                let preset_idx = find_preset_index(final_wl).map(|i| i as i32).unwrap_or(9);
+                drop(st);
+                suppress_solver_inputs.set(true);
+                input_seg_size.set_value(&final_wl.to_string());
+                c.set_value(preset_idx);
+                suppress_solver_inputs.set(false);
+
                 (update_info.borrow_mut())();
+                (update_seg_label.borrow_mut())();
             }
         });
     }
@@ -573,7 +585,9 @@ pub fn setup_playback_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>
         btn_play.set_callback(move |_| {
             let mut st = state.borrow_mut();
             if st.dirty {
-                // Need to recompute first - trigger rerun, then play will happen after
+                // Need to recompute first — set play_pending so playback
+                // auto-starts after reconstruction completes.
+                st.play_pending = true;
                 drop(st);
                 btn_rerun.do_callback();
                 return;

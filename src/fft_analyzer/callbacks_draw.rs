@@ -42,6 +42,10 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         // same paint cycle, and holding borrow_mut here blocks them.
         let draw_data = {
             let Ok(mut st) = state.try_borrow_mut() else {
+                dbg_log!(
+                    debug_flags::RENDER_DBG,
+                    "[RENDER] Spectrogram draw skipped: state borrow conflict"
+                );
                 return;
             };
             if let Some(spec) = st.spectrogram.clone() {
@@ -322,6 +326,10 @@ fn setup_waveform_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         // same paint cycle, and holding borrow_mut here blocks them.
         {
             let Ok(mut st) = state.try_borrow_mut() else {
+                dbg_log!(
+                    debug_flags::RENDER_DBG,
+                    "[RENDER] Waveform draw skipped: state borrow conflict"
+                );
                 return;
             };
 
@@ -383,6 +391,10 @@ fn setup_freq_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
 
         let Ok(st) = state.try_borrow() else {
+            dbg_log!(
+                debug_flags::RENDER_DBG,
+                "[RENDER] Freq axis draw skipped: state borrow conflict"
+            );
             return;
         };
         if st.spectrogram.is_none() {
@@ -444,6 +456,10 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
 
         let Ok(st) = state.try_borrow() else {
+            dbg_log!(
+                debug_flags::RENDER_DBG,
+                "[RENDER] Time axis draw skipped: state borrow conflict"
+            );
             return;
         };
         if st.spectrogram.is_none() {
@@ -658,9 +674,13 @@ fn format_freq_label(freq: f32) -> String {
 
 /// Format an integer with comma thousand separators.
 fn format_with_commas(n: i64) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    let chars: Vec<char> = s.chars().collect();
+    let (prefix, digits) = if n < 0 {
+        ("-", (-n).to_string())
+    } else {
+        ("", n.to_string())
+    };
+    let chars: Vec<char> = digits.chars().collect();
+    let mut result = String::from(prefix);
 
     for (i, ch) in chars.iter().enumerate() {
         if i > 0 && (chars.len() - i) % 3 == 0 {

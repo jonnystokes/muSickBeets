@@ -14,6 +14,8 @@ use crate::ui::tooltips::TooltipManager;
 pub enum WorkerMessage {
     FftComplete(Spectrogram),
     ReconstructionComplete(AudioData),
+    /// Worker thread panicked. Contains the panic message for logging.
+    WorkerPanic(String),
 }
 
 // ─── App State ─────────────────────────────────────────────────────────────────
@@ -34,6 +36,9 @@ pub struct AppState {
     pub recon_start_sample: usize,
     pub is_processing: bool,
     pub dirty: bool,
+    /// When true, auto-start playback after the next reconstruction completes.
+    /// Set by the Play button when it triggers a recompute due to dirty state.
+    pub play_pending: bool,
     pub lock_to_active: bool,
     pub has_audio: bool,
     pub current_filename: String,
@@ -52,6 +57,10 @@ pub struct AppState {
     // Audio normalization settings
     pub normalize_audio: bool,
     pub normalize_peak: f32,
+
+    /// Gain factor applied during source audio normalization (1.0 = no change).
+    /// Stored so the original peak level can be recovered: original = normalized / gain.
+    pub source_norm_gain: f32,
 }
 
 impl AppState {
@@ -71,6 +80,7 @@ impl AppState {
             recon_start_sample: 0,
             is_processing: false,
             dirty: false,
+            play_pending: false,
             lock_to_active: false,
             has_audio: false,
             current_filename: String::new(),
@@ -84,6 +94,7 @@ impl AppState {
 
             normalize_audio: true,
             normalize_peak: 0.97,
+            source_norm_gain: 1.0,
         }
     }
 

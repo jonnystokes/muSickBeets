@@ -82,17 +82,28 @@ impl Reconstructor {
                     let mag = frame.magnitudes[i];
                     let phase = frame.phases[i];
 
-                    if i == 0 || i == spectrum.len() - 1 {
-                        spectrum[i] = Complex::new(mag * phase.cos(), 0.0);
+                    // Undo the forward-pass scaling to recover raw spectrum values.
+                    // Forward pass stored: mag = (|X[k]| / N) * amplitude_scale
+                    //   DC/Nyquist (amplitude_scale=1): mag = |X[k]| / N  -> recover: mag * N
+                    //   Other bins (amplitude_scale=2):  mag = |X[k]| * 2 / N -> recover: mag * N / 2
+                    let raw_mag = if i == 0 || i == spectrum.len() - 1 {
+                        mag * n_fft as f32 // undo /N only
                     } else {
-                        spectrum[i] = Complex::from_polar(mag, phase);
+                        mag * n_fft as f32 / 2.0 // undo /N and *2
+                    };
+
+                    if i == 0 || i == spectrum.len() - 1 {
+                        // DC and Nyquist bins are real-valued
+                        spectrum[i] = Complex::new(raw_mag * phase.cos(), 0.0);
+                    } else {
+                        spectrum[i] = Complex::from_polar(raw_mag, phase);
                     }
                 }
 
                 ifft.process(&mut spectrum, &mut time_buffer)
                     .expect("IFFT processing failed");
 
-                // Normalize IFFT output by FFT size
+                // realfft's inverse produces N * x[n], so divide by N
                 let norm = 1.0 / n_fft as f32;
                 for s in time_buffer.iter_mut() {
                     *s *= norm;

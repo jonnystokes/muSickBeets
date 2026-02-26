@@ -64,7 +64,7 @@ pub fn export_to_csv<P: AsRef<Path>>(
         for i in 0..frame.frequencies.len() {
             writer
                 .write_record(&[
-                    format!("{:.5}", time),
+                    format!("{:.10}", time),
                     format!("{:.4}", frame.frequencies[i]),
                     format!("{:.6}", frame.magnitudes[i]),
                     format!("{:.6}", frame.phases[i]),
@@ -193,8 +193,26 @@ pub fn import_from_csv<P: AsRef<Path>>(
         LastEditedField::Overlap
     };
 
-    // Skip column labels (row 2)
-    records.next();
+    // Skip column labels (row 2) — validate it exists and looks like a header
+    match records.next() {
+        Some(Ok(row)) => {
+            // Sanity check: first field should be the column label, not numeric data
+            if let Some(first) = row.get(0) {
+                if first.parse::<f64>().is_ok() {
+                    eprintln!("[CSV Import] Warning: row 2 looks like data, not a header (first field: {:?}). It will be skipped.", first);
+                }
+            }
+        }
+        Some(Err(e)) => {
+            eprintln!(
+                "[CSV Import] Warning: failed to read row 2 (column labels): {}",
+                e
+            );
+        }
+        None => {
+            anyhow::bail!("CSV file has no data rows (only metadata header)");
+        }
+    }
 
     // Read data rows
     let mut frames_map: std::collections::BTreeMap<String, Vec<(f32, f32, f32)>> =

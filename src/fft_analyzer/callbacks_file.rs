@@ -92,16 +92,21 @@ fn setup_open_callback(
                 eprintln!("[Open] File loaded: {} samples, {} Hz, {:.2}s",
                     audio.num_samples(), audio.sample_rate, audio.duration_seconds);
 
-                // Peak normalize audio to fix quiet playback
-                {
+                // Peak normalize audio to fix quiet playback.
+                // Store the gain so the original level can be recovered if needed.
+                let norm_gain = {
                     let st = state.borrow();
                     if st.normalize_audio {
                         let gain = audio.normalize(st.normalize_peak);
                         if gain != 1.0 {
-                            eprintln!("[Open] Audio normalized: gain = {:.3}x", gain);
+                            eprintln!("[Open] Audio normalized: gain = {:.3}x (original peak = {:.3})",
+                                gain, st.normalize_peak / gain);
                         }
+                        gain
+                    } else {
+                        1.0
                     }
-                }
+                };
 
                 let num_smp = audio.num_samples();
                 let duration = audio.duration_seconds;
@@ -120,6 +125,7 @@ fn setup_open_callback(
                     st.fft_params.stop_sample = num_smp;
                     st.audio_data = Some(audio.clone());
                     st.has_audio = true;
+                    st.source_norm_gain = norm_gain;
 
                     // Set view bounds — clamp existing values to nyquist, don't override saved settings
                     st.view.data_time_min_sec = 0.0;
@@ -176,10 +182,23 @@ fn setup_open_callback(
                 let tx_clone = tx.clone();
                 let audio_for_fft = audio.clone();
                 std::thread::spawn(move || {
-                    eprintln!("[FFT thread] Started");
-                    let spectrogram = FftEngine::process(&audio_for_fft, &params_clone);
-                    eprintln!("[FFT thread] Complete: {} frames", spectrogram.num_frames());
-                    tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        eprintln!("[FFT thread] Started");
+                        let spectrogram = FftEngine::process(&audio_for_fft, &params_clone);
+                        eprintln!("[FFT thread] Complete: {} frames", spectrogram.num_frames());
+                        spectrogram
+                    }));
+                    match result {
+                        Ok(spectrogram) => { tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok(); }
+                        Err(panic) => {
+                            let msg = panic.downcast_ref::<String>()
+                                .map(|s| s.clone())
+                                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                                .unwrap_or_else(|| "unknown panic".to_string());
+                            eprintln!("[FFT thread] PANIC: {}", msg);
+                            tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                        }
+                    }
                 });
 
                 status_bar.set_value(&format!(
@@ -369,11 +388,26 @@ fn setup_load_fft_callback(
                 }
 
                 std::thread::spawn(move || {
-                    let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
-                    let reconstructed = Reconstructor::reconstruct(&filtered_spec, &params, &view);
-                    tx_clone
-                        .send(WorkerMessage::ReconstructionComplete(reconstructed))
-                        .ok();
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let filtered_spec = data::Spectrogram::from_frames(filtered_frames);
+                        Reconstructor::reconstruct(&filtered_spec, &params, &view)
+                    }));
+                    match result {
+                        Ok(reconstructed) => {
+                            tx_clone
+                                .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                                .ok();
+                        }
+                        Err(panic) => {
+                            let msg = panic
+                                .downcast_ref::<String>()
+                                .map(|s| s.clone())
+                                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                                .unwrap_or_else(|| "unknown panic".to_string());
+                            eprintln!("[Reconstruction thread] PANIC: {}", msg);
+                            tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                        }
+                    }
                 });
             }
             Err(e) => {
@@ -558,8 +592,23 @@ pub fn setup_rerun_callback(
 
         let tx_clone = tx.clone();
         std::thread::spawn(move || {
-            let spectrogram = FftEngine::process(&audio, &params);
-            tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                FftEngine::process(&audio, &params)
+            }));
+            match result {
+                Ok(spectrogram) => {
+                    tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
+                }
+                Err(panic) => {
+                    let msg = panic
+                        .downcast_ref::<String>()
+                        .map(|s| s.clone())
+                        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    eprintln!("[FFT thread] PANIC: {}", msg);
+                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                }
+            }
         });
 
         spec_display.redraw();
