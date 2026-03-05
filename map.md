@@ -1,6 +1,8 @@
 # muSickBeets - Project Map
 
-A CSV-driven music tracker synthesizer with real-time audio synthesis and FFT spectrogram analyzer. The project contains two main binaries: the **Tracker** (a music synthesizer) and the **FFT Analyzer** (a spectrogram tool).
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
+
+An FFT spectrogram analyzer and audio reconstructor with a CSV-driven music tracker synthesizer. The project contains two main binaries: the **FFT Analyzer** (default — spectrogram visualizer and audio reconstructor) and the **Tracker** (a music synthesizer).
 
 ---
 

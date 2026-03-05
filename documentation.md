@@ -1,5 +1,7 @@
 # muSickBeets Documentation
 
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
+
 ## What is muSickBeets?
 
 **muSickBeets** is a CSV-driven music tracker synthesizer written in Rust. It allows you to compose music by writing simple text files - no complex DAW required. Think of it as programming music: each row is a moment in time, each column is a voice/channel.

@@ -16,7 +16,9 @@ pub struct SolverConstraints {
 impl Default for SolverConstraints {
     fn default() -> Self {
         Self {
-            min_window: 2,
+            // Minimum 4: a window of 2 produces only DC + Nyquist (no useful
+            // spectral content). 4 gives at least 3 frequency bins.
+            min_window: 4,
             max_window: usize::MAX,
             min_overlap_percent: 0.0,
             max_overlap_percent: 99.0,
@@ -170,11 +172,12 @@ fn solve_window_for_segments(
 }
 
 fn clamp_even(value: usize, min: usize, max: usize) -> usize {
-    let mut v = value.clamp(min.max(2), max.max(2));
-    if v % 2 != 0 {
+    let floor = min.max(4); // absolute minimum: 4 (see SolverConstraints::default)
+    let mut v = value.clamp(floor, max.max(floor));
+    if !v.is_multiple_of(2) {
         v = if v == max { v.saturating_sub(1) } else { v + 1 };
     }
-    v.max(2)
+    v.max(floor)
 }
 
 fn hop_length(window: usize, overlap_percent: f32) -> usize {
@@ -310,8 +313,9 @@ mod tests {
             constraints: SolverConstraints::default(),
         });
 
-        // 2 bins -> nfft 2; with 8x pad this maps below base min and must clamp to 2.
-        assert_eq!(out.window_length, 2);
-        assert_eq!(out.bins_per_segment, 9);
+        // 2 bins -> nfft 2; with 8x pad this maps below base min and must clamp to 4.
+        // window=4, n_fft_padded=4*8=32, bins=32/2+1=17.
+        assert_eq!(out.window_length, 4);
+        assert_eq!(out.bins_per_segment, 17);
     }
 }

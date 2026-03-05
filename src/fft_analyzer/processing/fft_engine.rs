@@ -1,15 +1,26 @@
-use rayon::prelude::*;
-use realfft::RealFftPlanner;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::data::{AudioData, FftParams, FftFrame, Spectrogram};
+use rayon::prelude::*;
+use realfft::RealFftPlanner;
+
+use crate::data::{AudioData, FftFrame, FftParams, Spectrogram};
+
+thread_local! {
+    /// Per-thread FFT planner cache. `RealFftPlanner` caches FFT plans internally,
+    /// so reusing one planner per rayon thread avoids re-planning for every frame.
+    static FFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
+}
 
 pub struct FftEngine;
 
 impl FftEngine {
     /// Process audio into a spectrogram using parallel FFT computation.
     /// Each frame's FFT runs independently on a rayon thread.
-    pub fn process(audio: &AudioData, params: &FftParams) -> Spectrogram {
+    /// If `cancel` is set to true, processing stops early and returns
+    /// whatever frames have been computed so far (may be empty).
+    pub fn process(audio: &AudioData, params: &FftParams, cancel: &AtomicBool) -> Spectrogram {
         let start_sample = params.start_sample;
         let stop_sample = params.stop_sample.min(audio.num_samples());
 
@@ -46,12 +57,25 @@ impl FftEngine {
         let padded_arc = Arc::new(padded_audio);
         let window_arc = Arc::new(window);
 
-        // Parallel FFT: each frame is independent
+        // Compute frequency bin values once — shared across all frames.
+        // Previously each frame stored its own copy (~16 MB waste for 1000 frames).
+        let num_bins = n_fft / 2 + 1; // realfft output size
+        let frequencies: Vec<f32> = (0..num_bins)
+            .map(|bin_idx| bin_idx as f32 * freq_resolution)
+            .collect();
+
+        // Parallel FFT: each frame is independent.
+        // Each frame checks the cancellation flag before doing work;
+        // cancelled frames return None and are filtered out.
         let frames: Vec<FftFrame> = (0..num_frames)
             .into_par_iter()
-            .map(|frame_idx| {
-                let mut planner = RealFftPlanner::<f32>::new();
-                let fft = planner.plan_fft_forward(n_fft);
+            .filter_map(|frame_idx| {
+                // Check cancellation before expensive work
+                if cancel.load(Ordering::Relaxed) {
+                    return None;
+                }
+
+                let fft = FFT_PLANNER.with(|p| p.borrow_mut().plan_fft_forward(n_fft));
 
                 let start = frame_idx * hop;
                 let mut indata = vec![0.0f32; n_fft];
@@ -68,31 +92,30 @@ impl FftEngine {
                 let actual_sample = start_sample + frame_idx * hop;
                 let time_seconds = actual_sample as f64 / audio.sample_rate as f64;
 
-                let num_bins = spectrum.len();
-                let mut frequencies = Vec::with_capacity(num_bins);
-                let mut magnitudes = Vec::with_capacity(num_bins);
-                let mut phases = Vec::with_capacity(num_bins);
+                let spec_bins = spectrum.len();
+                let mut magnitudes = Vec::with_capacity(spec_bins);
+                let mut phases = Vec::with_capacity(spec_bins);
 
                 for (bin_idx, complex_val) in spectrum.iter().enumerate() {
-                    frequencies.push(bin_idx as f32 * freq_resolution);
-
                     // Normalize magnitude by FFT size and scale by 2 for non-DC/Nyquist bins
-                    let amplitude_scale = if bin_idx == 0 || bin_idx == num_bins - 1 { 1.0 } else { 2.0 };
+                    let amplitude_scale = if bin_idx == 0 || bin_idx == spec_bins - 1 {
+                        1.0
+                    } else {
+                        2.0
+                    };
                     magnitudes.push((complex_val.norm() / n_fft as f32) * amplitude_scale);
 
                     phases.push(complex_val.arg());
                 }
 
-                FftFrame {
+                Some(FftFrame {
                     time_seconds,
-                    frequencies,
                     magnitudes,
                     phases,
-                }
+                })
             })
             .collect();
 
-        Spectrogram::from_frames(frames)
+        Spectrogram::from_frames_with_frequencies(frames, frequencies)
     }
 }
-

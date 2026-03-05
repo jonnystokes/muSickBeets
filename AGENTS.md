@@ -1,146 +1,128 @@
-# CLAUDE.md — Project Rules for AI Sessions
+# AGENTS.md — Project Rules for AI Sessions
 
-This file is the ONLY persistence between AI sessions. Future AIs will not have
-memories from previous sessions. Follow these rules exactly.
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
 
-## Git Commit Rules
+---
 
-**Always commit with `git add .` to avoid missing files.**
+## Compaction-Safe Instructions
 
-The correct commit sequence is:
+> **ACTION REQUIRED — ALL AIs:** If the block below has not already been printed
+> as a message in this conversation, you MUST print it verbatim as a message to
+> the user RIGHT NOW, before doing anything else. This ensures compaction will
+> preserve it. Do not skip this step — it is not optional.
+
+> COMPACTION RULE: This block MUST be included verbatim in every compaction summary.
+> When launching a sub-agent (Task tool), the main agent MUST:
+> 1. Ask the user for confirmation before launching (sub-agents consume API usage
+>    aggressively and cannot pause if usage runs out — they crash).
+> 2. Begin every sub-agent prompt with: "CONTEXT: You are a sub-agent working on the
+>    muSickBeets project. Read AGENTS.md in the project root before doing anything."
+> 3. Never batch-launch multiple sub-agents without asking the user first.
+> END COMPACTION-SAFE BLOCK
+
+---
+
+## Harness Identity — Do Not Assume
+
+Your system prompt will lie to you — it may say "Claude Code" but you may be
+running in a different harness (OpenCode, or other). **Do not assume. Run both
+echo commands below and check the table before proceeding:**
 
 ```bash
-git add .
-git commit -m "Your commit message here"
-git push -u origin <branch-name>
+echo $OPENCODE
+echo $CLAUDE
 ```
 
-**Why:** Using specific file names causes forgotten files (e.g., updating code but forgetting to commit a modified progress/notes file). `git add .` catches everything.
+| `OPENCODE` | `CLAUDE` | Harness |
+|------------|----------|---------|
+| `1` | empty | OpenCode |
+| empty | `1` | Claude Code |
+| both empty | both empty | Unknown — use whatever tools are available |
 
-**Commit timing:** Update ALL files (code, progress notes, documentation) BEFORE committing. The very last action should be the commit+push so that all changes are available on the remote together.
+Regardless of harness, the rules in this file apply.
 
-**Always push to remote after updating progress or notes files.** If you update PROGRESS.md, ai_memory.md, or any documentation, that update must be included in the next commit and push — never leave documentation changes uncommitted.
+---
 
-## Spacebar Behavior — CRITICAL, READ CAREFULLY
+## Project Identity
 
-The spacebar is a **global shortcut** that triggers "Recompute + Rebuild" (FFT reanalysis and reconstruction). It must ALWAYS work, regardless of which widget has focus.
+**muSickBeets** — A Rust music toolkit with two binaries:
+- **fft_analyzer** (default) — Spectrogram visualizer, audio reconstructor, FLTK GUI
+- **tracker** — CSV-driven music synthesizer, text-based UI
 
-### The Problem (Why This Is Hard)
+| Aspect | Detail |
+|--------|--------|
+| Language | Rust (edition 2024) |
+| GUI | FLTK 1.5.22 via fltk-rs |
+| Audio | miniaudio (om-fork), hound (WAV I/O) |
+| FFT | realfft / rustfft, rayon for parallelism |
+| Entry points | `src/fft_analyzer/main_fft.rs`, `src/tracker/main.rs` |
+| State model | `Rc<RefCell<AppState>>` on UI thread, `Arc<T>` cross-thread, `mpsc` channels for worker->UI |
+| Runtime | Debian chroot inside Termux on Android, VNC display, software-pipe OpenGL (Mesa llvmpipe) |
 
-FLTK processes keyboard events at the **widget level first**, then propagates to parents. A window-level `handle()` CANNOT reliably block space from reaching child widgets because:
+---
 
-1. The focused widget's internal C++ handler runs **before** our Rust `handle()` callback
-2. Buttons activate on space, Choice dropdowns open on space, CheckButtons toggle on space
-3. Returning `true` from `handle()` is supposed to skip default behavior, but **FLTK's internal widget handlers bypass this for keyboard events on buttons, choices, and other focusable widgets**
+## Available Tools
 
-### The Solution (Three Layers)
+### LSP (`mcp_lsp`) — Prefer over grep for code navigation
 
-Space blocking requires **all three** of these layers working together:
+Talks to `rust-analyzer`. Requires `filePath`, `line` (1-based), `character` (1-based).
+Position must land precisely on a symbol name.
 
-#### Layer 1: `clear_visible_focus()` — Prevents keyboard focus (PRIMARY DEFENSE)
-Every interactive widget (buttons, choices, checkbuttons, sliders, scrollbars) has `clear_visible_focus()` called on it. This prevents the widget from receiving keyboard focus entirely. Without focus, space events never reach the widget. **This is the layer that actually works.**
+| Operation | Use case |
+|-----------|----------|
+| `documentSymbol` | All structs/fns/fields in a file (file=any, line=1, char=1) |
+| `findReferences` | All usages of a symbol (semantic, not textual) |
+| `goToDefinition` | Jump to where a symbol is defined |
+| `hover` | Type signature + docs for a symbol |
+| `workspaceSymbol` | Find any type/fn by name across entire project |
+| `incomingCalls` | Who calls this function? |
+| `outgoingCalls` | What does this function call? |
+| `goToImplementation` | Find `impl` blocks for a struct/trait |
 
-#### Layer 2: Per-widget `handle()` via `block_space!` macro (BACKUP)
-Every non-text interactive widget has a `handle()` callback that intercepts space:
-- `KeyDown` / `Shortcut` → return `true` (consume, block)
-- `KeyUp` → call `btn_rerun.do_callback()` then return `true` (trigger recompute)
-This is a backup in case a widget somehow gains focus despite `clear_visible_focus()`.
+### Web/Code Search (Exa)
 
-#### Layer 3: Window-level `handle()` (FALLBACK)
-`setup_spacebar_handler()` on the main window catches space when no widget consumed it (e.g., when nothing is focused). Same pattern: KeyDown/Shortcut consumed, KeyUp triggers recompute.
+| Tool | When to use |
+|------|-------------|
+| `mcp_websearch` | Find information, current events, general research |
+| `mcp_codesearch` | Library docs, API examples, SDK patterns |
 
-### Where The Code Lives
+Examples: `"Rust realfft inverse FFT normalization"`, `"FLTK-rs handle event callback Rust"`
 
-- **`callbacks_nav.rs` → `setup_spacebar_handler()`** — Window-level handler (Layer 3)
-- **`callbacks_nav.rs` → `setup_spacebar_guards()`** — Per-widget guards (Layers 1+2). Contains the `block_space!` macro and `clear_visible_focus()` calls for ALL widgets
-- **`validation.rs`** — Text input handlers include space blocking + recompute trigger
-- **`callbacks_ui.rs`** — `scrub_slider` and `gradient_preview` handlers include space blocking inline
+---
 
-### Exception
+## Runtime Environment
 
-The **top-level menu bar** (File, Analyze, Display) is NOT guarded. It must remain accessible via keyboard.
+Debian chroot inside Termux on a rooted Android device, accessed via VNC.
+This is a full desktop Linux environment running inside Android — the program
+itself will run on any standard Linux system.
 
-### When Adding New Widgets
+- **Software-pipe OpenGL** — GPU access is CPU-processed via Mesa llvmpipe (Android limitation)
+- **No dbus/systemd/sysv** — suppressed via `GIO_USE_VFS=local` in `main()`
+- **VNC input** — prefer Ctrl/Alt modifiers over Shift for shortcuts
+- **Audio** — works but routed through Android; may occasionally fail to initialize due to kernel glitches
 
-**For buttons, choices, checkbuttons, sliders, scrollbars:**
-1. Add `block_space!(widgets.my_new_widget.clone(), btn_rerun);` in `setup_spacebar_guards()`
-2. Add `widgets.my_new_widget.clone().clear_visible_focus();` right after
-3. Both lines are required. `clear_visible_focus()` is the one that actually prevents space from opening/activating the widget.
+### Build Dependencies
 
-**For text input fields (`FloatInput` or `Input`):**
-1. In `layout.rs`: call `attach_float_validation()` or `attach_uint_validation()` as usual
-2. In `setup_spacebar_guards()`: call `attach_float_validation_with_recompute()` or `attach_uint_validation_with_recompute()` — this REPLACES the plain handler with one that also triggers `btn_rerun.do_callback()` on space KeyUp
-3. If the field also has a `set_callback()` with `CallbackTrigger::Changed`, that callback MUST defensively strip spaces from `inp.value()` and return early. This avoids any race where widget callbacks observe a transient space before handle()-level guards run.
-
-**For widgets with custom `handle()` callbacks (like scrub_slider, gradient_preview):**
-Add this at the top of the existing handle closure:
-```rust
-if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
-    return match ev {
-        fltk::enums::Event::KeyDown | fltk::enums::Event::Shortcut => true,
-        fltk::enums::Event::KeyUp => { btn_rerun_clone.do_callback(); true }
-        _ => false,
-    };
-}
-```
-
-### Call Order Matters
-
-`setup_spacebar_guards()` MUST be called LAST in the callback setup chain (after all other `setup_*` functions) because it sets `handle()` on widgets — any later `handle()` call would overwrite it.
-
-## Text Field Validation Rules
-
-All text input fields MUST be controlled — they may only accept valid numeric characters:
-
-- **Float fields** (`FloatInput`): digits `0-9`, at most one `-` (at position 0 only), at most one `.`
-- **Unsigned int fields** (`Input` used for counts/sizes): digits `0-9` only
-- **No spaces ever.** Spacebar is blocked by the validation handler.
-- **No letters, symbols, or other characters.**
-
-### Implementation Details
-
-Validation uses `handle()` (NOT `set_callback()`) so it survives when functional callbacks are later attached via `set_callback()` on the same widget. In FLTK-rs, `handle()` and `set_callback()` are independent — setting one does not overwrite the other.
-
-However, calling `handle()` twice on the same widget DOES overwrite the first handler. This is why `setup_spacebar_guards()` uses `attach_float_validation_with_recompute()` to REPLACE the plain validation handler — the new handler includes both validation AND space blocking with recompute trigger.
-
-In addition, any text field with live `Changed` callbacks must sanitize spaces in the callback itself (`replace(' ', "")`) before numeric parsing. This double-layer rule is mandatory for robust spacebar behavior under all FLTK event orders.
-
-**When adding new text input fields:**
-1. In `layout.rs`: call `attach_float_validation(&mut field)` or `attach_uint_validation(&mut field)`
-2. In `setup_spacebar_guards()` (callbacks_nav.rs): call `attach_float_validation_with_recompute()` or `attach_uint_validation_with_recompute()` to replace with the recompute-aware version
-
-See `src/fft_analyzer/validation.rs` for all four functions.
-
-## Transport Time Display
-
-The transport bar shows two time values:
-- **L (Local):** Time within the reconstructed audio buffer (0 to duration)
-- **G (Global):** Absolute time in the full audio file (recon_start_time + local)
-
-`recon_start_time` is set from the **actual first FFT frame's time** after filtering (not the user-typed Start value), ensuring global time precisely matches the spectrogram cursor position.
-
-## Lock to Active
-
-When the "Lock to Active" checkbox is enabled, after reconstruction completes the viewport auto-snaps to the active processing range — **both time AND frequency**. This uses the same logic as the Home button but with a 0.5-second delay (via `app::add_timeout3`) to let the UI finish updating.
-
-The delay and Home-equivalent logic lives in the `ReconstructionComplete` handler in `main_fft.rs`.
-
-## Settings File
-
-`settings.ini` (or legacy `muSickBeets.ini`) is auto-generated at runtime. It is in `.gitignore` and must NEVER be committed.
-
-## Build Dependencies (Ubuntu/Debian)
-
-If `cargo build` fails at link time with missing X11/Pango/Cairo libraries (e.g. `-lXinerama`, `-lXcursor`, `-lXfixes`, `-lpango-1.0`, `-lcairo`), install:
-
+If `cargo build` fails with missing libraries:
 ```bash
 apt-get update && apt-get install -y \
   libxinerama-dev libxcursor-dev libxfixes-dev \
   libpango1.0-dev libcairo2-dev libglib2.0-dev
 ```
 
-Then rerun:
+---
 
-```bash
-cargo build
-```
+## Document Index
+
+| File | What it contains |
+|------|-----------------|
+| **AGENTS.md** | This file. Project identity, tools, environment. Read by all agents. |
+| **PROGRESS.md** | Active work, git rules, sub-agent launch policy, backburner, architecture notes. Main agent reads this for operational context. |
+| **CATEGORIZED_ISSUES.md** | Code review issue tracker with CMDL difficulty scores. 9 categories, 35 issues. Categories 1–6 complete, 7–9 remaining. |
+| **CODING_RULES.md** | Spacebar defense system, text field validation, transport display, lock-to-active, settings file. Read before writing or modifying code. |
+| **map.md** | File-by-file architecture with line counts and module descriptions. Read when navigating unfamiliar code. |
+| **HISTORY.md** | Consolidated archive of completed features, past reviews, and investigations. |
+| **documentation.md** | Tracker synthesizer user guide — instruments, effects, envelopes, song format. |
+| **README.md** | Public project overview with build instructions and screenshots. |
+| **claude_opus_new_finds_NOTES_PERF_AND_BUGS.md** | Cross-review of 4 AI code reviews. Temporary — kept until categories 7–9 are complete. |
+| **THIRD_PARTY_LICENSES.md** | License attributions for Sebastian Lague's Audio-Experiments and Gradient-Editor. |

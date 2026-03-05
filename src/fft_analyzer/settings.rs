@@ -42,6 +42,7 @@ pub struct Settings {
     pub time_zoom_factor: f32, // multiplier per click, e.g. 1.5
     pub freq_zoom_factor: f32,
     pub mouse_zoom_factor: f32, // for scroll wheel
+    pub swap_zoom_axes: bool,   // swap which axis Alt vs Alt+Ctrl zooms
 
     // ── Window ──
     pub window_width: i32,
@@ -118,6 +119,7 @@ impl Default for Settings {
             time_zoom_factor: 1.5,
             freq_zoom_factor: 1.5,
             mouse_zoom_factor: 1.2,
+            swap_zoom_axes: false,
 
             // Window
             window_width: 1200,
@@ -252,6 +254,7 @@ impl Settings {
         cfg.time_zoom_factor = st.time_zoom_factor;
         cfg.freq_zoom_factor = st.freq_zoom_factor;
         cfg.mouse_zoom_factor = st.mouse_zoom_factor;
+        cfg.swap_zoom_axes = st.swap_zoom_axes;
 
         // UI
         cfg.lock_to_active = st.lock_to_active;
@@ -328,6 +331,10 @@ impl Settings {
         s.push_str(&format!("time_zoom_factor = {}\n", self.time_zoom_factor));
         s.push_str(&format!("freq_zoom_factor = {}\n", self.freq_zoom_factor));
         s.push_str(&format!("mouse_zoom_factor = {}\n", self.mouse_zoom_factor));
+        s.push_str(
+            "# swap_zoom_axes: false = Alt zooms freq, Alt+Ctrl zooms time; true = swapped\n",
+        );
+        s.push_str(&format!("swap_zoom_axes = {}\n", self.swap_zoom_axes));
         s.push('\n');
 
         s.push_str("[Window]\n");
@@ -390,172 +397,148 @@ impl Settings {
         let map = parse_ini_to_map(content);
 
         // Analysis
-        if let Some(v) = map.get("window_length") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("window_length")
+            && let Ok(n) = v.parse() {
                 self.window_length = n;
             }
-        }
-        if let Some(v) = map.get("overlap_percent") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("overlap_percent")
+            && let Ok(n) = v.parse() {
                 self.overlap_percent = n;
             }
-        }
         if let Some(v) = map.get("window_type") {
             self.window_type = v.clone();
         }
-        if let Some(v) = map.get("kaiser_beta") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("kaiser_beta")
+            && let Ok(n) = v.parse() {
                 self.kaiser_beta = n;
             }
-        }
         if let Some(v) = map.get("center_pad") {
             self.center_pad = v == "true";
         }
-        if let Some(v) = map.get("zero_pad_factor") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("zero_pad_factor")
+            && let Ok(n) = v.parse() {
                 self.zero_pad_factor = n;
             }
-        }
-        if let Some(v) = map.get("target_segments_per_active") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("target_segments_per_active")
+            && let Ok(n) = v.parse() {
                 self.target_segments_per_active = n;
             }
-        }
-        if let Some(v) = map.get("target_bins_per_segment") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("target_bins_per_segment")
+            && let Ok(n) = v.parse() {
                 self.target_bins_per_segment = n;
             }
-        }
         if let Some(v) = map.get("last_edited_field") {
             self.last_edited_field = v.clone();
         }
 
         // View
-        if let Some(v) = map.get("view_freq_min_hz") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("view_freq_min_hz")
+            && let Ok(n) = v.parse() {
                 self.view_freq_min_hz = n;
             }
-        }
-        if let Some(v) = map.get("view_freq_max_hz") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("view_freq_max_hz")
+            && let Ok(n) = v.parse() {
                 self.view_freq_max_hz = n;
             }
-        }
-        if let Some(v) = map.get("freq_scale_power") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("freq_scale_power")
+            && let Ok(n) = v.parse() {
                 self.freq_scale_power = n;
             }
-        }
 
         // Display
         if let Some(v) = map.get("colormap") {
             self.colormap = v.clone();
         }
-        if let Some(v) = map.get("threshold_db") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("threshold_db")
+            && let Ok(n) = v.parse() {
                 self.threshold_db = n;
             }
-        }
-        if let Some(v) = map.get("db_ceiling") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("db_ceiling")
+            && let Ok(n) = v.parse() {
                 self.db_ceiling = n;
             }
-        }
-        if let Some(v) = map.get("brightness") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("brightness")
+            && let Ok(n) = v.parse() {
                 self.brightness = n;
             }
-        }
-        if let Some(v) = map.get("gamma") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("gamma")
+            && let Ok(n) = v.parse() {
                 self.gamma = n;
             }
-        }
 
         // Reconstruction
-        if let Some(v) = map.get("recon_freq_min_hz") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("recon_freq_min_hz")
+            && let Ok(n) = v.parse() {
                 self.recon_freq_min_hz = n;
             }
-        }
-        if let Some(v) = map.get("recon_freq_max_hz") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("recon_freq_max_hz")
+            && let Ok(n) = v.parse() {
                 self.recon_freq_max_hz = n;
             }
-        }
-        if let Some(v) = map.get("recon_freq_count") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("recon_freq_count")
+            && let Ok(n) = v.parse() {
                 self.recon_freq_count = n;
             }
-        }
 
         // Audio
         if let Some(v) = map.get("normalize_audio") {
             self.normalize_audio = v == "true";
         }
-        if let Some(v) = map.get("normalize_peak") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("normalize_peak")
+            && let Ok(n) = v.parse() {
                 self.normalize_peak = n;
             }
-        }
 
         // Zoom
-        if let Some(v) = map.get("time_zoom_factor") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("time_zoom_factor")
+            && let Ok(n) = v.parse() {
                 self.time_zoom_factor = n;
             }
-        }
-        if let Some(v) = map.get("freq_zoom_factor") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("freq_zoom_factor")
+            && let Ok(n) = v.parse() {
                 self.freq_zoom_factor = n;
             }
-        }
-        if let Some(v) = map.get("mouse_zoom_factor") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("mouse_zoom_factor")
+            && let Ok(n) = v.parse() {
                 self.mouse_zoom_factor = n;
             }
+        if let Some(v) = map.get("swap_zoom_axes") {
+            self.swap_zoom_axes = v == "true";
         }
 
         // Window
-        if let Some(v) = map.get("window_width") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("window_width")
+            && let Ok(n) = v.parse() {
                 self.window_width = n;
             }
-        }
-        if let Some(v) = map.get("window_height") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("window_height")
+            && let Ok(n) = v.parse() {
                 self.window_height = n;
             }
-        }
-        if let Some(v) = map.get("sidebar_width") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("sidebar_width")
+            && let Ok(n) = v.parse() {
                 self.sidebar_width = n;
             }
-        }
 
         // Axis Labels
-        if let Some(v) = map.get("axis_font_size") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("axis_font_size")
+            && let Ok(n) = v.parse() {
                 self.axis_font_size = n;
             }
-        }
-        if let Some(v) = map.get("freq_axis_width") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("freq_axis_width")
+            && let Ok(n) = v.parse() {
                 self.freq_axis_width = n;
             }
-        }
-        if let Some(v) = map.get("time_axis_height") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("time_axis_height")
+            && let Ok(n) = v.parse() {
                 self.time_axis_height = n;
             }
-        }
 
         // Waveform
-        if let Some(v) = map.get("waveform_height") {
-            if let Ok(n) = v.parse() {
+        if let Some(v) = map.get("waveform_height")
+            && let Ok(n) = v.parse() {
                 self.waveform_height = n;
             }
-        }
 
         // UI
         if let Some(v) = map.get("show_tooltips") {
@@ -574,51 +557,42 @@ impl Settings {
         }
 
         // Colors
-        if let Some(v) = map.get("color_background") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_background")
+            && let Some(n) = parse_hex(v) {
                 self.color_background = n;
             }
-        }
-        if let Some(v) = map.get("color_panel") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_panel")
+            && let Some(n) = parse_hex(v) {
                 self.color_panel = n;
             }
-        }
-        if let Some(v) = map.get("color_widget") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_widget")
+            && let Some(n) = parse_hex(v) {
                 self.color_widget = n;
             }
-        }
-        if let Some(v) = map.get("color_text_primary") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_text_primary")
+            && let Some(n) = parse_hex(v) {
                 self.color_text_primary = n;
             }
-        }
-        if let Some(v) = map.get("color_text_secondary") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_text_secondary")
+            && let Some(n) = parse_hex(v) {
                 self.color_text_secondary = n;
             }
-        }
-        if let Some(v) = map.get("color_accent") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_accent")
+            && let Some(n) = parse_hex(v) {
                 self.color_accent = n;
             }
-        }
-        if let Some(v) = map.get("color_waveform") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_waveform")
+            && let Some(n) = parse_hex(v) {
                 self.color_waveform = n;
             }
-        }
-        if let Some(v) = map.get("color_cursor") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_cursor")
+            && let Some(n) = parse_hex(v) {
                 self.color_cursor = n;
             }
-        }
-        if let Some(v) = map.get("color_center_line") {
-            if let Some(n) = parse_hex(v) {
+        if let Some(v) = map.get("color_center_line")
+            && let Some(n) = parse_hex(v) {
                 self.color_center_line = n;
             }
-        }
     }
 
     /// Convert window_type string to the WindowType enum value index

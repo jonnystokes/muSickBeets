@@ -115,30 +115,30 @@ impl FftParams {
 
         match self.window_type {
             WindowType::Hann => {
-                for i in 0..n {
-                    window[i] = 0.5 * (1.0 - ((2.0 * PI * i as f32) / (n - 1) as f32).cos());
+                for (i, w) in window.iter_mut().enumerate() {
+                    *w = 0.5 * (1.0 - ((2.0 * PI * i as f32) / (n - 1) as f32).cos());
                 }
             }
             WindowType::Hamming => {
-                for i in 0..n {
-                    window[i] = 0.54 - 0.46 * ((2.0 * PI * i as f32) / (n - 1) as f32).cos();
+                for (i, w) in window.iter_mut().enumerate() {
+                    *w = 0.54 - 0.46 * ((2.0 * PI * i as f32) / (n - 1) as f32).cos();
                 }
             }
             WindowType::Blackman => {
                 let a0 = 0.42;
                 let a1 = 0.5;
                 let a2 = 0.08;
-                for i in 0..n {
+                for (i, w) in window.iter_mut().enumerate() {
                     let x = (2.0 * PI * i as f32) / (n - 1) as f32;
-                    window[i] = a0 - a1 * x.cos() + a2 * (2.0 * x).cos();
+                    *w = a0 - a1 * x.cos() + a2 * (2.0 * x).cos();
                 }
             }
             WindowType::Kaiser(beta) => {
                 let ino_beta = bessel_i0(beta);
-                for i in 0..n {
+                for (i, w) in window.iter_mut().enumerate() {
                     let x = (2.0 * i as f32) / (n - 1) as f32 - 1.0;
                     let arg = beta * (1.0 - x * x).sqrt();
-                    window[i] = bessel_i0(arg) / ino_beta;
+                    *w = bessel_i0(arg) / ino_beta;
                 }
             }
         }

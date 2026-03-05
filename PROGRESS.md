@@ -1,137 +1,82 @@
-# Operation Progress Tracker
+# Progress Tracker
 
-## Recently Completed
-- [x] Segmentation Overhaul (all 5 features from plan below):
-  1. Resolution trade-off display (live multi-line info in ANALYSIS section)
-  2. dB ceiling slider (DISPLAY section, auto-set from data, user-adjustable)
-  3. Direct segment size input + presets (typed input + dropdown, +/- steps through presets)
-  4. Zero-padding factor (1x/2x/4x/8x, full FFT pipeline integration)
-  5. Hop size display (read-only, below overlap slider)
-- [x] Bug fixes (Feb 2026):
-  - Text field validation: switched from set_callback() to handle() so validation survives
-    when functional callbacks are attached later. Spaces and invalid chars now blocked everywhere.
-  - Spacebar guard: space consumed at window level (KeyDown+KeyUp+Shortcut all return true),
-    preventing it from reaching focused buttons, dropdowns, or text fields.
-  - Global time display: transport bar now shows "L" (local) and "G" (global) time.
-    Global = absolute time in full file. Local = offset within reconstructed buffer.
-  - Time calculation precision: recon_start_time now set from actual first FFT frame time
-    (not user-typed Start value), so global time matches spectrogram cursor exactly.
-  - Volume reduction fix: reconstructor overlap-add normalization uses adaptive threshold
-    (10% of peak window_sum) to prevent edge amplification artifacts with few frames.
-- [x] Custom gradient/color ramp editor (SebLague-inspired)
-  - GradientStop data structure, eval_gradient(), default 7-stop rainbow
-  - Custom variant added to ColormapId (8th dropdown option)
-  - Interactive preview widget: click to add, drag to move, right-click to delete, double-click for color picker
-  - ColorLUT extended with set_custom_stops() for dynamic gradient rendering
-  - Save/load custom gradient to settings.ini
-- [x] Remove 64-sample minimum on segment size (now allows down to 2)
-- [x] Fix Save As Default button (SIDEBAR_INNER_H overflow from new gradient widget)
-- [x] Spacebar guard v3 — FINAL (Feb 2026):
-  - Three-layer approach: clear_visible_focus + per-widget handle() + window handler
-  - Layer 1 (PRIMARY): `clear_visible_focus()` on ALL buttons, choices, checkbuttons, sliders,
-    scrollbars prevents keyboard focus so space never reaches widgets
-  - Layer 2 (BACKUP): `block_space!` macro + `handle()` intercepts space, triggers recompute
-  - Layer 3 (FALLBACK): Window-level handler catches space when nothing is focused
-  - Text inputs: `attach_float/uint_validation_with_recompute()` in validation.rs
-  - `scrub_slider` and `gradient_preview` handlers include space blocking inline
-  - Only exception: top menu bar (File, Analyze, Display) not guarded
-  - Full rules documented in CLAUDE.md for future AI sessions
-- [x] Lock to Active v2 (Feb 2026):
-  - Now matches Home button behavior: snaps both time AND frequency to active range
-  - Uses 0.5s delay via app::add_timeout3 after reconstruction completes
-  - Frequency snaps to recon_freq_min/max (same as Home button)
-  - Tooltip updated to mention both time and frequency
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
 
-## Active TODO
-- [ ] Segmentation Overhaul (see detailed plan below)
-- [ ] Auto-regenerate mode (careful - software rendering only, no GPU)
-
-## Backburner
-- File open freeze  used to happens intermittently
-  - Debug logging prints thread state to terminal when Open is clicked
+This file is for the **main agent**. For completed features, see [HISTORY.md](HISTORY.md).
 
 ---
 
-## Feature: Segmentation Overhaul
+## Git Rules
 
-### Vision
-Give the user full control over FFT segmentation with intuitive controls:
-- Select number of **bins per segment** (frequency resolution control)
-- Select number of **segments per active window area** (time resolution control)
-- Switch between **samples and seconds** for all time-based parameters, with automatic conversion between the two
-- Live resolution feedback showing the time/frequency trade-off as parameters change
+**Always commit with `git add .` to avoid missing files.**
 
-### Current State (What Exists)
+```bash
+git add .
+git commit -m "Your commit message here"
+git push
+```
 
-**Segment size** (`fft_params.window_length`):
-- Controlled by +/- buttons and preset Choice dropdown (256 to 65536 + Custom)
-- Typed input field with uint validation (Input widget)
-- Default: 8192 samples
+- Update ALL files (code, docs, progress) BEFORE committing.
+- Never commit `settings.ini` (it's in `.gitignore`, auto-generated at runtime).
+- Always push to remote after updating progress or documentation files.
 
-**Overlap** (`fft_params.overlap_percent`):
-- HorNiceSlider 0-95%, with hop size display below
-- Default: 75%
+---
 
-**Window type** (`fft_params.window_type`):
-- Choice dropdown: Hann/Hamming/Blackman/Kaiser
-- Kaiser beta exposed as FloatInput (default 8.6)
+## Sub-Agent Launch Policy
 
-**Zero-padding** (`fft_params.zero_pad_factor`):
-- Choice dropdown: 1x/2x/4x/8x
-- Interpolates frequency bins for smoother spectrograms
+**Before launching ANY sub-agent (Task tool), ask the user for confirmation.**
 
-**Center/Pad** (`fft_params.use_center`):
-- CheckButton toggle, adds zero-padding equal to window_length/2 on each side
+Sub-agents consume API usage aggressively and **cannot pause** if usage runs out —
+they crash. The main agent CAN pause and wait for usage to refill; sub-agents cannot.
 
-**Resolution display** (read-only):
-- Live multi-line info showing freq resolution, time resolution, bins, segments, hop size
-- Updates on any parameter change
+**Required flow:**
+1. Use `mcp_question` to ask: "I'd like to launch a sub-agent for [task]. Proceed?"
+2. If user says no, do the work yourself instead.
+3. If user says yes, begin the sub-agent prompt with the preamble from AGENTS.md.
+4. Never batch-launch multiple sub-agents without asking first.
 
-**Processing flow**:
-- Recompute button (or spacebar) syncs all fields -> state, launches full-file FFT on background thread
-- FFT processes entire file; sidebar Start/Stop = reconstruction time range only
-- Reconstruction auto-triggered on FFT completion via WorkerMessage::FftComplete handler in main_fft.rs
+---
 
-### Proposed Changes
+## Active Work
 
-#### 1. Bins-Per-Segment Control
-Allow the user to specify how many frequency bins they want per segment. This is derived from
-`n_fft_padded / 2 + 1` currently but could be driven from the other direction — user picks
-desired frequency resolution (bins or Hz/bin) and segment size is computed automatically.
+### Code Review Issues ([CATEGORIZED_ISSUES.md](CATEGORIZED_ISSUES.md))
 
-#### 2. Segments-Per-Window Control
-Allow the user to specify how many time frames (segments) should fit in the active processing
-window. This would auto-compute overlap/hop size to achieve the desired segment count for the
-given time range and segment size.
+**ALL 9 categories COMPLETE** (35 issues total: 28 code fixes, 7 assessed/already-fixed/not-actionable).
 
-#### 3. Samples/Seconds Dual Mode (Enhanced)
-The time unit toggle already converts Start/Stop between samples and seconds. Extend this to
-ALL time-based displays and inputs so the user can think entirely in samples or entirely in
-seconds. The resolution display, hop size, segment duration, etc. should all respect the chosen
-unit. Automatic conversion between the two should be seamless.
+- [x] **Category 7:** Memory Efficiency (2 items) — COMPLETE
+  - Shared frequency vector on Spectrogram (~16 MB savings)
+  - Zero-copy frame range for reconstruction (~49 MB savings)
+- [x] **Category 8:** Rendering Performance (5 items) — COMPLETE
+  - Binary search bin lookup (O(n) → O(log n))
+  - Skip sort when all bins active
+  - Proper view hash (DefaultHasher + to_bits)
+  - Parallel waveform peak rendering (rayon)
+  - GUI-blocking render assessed, deferred (existing mitigations sufficient)
+- [x] **Category 9:** FFT/Reconstruction Pipeline (4 items) — COMPLETE
+  - Thread-local FFT planner (reuse across rayon threads)
+  - Worker cancellation via Arc<AtomicBool>
+  - Sequential overlap-add assessed (inherent to algorithm)
+  - Magnitude scaling already fixed in Category 3
+  - Per-frame FFT planner allocation
+  - No worker cancellation mechanism
+  - Sequential overlap-add (inherent to algorithm)
+  - Magnitude scaling mismatch (forward/inverse)
 
-### Files Likely Affected
+---
 
-| File | Changes |
-|------|---------|
-| `data/fft_params.rs` | New computed properties for bins-per-segment and segments-per-window |
-| `layout.rs` | New input widgets for bin count and segment count controls |
-| `callbacks_ui.rs` | New callbacks, bidirectional parameter computation |
-| `callbacks_file.rs` | Sync new fields in rerun callback |
-| `app_state.rs` | Update DerivedInfo for new computed stats |
-| `settings.rs` | Persist new parameters |
+## Backburner
 
-### Edge Cases and Constraints
-- **realfft requires even FFT sizes**: Any auto-computed segment size must be rounded to even
-- **Minimum segment**: 2 samples
-- **Maximum segment**: ~131072 before FFT becomes slow
-- **Overlap >= 100%**: Capped at 95% by slider
-- **CSV compatibility**: Old CSV files won't have new metadata keys. Default on import.
-- **Settings migration**: New INI keys absent from old files fall through to defaults
+- [ ] File open freeze — intermittent, debug logging in place but root cause not found
+- [ ] Analysis presets layer (transients, tonal, balanced)
+- [ ] Per-section reset-to-default (Analysis / Display / Reconstruction)
+- [ ] FFT Analyzer user guide (documentation.md is tracker-centric)
+- [ ] Update map.md line counts and architecture summaries after major refactors
+- [ ] Update README.md after this development stage
 
 ---
 
 ## Key Architecture Notes
+
 - Settings loaded in main() before UI, applied to AppState
 - FreqScale::Power(f32) replaces old Log/Linear toggle
 - Audio normalization happens both on file load AND after reconstruction
@@ -140,10 +85,4 @@ unit. Automatic conversion between the two should be seamless.
 - is_seeking flag prevents playback from auto-pausing during cursor drag
 - Save As Default captures current AppState into Settings struct and writes INI
 - Custom gradient: Vec<GradientStop> in ViewState, piped through ColorLUT and SpectrogramRenderer
-
-## Settings File Location
-`settings.ini` in the working directory (created on first run)
-
-## Attribution
-- Spectrogram visualization and reconstruction inspired by [Audio-Experiments](https://github.com/SebLague/Audio-Experiments) by Sebastian Lague (MIT License)
-- Custom gradient editor inspired by [Gradient-Editor](https://github.com/SebLague/Gradient-Editor) by Sebastian Lague
+- Settings file: `settings.ini` in working directory (created on first run)

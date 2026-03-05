@@ -1,36 +1,63 @@
+/// Per-frame FFT data: time position, magnitudes, and phases.
+/// Frequency bin values are shared across all frames in a Spectrogram
+/// (every frame has the same frequency bins), so they live on the
+/// Spectrogram struct instead of being duplicated per frame.
 #[derive(Debug, Clone)]
 pub struct FftFrame {
     pub time_seconds: f64,
-    pub frequencies: Vec<f32>,
     pub magnitudes: Vec<f32>,
     pub phases: Vec<f32>,
 }
 
+/// Collection of FFT frames with shared frequency bin vector.
+///
+/// All frames in a spectrogram share the same frequency bins
+/// (bin_index * freq_resolution), stored once in `frequencies`
+/// rather than duplicated per frame (~16 MB savings for 1000
+/// frames with 4096 bins).
 #[derive(Debug, Clone)]
 pub struct Spectrogram {
     pub frames: Vec<FftFrame>,
+    /// Frequency value for each bin index, shared across all frames.
+    pub frequencies: Vec<f32>,
     pub max_freq: f32,
     pub min_time: f64,
     pub max_time: f64,
 }
 
 impl Spectrogram {
-    pub fn from_frames(frames: Vec<FftFrame>) -> Self {
+    /// Build a Spectrogram from pre-computed frames and a shared frequency vector.
+    ///
+    /// `frequencies` contains the frequency value for each bin index.
+    /// All frames must have magnitudes/phases vectors of the same length as `frequencies`.
+    pub fn from_frames_with_frequencies(mut frames: Vec<FftFrame>, frequencies: Vec<f32>) -> Self {
         if frames.is_empty() {
             return Self {
                 frames: Vec::new(),
+                frequencies,
                 max_freq: 0.0,
                 min_time: 0.0,
                 max_time: 0.0,
             };
         }
 
+        // Defensive sort: guarantee frames are ordered by time.
+        // In normal usage frames arrive pre-sorted (rayon preserves index order,
+        // CSV import uses BTreeMap), but this is a public API and callers
+        // should not be required to uphold a sorting invariant.
+        frames.sort_by(|a, b| {
+            a.time_seconds
+                .partial_cmp(&b.time_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         let min_time = frames.first().unwrap().time_seconds;
         let max_time = frames.last().unwrap().time_seconds;
-        let max_freq = frames[0].frequencies.last().copied().unwrap_or(0.0);
+        let max_freq = frequencies.last().copied().unwrap_or(0.0);
 
         Self {
             frames,
+            frequencies,
             max_freq,
             min_time,
             max_time,
@@ -44,7 +71,7 @@ impl Spectrogram {
 
     #[inline]
     pub fn num_bins(&self) -> usize {
-        self.frames.first().map(|f| f.magnitudes.len()).unwrap_or(0)
+        self.frequencies.len()
     }
 
     #[inline]
@@ -53,27 +80,41 @@ impl Spectrogram {
     }
 
     pub fn bin_at_freq(&self, freq_hz: f32) -> Option<usize> {
-        let frame = self.frames.first()?;
-        frame.frequencies
-            .iter()
-            .position(|&f| f >= freq_hz)
+        if self.frequencies.is_empty() {
+            return None;
+        }
+        // Binary search: frequencies vec is sorted (bin_index * freq_resolution)
+        let idx = self.frequencies.partition_point(|&f| f < freq_hz);
+        if idx < self.frequencies.len() {
+            Some(idx)
+        } else {
+            // freq_hz is above all bins — return last bin
+            Some(self.frequencies.len() - 1)
+        }
     }
 
     /// Find the maximum magnitude across all frames and bins
     pub fn max_magnitude(&self) -> f32 {
-        self.frames.iter()
+        self.frames
+            .iter()
             .flat_map(|f| f.magnitudes.iter())
             .copied()
             .fold(0.0f32, f32::max)
     }
 
-    /// Find the frame index closest to the given time
+    /// Find the frame index closest to the given time.
+    /// Returns None for empty spectrograms or NaN input.
     pub fn frame_at_time(&self, time_seconds: f64) -> Option<usize> {
-        if self.frames.is_empty() {
+        if self.frames.is_empty() || time_seconds.is_nan() {
             return None;
         }
-        let idx = self.frames
-            .binary_search_by(|f| f.time_seconds.partial_cmp(&time_seconds).unwrap())
+        let idx = self
+            .frames
+            .binary_search_by(|f| {
+                f.time_seconds
+                    .partial_cmp(&time_seconds)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .unwrap_or_else(|i| i.min(self.frames.len() - 1));
         Some(idx)
     }
@@ -81,7 +122,6 @@ impl Spectrogram {
 
 impl Default for Spectrogram {
     fn default() -> Self {
-        Self::from_frames(Vec::new())
+        Self::from_frames_with_frequencies(Vec::new(), Vec::new())
     }
 }
-

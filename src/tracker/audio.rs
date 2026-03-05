@@ -62,7 +62,7 @@ pub fn write_wav_file(
         return Err("No samples to write".to_string());
     }
 
-    if samples.len() % 2 != 0 {
+    if !samples.len().is_multiple_of(2) {
         return Err("Sample count must be even (stereo)".to_string());
     }
 

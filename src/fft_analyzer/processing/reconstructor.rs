@@ -1,25 +1,57 @@
+use std::cell::RefCell;
+use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use rayon::prelude::*;
 use realfft::RealFftPlanner;
 use rustfft::num_complex::Complex;
 
 use crate::data::{AudioData, FftParams, Spectrogram, ViewState};
 
+thread_local! {
+    /// Per-thread IFFT planner cache. Reusing one planner per rayon thread
+    /// avoids re-planning for every frame during reconstruction.
+    static IFFT_PLANNER: RefCell<RealFftPlanner<f32>> = RefCell::new(RealFftPlanner::new());
+}
+
 /// Reconstructs audio from spectrogram data with configurable frequency filtering.
 pub struct Reconstructor;
 
 impl Reconstructor {
-    /// Reconstruct audio from a spectrogram using current view state settings.
-    /// - `freq_count`: how many top-magnitude bins to keep per frame (1..=max)
-    /// - `freq_min/max`: frequency range to include
+    /// Reconstruct audio from all frames in a spectrogram.
+    #[allow(dead_code)]
     pub fn reconstruct(
         spectrogram: &Spectrogram,
         params: &FftParams,
         view: &ViewState,
+        cancel: &AtomicBool,
+    ) -> AudioData {
+        Self::reconstruct_range(
+            spectrogram,
+            params,
+            view,
+            0..spectrogram.num_frames(),
+            cancel,
+        )
+    }
+
+    /// Reconstruct audio from a subset of frames identified by index range.
+    ///
+    /// This avoids cloning frames for time-filtered reconstruction: the caller
+    /// computes the index range on the main thread and passes it here (zero-copy).
+    /// For a 1000-frame spectrogram with 4096 bins, this saves ~49 MB of cloning.
+    /// If `cancel` is set to true, processing stops early.
+    pub fn reconstruct_range(
+        spectrogram: &Spectrogram,
+        params: &FftParams,
+        view: &ViewState,
+        frame_range: Range<usize>,
+        cancel: &AtomicBool,
     ) -> AudioData {
         let hop = params.hop_length();
         let window_len = params.window_length;
         let n_fft = params.n_fft_padded();
-        let num_frames = spectrogram.num_frames();
+        let num_frames = frame_range.len();
         let window = params.generate_window();
 
         if num_frames == 0 {
@@ -38,13 +70,20 @@ impl Reconstructor {
             (num_frames - 1) * hop + window_len
         };
 
-        // Phase 1: Parallel IFFT for each frame
-        let frame_results: Vec<(usize, Vec<f32>)> = (0..num_frames)
-            .into_par_iter()
-            .map(|frame_idx| {
-                let frame = &spectrogram.frames[frame_idx];
-                let mut planner = RealFftPlanner::<f32>::new();
-                let ifft = planner.plan_fft_inverse(n_fft);
+        // Phase 1: Parallel IFFT for each frame in the range.
+        // Cancelled frames return None and are filtered out.
+        let frame_indices: Vec<usize> = frame_range.collect();
+        let frame_results: Vec<(usize, Vec<f32>)> = frame_indices
+            .par_iter()
+            .enumerate()
+            .filter_map(|(local_idx, &global_idx)| {
+                // Check cancellation before expensive work
+                if cancel.load(Ordering::Relaxed) {
+                    return None;
+                }
+
+                let frame = &spectrogram.frames[global_idx];
+                let ifft = IFFT_PLANNER.with(|p| p.borrow_mut().plan_fft_inverse(n_fft));
 
                 let mut spectrum = ifft.make_input_vec();
                 let mut time_buffer = ifft.make_output_vec();
@@ -53,8 +92,10 @@ impl Reconstructor {
                 // First, determine which bins to include based on frequency range
                 let mut bin_mags: Vec<(usize, f32)> = Vec::new();
 
-                for (i, (&mag, &freq)) in frame.magnitudes.iter()
-                    .zip(frame.frequencies.iter())
+                for (i, (&mag, &freq)) in frame
+                    .magnitudes
+                    .iter()
+                    .zip(spectrogram.frequencies.iter())
                     .enumerate()
                 {
                     if i < spectrum.len()
@@ -68,10 +109,8 @@ impl Reconstructor {
                 // Sort by magnitude descending, keep only top N
                 bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
                 let keep_count = view.recon_freq_count.min(bin_mags.len());
-                let kept_bins: Vec<usize> = bin_mags[..keep_count]
-                    .iter()
-                    .map(|&(idx, _)| idx)
-                    .collect();
+                let kept_bins: Vec<usize> =
+                    bin_mags[..keep_count].iter().map(|&(idx, _)| idx).collect();
 
                 // Zero the spectrum, then fill in kept bins
                 for s in spectrum.iter_mut() {
@@ -82,17 +121,28 @@ impl Reconstructor {
                     let mag = frame.magnitudes[i];
                     let phase = frame.phases[i];
 
-                    if i == 0 || i == spectrum.len() - 1 {
-                        spectrum[i] = Complex::new(mag * phase.cos(), 0.0);
+                    // Undo the forward-pass scaling to recover raw spectrum values.
+                    // Forward pass stored: mag = (|X[k]| / N) * amplitude_scale
+                    //   DC/Nyquist (amplitude_scale=1): mag = |X[k]| / N  -> recover: mag * N
+                    //   Other bins (amplitude_scale=2):  mag = |X[k]| * 2 / N -> recover: mag * N / 2
+                    let raw_mag = if i == 0 || i == spectrum.len() - 1 {
+                        mag * n_fft as f32 // undo /N only
                     } else {
-                        spectrum[i] = Complex::from_polar(mag, phase);
+                        mag * n_fft as f32 / 2.0 // undo /N and *2
+                    };
+
+                    if i == 0 || i == spectrum.len() - 1 {
+                        // DC and Nyquist bins are real-valued
+                        spectrum[i] = Complex::new(raw_mag * phase.cos(), 0.0);
+                    } else {
+                        spectrum[i] = Complex::from_polar(raw_mag, phase);
                     }
                 }
 
                 ifft.process(&mut spectrum, &mut time_buffer)
                     .expect("IFFT processing failed");
 
-                // Normalize IFFT output by FFT size
+                // realfft's inverse produces N * x[n], so divide by N
                 let norm = 1.0 / n_fft as f32;
                 for s in time_buffer.iter_mut() {
                     *s *= norm;
@@ -100,15 +150,17 @@ impl Reconstructor {
 
                 // Apply synthesis window to first window_len samples only
                 // (discard zero-padding extension from IFFT output)
-                let windowed: Vec<f32> = time_buffer.iter()
+                let windowed: Vec<f32> = time_buffer
+                    .iter()
                     .take(window_len)
                     .zip(window.iter())
                     .map(|(&s, &w)| s * w)
                     .collect();
 
-                let start_pos = frame_idx * hop;
+                // Use local index for overlap-add positioning
+                let start_pos = local_idx * hop;
 
-                (start_pos, windowed)
+                Some((start_pos, windowed))
             })
             .collect();
 

@@ -68,6 +68,7 @@ pub enum DebugLevel {
 
 /// Per-song configuration options that can be set in the CSV file
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct SongConfig {
     /// Override tick duration (seconds per row)
     pub tick_duration: Option<f32>,
@@ -88,18 +89,6 @@ pub struct SongConfig {
     pub tempo_bpm: Option<f32>,
 }
 
-impl Default for SongConfig {
-    fn default() -> Self {
-        Self {
-            tick_duration: None,
-            export_wav: None,
-            normalize_wav: None,
-            debug_level: None,
-            title: None,
-            tempo_bpm: None,
-        }
-    }
-}
 
 impl SongConfig {
     /// Parse a config row into settings
@@ -704,8 +693,8 @@ fn parse_note_trigger(tokens: &[&str], context: &mut ParserContext) -> CellActio
         }
 
         // Check for instrument (without colon)
-        if !token.contains(':') {
-            if let Some(id) = find_instrument_by_name(token) {
+        if !token.contains(':')
+            && let Some(id) = find_instrument_by_name(token) {
                 if id == 0 {
                     context.errors.push(ParseError::warning(
                         context.current_line,
@@ -717,7 +706,6 @@ fn parse_note_trigger(tokens: &[&str], context: &mut ParserContext) -> CellActio
                 }
                 instrument_id = id;
             }
-        }
     }
 
     // Second pass: parse instrument params and effects
@@ -842,14 +830,13 @@ fn parse_master_effects(tokens: &[&str], context: &mut ParserContext) -> CellAct
             should_clear = true;
 
             // Extract transition time from clear:X
-            if token_lower.starts_with("clear:") || token_lower.starts_with("cl:") {
-                if let Some(colon_pos) = token.find(':') {
+            if (token_lower.starts_with("clear:") || token_lower.starts_with("cl:"))
+                && let Some(colon_pos) = token.find(':') {
                     let params = parse_parameter_list(&token[colon_pos + 1..]);
                     if !params.is_empty() {
                         transition_seconds = params[0].max(0.0);
                     }
                 }
-            }
         }
     }
 

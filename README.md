@@ -1,5 +1,7 @@
 # muSickBeets
 
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
+
 A music toolkit written in Rust featuring a CSV-driven tracker synthesizer and a real-time FFT spectrogram analyzer.
 
 

@@ -143,12 +143,11 @@ impl PlaybackEngine {
         }
 
         // Debug output
-        if self.config.debug_level >= DebugLevel::Verbose {
-            if self.current_row < self.song.raw_lines.len() {
+        if self.config.debug_level >= DebugLevel::Verbose
+            && self.current_row < self.song.raw_lines.len() {
                 println!("Row {}", self.current_row);
                 println!("{}\n", self.song.raw_lines[self.current_row]);
             }
-        }
 
         // Get the actions for this row (clone to avoid borrow issues)
         let row_actions = self.song.rows[self.current_row].clone();
