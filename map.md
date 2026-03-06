@@ -1,111 +1,78 @@
-# muSickBeets - Project Map
+# muSickBeets – Project Map
 
-> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
 
-An FFT spectrogram analyzer and audio reconstructor with a CSV-driven music tracker synthesizer. The project contains two main binaries: the **FFT Analyzer** (default — spectrogram visualizer and audio reconstructor) and the **Tracker** (a music synthesizer).
+muSickBeets ships two binaries:
+
+1. **FFT Analyzer** (`src/fft_analyzer/`) – FLTK GUI for FFT analysis, selective reconstruction, and CSV interchange.
+2. **Tracker** (`src/tracker/`) – CSV-driven synthesizer with multi-channel playback, effects, and WAV export.
+
+Use the sections below to find the module that owns a piece of behavior. Line counts are approximate (from `wc -l`).
 
 ---
 
 ## FFT Analyzer (`src/fft_analyzer/`)
 
-The FFT Analyzer is an interactive GUI tool for loading WAV audio files, computing spectrograms via FFT, visualizing the results with configurable colormaps and frequency scaling, reconstructing audio from frequency data, and exporting results. It uses FLTK for the GUI and miniaudio for real-time playback.
+### Entry, Layout, and Shared State
+- `main_fft.rs` (~1038 lines) — Binary entry point. Loads settings, builds UI (`layout::build_ui`), wires callbacks, manages the 16 ms poll loop (worker messages, scrollbar sync, transport, status refresh).
+- `layout.rs` (~1004) — Declares `Widgets` and constructs the entire FLTK layout (menus, sidebar controls, displays, transport).
+- `app_state.rs` (~402) — Central `AppState`, worker message enums, shared callback handles, derived info helpers, status-bar formatting.
+- `validation.rs` (~205) — Input sanitizers (float/uint) plus `_with_recompute` variants that enforce the spacebar defenses.
+- `settings.rs` (~773) — INI persistence (load/create/save, “Save as Default”, custom gradient serialization).
+- `csv_export.rs` (~428) — FFT CSV import/export, including viewport metadata and post-import reconstruction.
+- `test_audio_gen.rs` (~124) — Utility binary for generating chirps/noise for analyzer testing.
 
-### Entry Point & Orchestration
+### UI Callbacks
+- `callbacks_file.rs` (~665) — File I/O (open WAV, save/load FFT CSV, export WAV) and the Reconstruct/Rerun button; spawns FFT/reconstruction workers safely.
+- `callbacks_ui.rs` (~1049) — Parameter, display, gradient editor, playback, tooltip, lock-to-active, and “save defaults” callbacks.
+- `callbacks_nav.rs` (~529) — Menu actions, scrollbars, time/freq zoom buttons, snap-to-view, and the three-layer spacebar guard wiring.
+- `callbacks_draw.rs` (~744) — Draw handlers for spectrogram, waveform, frequency axis, time axis, plus mouse/scroll interactions (seek, hover readout, zoom gestures).
 
-**`main_fft.rs`** (535 lines) — Binary entry point for the FFT Analyzer. Declares all submodules, creates the FLTK application, builds the UI via `layout::build_ui()`, loads settings from INI via `Settings::load_or_create()` and applies them to `AppState` (including custom gradient), wires up all callbacks by calling setup functions from each callback module (including the gradient editor and spacebar guards — which MUST be last), creates shared callback closures for cross-module widget state management, and runs the main 16ms poll loop that handles worker thread messages (FFT completion with auto-reconstruction, reconstruction completion with Lock-to-Active delayed viewport snap to both time and frequency), transport position updates (local + global time), scrollbar synchronization, and axis label redraws.
+### Data + View Models (`data/`)
+- `audio_data.rs` (~120) — WAV loader/normalizer and simple analysis helpers.
+- `fft_params.rs` (~167) — Analyzer parameter model (window, overlap, time spans, sample rate).
+- `view_state.rs` (~310) — Viewport ranges, reconstruction settings, gradients, coordinate transforms.
+- `segmentation_solver.rs` (~321) — Solver that keeps the “segments per active” and “bins per segment” constraints consistent.
+- `spectrogram.rs` (~127) — Spectrogram frames, frequency table, helpers (find frame/bin by time/freq, magnitude→dB).
+- `mod.rs` (~15) — Re-exports for convenience.
 
-**`app_state.rs`** (158 lines) — Central application state and supporting types. Contains `AppState` (holds audio data, spectrogram, FFT parameters, view state, renderers, player, and processing flags), `DerivedInfo` (computed stats like segment count and frequency resolution), `UpdateThrottle` (prevents excessive redraws), `WorkerMessage` (enum for background thread communication), `SharedCallbacks` (struct grouping the shared closure handles used across callback modules), and the `format_time()` helper.
+### Processing + Playback
+- `processing/fft_engine.rs` (~121) — Rayon-powered forward FFT pipeline with cancellation checks and window management.
+- `processing/reconstructor.rs` (~205) — Inverse FFT with overlap-add, freq-range filtering, and top-N bin selection.
+- `playback/audio_player.rs` (~202) — Miniaudio device wrapper, playback state, ARC-managed sample buffers.
 
-**`validation.rs`** (176 lines) — Input validation and parsing utilities. Provides revert-based validation for float and unsigned integer text inputs using `handle()` (not `set_callback()`) so validation survives when functional callbacks are later attached. Four validation functions: `attach_float_validation()` and `attach_uint_validation()` (plain validation), plus `attach_float_validation_with_recompute()` and `attach_uint_validation_with_recompute()` (validation + spacebar blocking + recompute trigger via `btn_rerun.do_callback()`). The `_with_recompute` variants are applied by `setup_spacebar_guards()` to REPLACE the plain handlers. Also includes `parse_or_zero_*` helpers that treat empty strings as zero.
+### Rendering (`rendering/`)
+- `color_lut.rs` (~276) — Precomputed LUTs for built-in colormaps plus custom gradient support.
+- `spectrogram_renderer.rs` (~324) — Cache-aware spectrogram rasterizer (parallel row rendering, grayed-out out-of-range regions).
+- `waveform_renderer.rs` (~452) — Waveform rasterizer with peak/sampled detail levels, cursor overlays, cached RGB buffer.
 
-**`layout.rs`** (835 lines) — UI layout definition. Defines the `Widgets` struct containing cloneable handles to all ~50 FLTK widgets that callbacks need to access (buttons, sliders, inputs, display widgets, scrollbars, gradient preview, etc.). The `build_ui()` function constructs the entire window layout: menu bar, left sidebar (in a Scroll widget, SIDEBAR_INNER_H=1400) with file operations, analysis parameters (segment size with preset choice + typed input + +/- buttons, overlap slider, window type choice, zero-pad factor choice, resolution info display), display settings (colormap dropdown, gradient editor preview, frequency scale, threshold/ceiling/brightness/gamma sliders), reconstruction controls (freq count, freq min/max, snap-to-view), info panel, and misc (tooltips toggle, lock-to-active, home, save defaults); right panel with waveform strip, spectrogram display with frequency/time axes and zoom controls, and transport bar with playback controls showing local + global time.
-
-### Callback Modules
-
-**`callbacks_file.rs`** (431 lines) — File operation and recompute callbacks. Handles Open Audio (WAV loading with automatic FFT launch), Save FFT (CSV export filtered to processing time range), Load FFT (CSV import with automatic reconstruction), Export WAV (save reconstructed audio), and the Recompute+Rebuild callback that syncs all field values into state, launches full-file FFT on a background thread, with reconstruction auto-triggered on completion.
-
-**`callbacks_ui.rs`** (871 lines) — Parameter, display, gradient editor, playback, and miscellaneous UI callbacks. Parameter callbacks handle time unit toggling (seconds/samples conversion), overlap slider, window type selection (Hann/Hamming/Blackman/Kaiser), segment size +/- buttons (minimum 2 samples), segment preset choice, zero-pad factor choice, and center/pad toggle. Display callbacks handle colormap selection (including Custom with gradient preview redraw), frequency scale (log/linear), and throttled threshold/ceiling/brightness/gamma sliders. Gradient editor section (`setup_gradient_editor`) provides draw and handle callbacks for the interactive gradient preview widget (with spacebar blocking inline). Playback callbacks handle play/pause/stop, scrub slider seeking (with spacebar blocking inline), and repeat mode. Misc callbacks handle tooltip toggle, lock-to-active viewport, home button (snaps both time AND frequency), and Save As Default (writes current AppState to settings.ini).
-
-**`callbacks_draw.rs`** (402 lines) — Rendering and mouse interaction callbacks. Contains draw callbacks for the spectrogram display (delegates to SpectrogramRenderer with playback cursor overlay), waveform display (delegates to WaveformRenderer with cursor), frequency axis labels (pixel-space-first generation with binary search inversion and nice-number rounding), and time axis labels (adaptive step sizing with processing range markers). Also handles spectrogram mouse events: click/drag to seek, hover for frequency/dB/time readout, mouse wheel for time zoom, and Ctrl+wheel for frequency zoom.
-
-**`callbacks_nav.rs`** (484 lines) — Navigation, scrollbar, zoom, keyboard, and spacebar guard callbacks. Sets up menu bar items (File, Analysis, Display menus with keyboard shortcuts), X/Y scrollbar callbacks with generation counters to avoid fighting user drags, time and frequency zoom +/- button callbacks, snap-to-view (copies viewport bounds into processing fields and triggers recompute), the window-level spacebar handler (KeyUp triggers recompute), and `setup_spacebar_guards()` — the per-widget spacebar defense system using a `block_space!` macro and `clear_visible_focus()` on all interactive widgets (buttons, choices, checkbuttons, sliders, scrollbars). Also re-attaches text input validation handlers with recompute-aware versions. Must be called LAST in the callback setup chain.
-
-### Data Module (`data/`)
-
-**`data/audio_data.rs`** (112 lines) — WAV file loading and audio data container. Loads WAV files via the `hound` crate, normalizes multi-channel audio to mono by averaging channels, supports 8/16/24/32-bit PCM and float formats, and provides utilities for duration calculation, Nyquist frequency, sample slicing, and WAV export.
-
-**`data/fft_params.rs`** (147 lines) — FFT analysis configuration. Defines parameters including window length, overlap percentage, sample rate, time range, window type (Hann, Hamming, Blackman, Kaiser with configurable beta), and center/pad option. Provides computed properties like hop length, frequency bins, frequency resolution, and segment count.
-
-**`data/spectrogram.rs`** (80 lines) — FFT analysis results container. Stores a collection of `SpectrogramFrame` structs (each with a timestamp, frequency resolution, and magnitude vector). Provides utilities for magnitude-to-dB conversion, frame lookup by time, frequency bin lookup, and construction from frame vectors with automatic min/max time/freq tracking.
-
-**`data/view_state.rs`** (288 lines) — Viewport, display settings, and gradient data. Defines `GradientStop` (position + RGB color, all 0..1 floats), `eval_gradient()` for linear interpolation between sorted stops, and `default_custom_gradient()` (SebLague-style 7-stop rainbow). Defines `FreqScale` (Linear/Log/Power blend), `ColormapId` (8 variants: Classic, Viridis, Magma, Inferno, Greyscale, InvertedGrey, Geek, Custom), `ViewState` (frequency/time viewport ranges, display params, custom_gradient vec, reconstruction params, data bounds), coordinate mapping functions (`time_to_x`, `x_to_time`, `freq_to_y`, `y_to_freq` with Power blend using geometric interpolation and binary search inversion), and `TransportState`.
-
-**`data/mod.rs`** (9 lines) — Module aggregator that re-exports all public types from the data submodules including `GradientStop`, `default_custom_gradient`, and `eval_gradient`.
-
-### Processing Module (`processing/`)
-
-**`processing/fft_engine.rs`** (92 lines) — Parallel FFT computation engine. Takes audio data and FFT parameters, applies windowing functions, computes forward FFT using the `realfft` crate, and produces a `Spectrogram`. Uses `rayon` for parallel processing of FFT segments.
-
-**`processing/reconstructor.rs`** (146 lines) — Audio reconstruction from spectrogram data. Performs inverse FFT (overlap-add synthesis) with frequency filtering based on reconstruction parameters (frequency count, min/max frequency). Selects the top-N magnitude bins per frame and zeros out bins outside the frequency range.
-
-### Rendering Module (`rendering/`)
-
-**`rendering/color_lut.rs`** (263 lines) — Color lookup table for spectrogram visualization. Pre-computes 1024-entry RGB lookup tables for 8 colormaps (Classic rainbow, Viridis, Magma, Inferno, Greyscale, Inverted Grey, Geek green, Custom). Applies gamma correction and brightness scaling. The Custom colormap reads from a dynamic `custom_stops: Vec<GradientStop>` field updated via `set_custom_stops()`, using `eval_gradient()` for linear interpolation. Each built-in colormap is defined by interpolating between key color stops.
-
-**`rendering/spectrogram_renderer.rs`** (273 lines) — Spectrogram image rendering with caching. Converts spectrogram data to an RGB pixel buffer using the color LUT, with support for log/linear frequency scaling. Uses parallel pixel processing via rayon. Caches rendered images and invalidates on parameter changes (including custom gradient changes via hash). Passes custom gradient stops through to ColorLUT via `update_lut()`. Grays out regions outside the active processing time range.
-
-**`rendering/waveform_renderer.rs`** (370 lines) — Audio waveform rendering with adaptive detail. Renders waveforms at two detail levels: peak-based rendering when zoomed out (shows min/max envelope) and sample-accurate rendering when zoomed in. Includes playback cursor overlay, zero-line, and cached rendering with invalidation.
-
-### Playback Module (`playback/`)
-
-**`playback/audio_player.rs`** (160 lines) — Real-time audio playback using the miniaudio crate. Supports play, pause, stop, seek, and repeat. Manages a shared audio buffer accessed by the miniaudio callback thread. Tracks playback position for cursor display synchronization.
-
-### UI Module (`ui/`)
-
-**`ui/theme.rs`** (61 lines) — Dark theme configuration using a Catppuccin-inspired color palette. Defines color constants for backgrounds, text, accents, borders, and separators. Applies the theme globally to FLTK widgets via `apply_dark_theme()`.
-
-**`ui/tooltips.rs`** (35 lines) — Tooltip manager with dark theme styling. Provides `set_tooltip()` to apply styled tooltips to widgets and `TooltipManager` to globally enable/disable tooltips.
-
-### Settings
-
-**`settings.rs`** (490 lines) — INI-based settings persistence. Defines the `Settings` struct with all saveable parameters (analysis, view, display, reconstruction, audio normalization, zoom factors, window dimensions, axis labels, waveform height, UI toggles, playback, custom gradient, and theme colors). Supports `load_or_create()` (with migration from old `muSickBeets.ini`), `save()`, `from_app_state()` (snapshot current state for Save As Default), and `parse_custom_gradient()`. Custom gradient is serialized as pipe-delimited `pos:r:g:b` float strings. INI parsing uses a flat key-value map (section headers ignored).
-
-### Utilities
-
-**`csv_export.rs`** (252 lines) — CSV import/export for spectrogram data. Exports spectrograms with a metadata header containing FFT parameters and reconstruction settings, followed by frame data (time, frequency, magnitude columns). Import parses the metadata header and reconstructs the spectrogram and parameter objects.
-
-**`test_audio_gen.rs`** (127 lines) — Standalone binary that generates test WAV files for analyzer testing. Creates sine waves, chirps (frequency sweeps), multi-tone signals, and white noise at configurable durations and sample rates.
+### UI Utilities (`ui/`)
+- `theme.rs` (~59) — Catppuccin-inspired palette + widget styling.
+- `tooltips.rs` (~34) — Centralized tooltip enable/disable with theme colors.
 
 ---
 
 ## Tracker (`src/tracker/`)
 
-The Tracker is a CSV-driven music synthesizer that reads song data from spreadsheet-compatible CSV files and renders them to audio. It supports multiple channels, instruments with anti-aliased waveforms, ADSR envelopes, per-channel effects, and master bus processing.
+### Entry + Sequencing
+- `main.rs` (~476) — Tracker binary entry; loads songs, wires miniaudio playback, CLI for selecting tracks, WAV export hooks.
+- `parser.rs` (~1136) — Lenient CSV parser (notes, instruments, envelope/effect commands, master bus directives).
+- `engine.rs` (~408) — Song scheduler: advances rows, dispatches actions, mixes channel output, manages global tempo.
+- `channel.rs` (~687) — Per-channel voice (pitch slides, instrument swaps, ADSR state, effect routing).
+- `master_bus.rs` (~574) — Final mix plus master effects (reverb/delay/chorus) with smooth parameter changes.
 
-**`main.rs`** (453 lines) — Tracker binary entry point. Handles configuration management (instrument assignments, tempo, effects), CSV song file loading via the parser, real-time playback with miniaudio, and WAV export. Provides a text-based UI for selecting and playing songs.
-
-**`parser.rs`** (1121 lines) — Forgiving CSV song file parser. Converts spreadsheet cells into playable `Action` structs, handling note notation (e.g., "C#4"), instrument selection, volume, effects commands, and master bus commands. Supports inline comments, instrument aliases, and provides detailed error/warning reporting for malformed input.
-
-**`engine.rs`** (407 lines) — Main sequencing and mixing engine. Processes rows at the configured tempo, dispatches actions to channels, collects and mixes channel outputs, applies master bus effects, and writes the final stereo audio buffer. Handles row-level timing and smooth parameter transitions.
-
-**`channel.rs`** (682 lines) — Individual synthesizer voice. Manages pitch (with portamento/slides), instrument selection (with crossfade transitions), ADSR envelope control, per-channel volume and panning, and routes audio through the channel effects chain. Supports note-on, note-off, pitch slides, and instrument changes.
-
-**`instruments.rs`** (450 lines) — Sound generator registry. Defines 6 waveform types: sine, triangle-saw (morphable), square, pulse (variable width), and noise. Uses PolyBLEP anti-aliasing for band-limited synthesis of non-sinusoidal waveforms to minimize aliasing artifacts.
-
-**`envelope.rs`** (551 lines) — ADSR envelope system with a registry of preset shapes. Each envelope has configurable attack, decay, sustain level, and release with selectable curve types (linear, exponential, logarithmic). The registry provides named presets like "pluck", "pad", "organ", "perc", etc.
-
-**`effects/mod.rs`** (631 lines) — Unified effects system. Channel-level effects include vibrato, tremolo, bitcrusher, distortion, and chorus. Master bus effects include reverb (multi-tap delay network), stereo delay, and chorus. Each effect has configurable parameters and smooth interpolation for glitch-free transitions.
-
-**`master_bus.rs`** (561 lines) — Final mixing stage. Applies global effects (reverb, delay, chorus) with smooth parameter transitions, handles master volume and panning, and manages the effects processing chain. Supports both wet/dry mixing and bypass modes.
-
-**`audio.rs`** (326 lines) — WAV file I/O and audio analysis. Handles stereo WAV export with configurable bit depth, provides audio statistics (peak level, RMS, DC offset, clipping detection), and includes normalization and gain utilities.
-
-**`helper.rs`** (423 lines) — Utility functions. Contains a pre-computed frequency table covering octaves 0-20 for fast note-to-frequency lookup, interpolation functions (linear, exponential, logarithmic), a simple random number generator, and pitch string parsing (e.g., "A4" to frequency).
+### Sound Design
+- `instruments.rs` (~463) — PolyBLEP-backed oscillators (sine, trisaw, square, pulse, noise) and morphing parameters.
+- `envelope.rs` (~548) — ADSR shape registry, preset definitions, and curve interpolation utilities.
+- `effects/mod.rs` (~636) — Channel effects (vibrato, tremolo, bitcrusher, distortion, chorus) and shared helpers.
+- `audio.rs` (~341) — WAV writer, normalization, RMS/peak statistics, clipping detection.
+- `helper.rs` (~435) — Common utilities (note→frequency tables, RNG, interpolation helpers).
 
 ---
 
-## Root
+## Shared / Other Sources
+- `src/main.rs` (~526) — Standalone validation playground the project owner uses for experiments; not part of the shipped binaries.
+- `fft_analyzer/mod.rs`, `playback/mod.rs`, `processing/mod.rs`, `rendering/mod.rs`, `ui/mod.rs`, `tracker/effects/mod.rs` — Lightweight module glue.
+- `Cargo.toml` — Defines binaries (`fft_analyzer`, `tracker`, `test_audio_gen`) and shared dependencies: `fltk`, `miniaudio`, `hound`, `rayon`, `realfft`, `csv`, etc.
 
-**`src/main.rs`** (54 lines) — A small standalone demo/test binary with a float input validation example. Not the main application entry point (the actual binaries are `tracker` and `fft_analyzer`).
-
-**`Cargo.toml`** — Project configuration. Defines three binary targets (`tracker`, `fft_analyzer`, `test_audio_gen`) with `fft_analyzer` as the default. Key dependencies: `fltk` (GUI), `miniaudio` (audio playback), `realfft`/`rustfft` (FFT), `rayon` (parallelism), `hound` (WAV I/O), `csv` (parsing).
+Keep this map updated when files move or grow significantly so future agents can jump directly to the right module.

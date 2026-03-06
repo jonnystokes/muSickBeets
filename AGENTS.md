@@ -1,6 +1,6 @@
 # AGENTS.md — Project Rules for AI Sessions
 
-> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Issues](CATEGORIZED_ISSUES.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [History](HISTORY.md) | [Tracker Guide](documentation.md) | [README](README.md)
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
 
 ---
 
@@ -125,12 +125,10 @@ apt-get update && apt-get install -y \
 | File | What it contains |
 |------|-----------------|
 | **AGENTS.md** | This file. Project identity, tools, environment. Read by all agents. |
-| **PROGRESS.md** | Active work, git rules, sub-agent launch policy, backburner, architecture notes. Main agent reads this for operational context. |
-| **CATEGORIZED_ISSUES.md** | Code review issue tracker with CMDL difficulty scores. 9 categories, 35 issues. Categories 1–6 complete, 7–9 remaining. |
-| **CODING_RULES.md** | Spacebar defense system, text field validation, transport display, lock-to-active, settings file. Read before writing or modifying code. |
-| **map.md** | File-by-file architecture with line counts and module descriptions. Read when navigating unfamiliar code. |
-| **HISTORY.md** | Consolidated archive of completed features, past reviews, and investigations. |
-| **documentation.md** | Tracker synthesizer user guide — instruments, effects, envelopes, song format. |
-| **README.md** | Public project overview with build instructions and screenshots. |
-| **claude_opus_new_finds_NOTES_PERF_AND_BUGS.md** | Cross-review of 4 AI code reviews. Temporary — kept until categories 7–9 are complete. |
-| **THIRD_PARTY_LICENSES.md** | License attributions for Sebastian Lague's Audio-Experiments and Gradient-Editor. |
+| **PROGRESS.md** | Git rules, sub-agent policy, current/backburner work tracking for the main agent. |
+| **CODING_RULES.md** | Critical workflow guardrails (search-before-change, logging), UI behavior rules (spacebar, validation), and settings guidance. |
+| **map.md** | File-by-file architecture map with module responsibilities. Read when navigating unfamiliar code. |
+| **documentation.md** | Tracker synthesizer guide — CSV format, instruments, effects, envelopes. |
+| **README.md** | Public project overview with setup instructions and screenshots. |
+| **ai_memory.md** | Long-term technical memory and gotchas that supplement the coding rules. |
+| **THIRD_PARTY_LICENSES.md** | License attributions for Sebastian Lague resources and other third-party references. |
