@@ -150,12 +150,13 @@ fn run_terminal() {
         use crossterm::event::poll;
         if poll(std::time::Duration::from_millis(100)).unwrap_or(false)
             && let Ok(Event::Key(k)) = crossterm::event::read()
-                && k.kind == KeyEventKind::Press {
-                    print_terminal_key(&k);
-                    if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
-                        break;
-                    }
-                }
+            && k.kind == KeyEventKind::Press
+        {
+            print_terminal_key(&k);
+            if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
+                break;
+            }
+        }
     }
 
     let _ = terminal::disable_raw_mode();
@@ -426,10 +427,9 @@ Close X button to exit."#;
         }
 
         // Shift
-        if st.contains(Shortcut::Shift) && ev == Event::KeyDown
-            && key_matches_char(key, 'a') {
-                add_log("SHIFT+A");
-            }
+        if st.contains(Shortcut::Shift) && ev == Event::KeyDown && key_matches_char(key, 'a') {
+            add_log("SHIFT+A");
+        }
 
         // Alt - prevent spam
         if st.contains(Shortcut::Alt) && ev == Event::KeyDown {

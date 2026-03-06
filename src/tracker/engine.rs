@@ -22,7 +22,7 @@
 
 use crate::channel::Channel;
 use crate::master_bus::MasterBus;
-use crate::parser::{SongData, CellAction, DebugLevel};
+use crate::parser::{CellAction, DebugLevel, SongData};
 
 // ============================================================================
 // ENGINE CONFIGURATION
@@ -144,10 +144,11 @@ impl PlaybackEngine {
 
         // Debug output
         if self.config.debug_level >= DebugLevel::Verbose
-            && self.current_row < self.song.raw_lines.len() {
-                println!("Row {}", self.current_row);
-                println!("{}\n", self.song.raw_lines[self.current_row]);
-            }
+            && self.current_row < self.song.raw_lines.len()
+        {
+            println!("Row {}", self.current_row);
+            println!("{}\n", self.song.raw_lines[self.current_row]);
+        }
 
         // Get the actions for this row (clone to avoid borrow issues)
         let row_actions = self.song.rows[self.current_row].clone();
@@ -256,7 +257,8 @@ impl PlaybackEngine {
 
                 // Apply each effect
                 for (effect_name, params) in effects {
-                    self.master_bus.apply_effect(effect_name, params, *transition_seconds);
+                    self.master_bus
+                        .apply_effect(effect_name, params, *transition_seconds);
                 }
             }
         }
@@ -330,7 +332,8 @@ impl PlaybackEngine {
     /// This is used for WAV export
     pub fn render_to_buffer(&mut self) -> Vec<f32> {
         // Calculate total samples needed
-        let total_samples = (self.get_total_duration_seconds() * self.config.sample_rate as f32) as usize * 2;
+        let total_samples =
+            (self.get_total_duration_seconds() * self.config.sample_rate as f32) as usize * 2;
 
         // Add extra time for release tails (2 seconds)
         let extra_samples = (2.0 * self.config.sample_rate as f32) as usize * 2;
@@ -358,8 +361,8 @@ impl PlaybackEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{parse_song, MissingCellBehavior};
     use crate::helper::FrequencyTable;
+    use crate::parser::{MissingCellBehavior, parse_song};
 
     #[test]
     fn test_engine_creation() {

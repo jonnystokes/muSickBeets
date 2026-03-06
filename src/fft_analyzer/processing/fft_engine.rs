@@ -1,6 +1,6 @@
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::prelude::*;
 use realfft::RealFftPlanner;

@@ -234,11 +234,7 @@ impl SpectrogramRenderer {
                         // Compare distance to idx-1 and idx
                         let d_lo = (spec_freqs[idx - 1] - freq).abs();
                         let d_hi = (spec_freqs[idx] - freq).abs();
-                        if d_lo <= d_hi {
-                            idx - 1
-                        } else {
-                            idx
-                        }
+                        if d_lo <= d_hi { idx - 1 } else { idx }
                     };
                     best_bin.min(num_bins - 1)
                 } else {
@@ -310,7 +306,11 @@ impl SpectrogramRenderer {
                 self.cached_image = Some(img);
             }
             Err(e) => {
-                eprintln!("Failed to create spectrogram image: {:?}", e);
+                app_log!(
+                    "SpectrogramRenderer",
+                    "Failed to create spectrogram image: {:?}",
+                    e
+                );
                 self.cached_image = None;
             }
         }

@@ -24,8 +24,8 @@
 // This allows for things like fading the entire mix to silence.
 // ============================================================================
 
-use crate::helper::lerp;
 use crate::effects::{MasterEffectState, apply_master_effects};
+use crate::helper::lerp;
 
 // ============================================================================
 // MASTER TRANSITION STATE
@@ -305,7 +305,8 @@ impl MasterBus {
             };
 
             self.transition_active = true;
-            self.transition_duration_samples = (transition_seconds * self.sample_rate as f32) as u32;
+            self.transition_duration_samples =
+                (transition_seconds * self.sample_rate as f32) as u32;
             self.transition_elapsed_samples = 0;
         } else {
             // Instant clear
@@ -325,20 +326,18 @@ impl MasterBus {
     /// - effect_name: The name of the effect (e.g., "rv", "dl", "a", "p")
     /// - parameters: The effect parameters as floats
     /// - transition_seconds: How long to transition (0 = instant)
-    pub fn apply_effect(
-        &mut self,
-        effect_name: &str,
-        parameters: &[f32],
-        transition_seconds: f32,
-    ) {
+    pub fn apply_effect(&mut self, effect_name: &str, parameters: &[f32], transition_seconds: f32) {
         match effect_name.to_lowercase().as_str() {
             // ---- Amplitude ----
             "a" | "amplitude" => {
                 if !parameters.is_empty() {
                     let new_amplitude = parameters[0].clamp(0.0, 1.0);
-                    self.apply_with_transition(|target| {
-                        target.amplitude = new_amplitude;
-                    }, transition_seconds);
+                    self.apply_with_transition(
+                        |target| {
+                            target.amplitude = new_amplitude;
+                        },
+                        transition_seconds,
+                    );
                 }
             }
 
@@ -346,9 +345,12 @@ impl MasterBus {
             "p" | "pan" => {
                 if !parameters.is_empty() {
                     let new_pan = parameters[0].clamp(-1.0, 1.0);
-                    self.apply_with_transition(|target| {
-                        target.pan = new_pan;
-                    }, transition_seconds);
+                    self.apply_with_transition(
+                        |target| {
+                            target.pan = new_pan;
+                        },
+                        transition_seconds,
+                    );
                 }
             }
 
@@ -358,11 +360,14 @@ impl MasterBus {
                     let room_size = parameters[0].clamp(0.0, 1.0);
                     let mix = parameters[1].clamp(0.0, 1.0);
 
-                    self.apply_with_transition(|target| {
-                        target.reverb1_room_size = room_size;
-                        target.reverb1_mix = mix;
-                        target.reverb1_enabled = mix > 0.0;
-                    }, transition_seconds);
+                    self.apply_with_transition(
+                        |target| {
+                            target.reverb1_room_size = room_size;
+                            target.reverb1_mix = mix;
+                            target.reverb1_enabled = mix > 0.0;
+                        },
+                        transition_seconds,
+                    );
                 }
             }
 
@@ -395,13 +400,16 @@ impl MasterBus {
                     20.0
                 };
 
-                self.apply_with_transition(|target| {
-                    target.reverb2_room_size = room_size;
-                    target.reverb2_decay = decay;
-                    target.reverb2_damping = damping;
-                    target.reverb2_mix = mix;
-                    target.reverb2_enabled = mix > 0.0;
-                }, transition_seconds);
+                self.apply_with_transition(
+                    |target| {
+                        target.reverb2_room_size = room_size;
+                        target.reverb2_decay = decay;
+                        target.reverb2_damping = damping;
+                        target.reverb2_mix = mix;
+                        target.reverb2_enabled = mix > 0.0;
+                    },
+                    transition_seconds,
+                );
 
                 // Predelay is set directly (not transitioned)
                 self.effects.reverb2_predelay_ms = predelay;
@@ -414,11 +422,14 @@ impl MasterBus {
                     let feedback = parameters[1].clamp(0.0, 0.95);
                     let delay_samples = (delay_time_seconds * self.sample_rate as f32) as u32;
 
-                    self.apply_with_transition(|target| {
-                        target.delay_time_samples = delay_samples;
-                        target.delay_feedback = feedback;
-                        target.delay_enabled = feedback > 0.0;
-                    }, transition_seconds);
+                    self.apply_with_transition(
+                        |target| {
+                            target.delay_time_samples = delay_samples;
+                            target.delay_feedback = feedback;
+                            target.delay_enabled = feedback > 0.0;
+                        },
+                        transition_seconds,
+                    );
                 }
             }
 
@@ -446,11 +457,14 @@ impl MasterBus {
                     0.5
                 };
 
-                self.apply_with_transition(|target| {
-                    target.chorus_mix = mix;
-                    target.chorus_rate_hz = rate;
-                    target.chorus_enabled = mix > 0.0;
-                }, transition_seconds);
+                self.apply_with_transition(
+                    |target| {
+                        target.chorus_mix = mix;
+                        target.chorus_rate_hz = rate;
+                        target.chorus_enabled = mix > 0.0;
+                    },
+                    transition_seconds,
+                );
 
                 // Set depth and spread directly
                 self.effects.chorus_depth_ms = depth;
@@ -480,7 +494,8 @@ impl MasterBus {
 
             // Start transition
             self.transition_active = true;
-            self.transition_duration_samples = (transition_seconds * self.sample_rate as f32) as u32;
+            self.transition_duration_samples =
+                (transition_seconds * self.sample_rate as f32) as u32;
             self.transition_elapsed_samples = 0;
         } else {
             // Instant change - modify target then apply immediately
@@ -506,7 +521,6 @@ impl MasterBus {
             self.effects.chorus_enabled = immediate.chorus_enabled;
         }
     }
-
 }
 
 // ============================================================================

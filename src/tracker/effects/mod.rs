@@ -307,7 +307,10 @@ pub fn apply_channel_effects(
     let pan_left_coefficient = ((1.0 - effects.pan) * 0.5).sqrt();
     let pan_right_coefficient = ((1.0 + effects.pan) * 0.5).sqrt();
 
-    (sample * pan_left_coefficient, sample * pan_right_coefficient)
+    (
+        sample * pan_left_coefficient,
+        sample * pan_right_coefficient,
+    )
 }
 
 /// Calculate vibrato frequency multiplier
@@ -328,11 +331,7 @@ pub fn calculate_vibrato_multiplier(effects: &mut ChannelEffectState, sample_rat
 }
 
 /// Apply mono chorus effect
-fn apply_mono_chorus(
-    input_sample: f32,
-    effects: &mut ChannelEffectState,
-    sample_rate: u32,
-) -> f32 {
+fn apply_mono_chorus(input_sample: f32, effects: &mut ChannelEffectState, sample_rate: u32) -> f32 {
     if effects.chorus_buffer.is_empty() {
         return input_sample;
     }
@@ -469,10 +468,13 @@ fn apply_reverb2(
         }
 
         let buffer_len = effects.reverb2_early_buffers[i].len();
-        let delay = ((buffer_len as f32 * room_scale) as usize).min(buffer_len - 1).max(1);
+        let delay = ((buffer_len as f32 * room_scale) as usize)
+            .min(buffer_len - 1)
+            .max(1);
 
         let read_pos = (effects.reverb2_early_positions[i] + buffer_len - delay) % buffer_len;
-        early_reflections += effects.reverb2_early_buffers[i][read_pos] * (0.7_f32.powi(i as i32 + 1));
+        early_reflections +=
+            effects.reverb2_early_buffers[i][read_pos] * (0.7_f32.powi(i as i32 + 1));
 
         effects.reverb2_early_buffers[i][effects.reverb2_early_positions[i]] = mono_input;
         effects.reverb2_early_positions[i] = (effects.reverb2_early_positions[i] + 1) % buffer_len;
@@ -489,7 +491,9 @@ fn apply_reverb2(
         }
 
         let buffer_len = effects.reverb2_comb_buffers[i].len();
-        let delay = ((buffer_len as f32 * room_scale) as usize).min(buffer_len - 1).max(1);
+        let delay = ((buffer_len as f32 * room_scale) as usize)
+            .min(buffer_len - 1)
+            .max(1);
 
         let read_pos = (effects.reverb2_comb_positions[i] + buffer_len - delay) % buffer_len;
         let delayed = effects.reverb2_comb_buffers[i][read_pos];
@@ -503,7 +507,9 @@ fn apply_reverb2(
 
         let delay_time = delay as f32 / sample_rate as f32;
         let feedback = if target_decay_samples > 0.0 {
-            10.0_f32.powf(-3.0 * delay_time / effects.reverb2_decay).min(0.98)
+            10.0_f32
+                .powf(-3.0 * delay_time / effects.reverb2_decay)
+                .min(0.98)
         } else {
             0.5
         };
@@ -527,8 +533,8 @@ fn apply_reverb2(
         }
 
         let buffer_len = effects.reverb2_allpass_buffers[i].len();
-        let read_pos = (effects.reverb2_allpass_positions[i] + buffer_len - (buffer_len - 1))
-            % buffer_len;
+        let read_pos =
+            (effects.reverb2_allpass_positions[i] + buffer_len - (buffer_len - 1)) % buffer_len;
 
         let delayed = effects.reverb2_allpass_buffers[i][read_pos];
         let output = -allpass_output * allpass_gain + delayed;
@@ -546,17 +552,15 @@ fn apply_reverb2(
     (soft_clip(left * dry + wet), soft_clip(right * dry + wet))
 }
 
-fn apply_delay(
-    left: f32,
-    right: f32,
-    effects: &mut MasterEffectState,
-) -> (f32, f32) {
+fn apply_delay(left: f32, right: f32, effects: &mut MasterEffectState) -> (f32, f32) {
     if effects.delay_buffer_left.is_empty() {
         return (left, right);
     }
 
     let buffer_len = effects.delay_buffer_left.len();
-    let delay_samples = (effects.delay_time_samples as usize).min(buffer_len - 1).max(1);
+    let delay_samples = (effects.delay_time_samples as usize)
+        .min(buffer_len - 1)
+        .max(1);
 
     let read_pos = (effects.delay_write_position + buffer_len - delay_samples) % buffer_len;
     let delayed_left = effects.delay_buffer_left[read_pos];
@@ -595,7 +599,8 @@ fn apply_master_chorus(
     // Left channel
     let delay_int_left = delay_samples_left as usize;
     let delay_frac_left = delay_samples_left - delay_int_left as f32;
-    let read_pos_1_left = (effects.chorus_write_position + buffer_len - delay_int_left) % buffer_len;
+    let read_pos_1_left =
+        (effects.chorus_write_position + buffer_len - delay_int_left) % buffer_len;
     let read_pos_2_left = (read_pos_1_left + buffer_len - 1) % buffer_len;
     let delayed_left = lerp(
         effects.chorus_buffer_left[read_pos_1_left],
@@ -606,7 +611,8 @@ fn apply_master_chorus(
     // Right channel
     let delay_int_right = delay_samples_right as usize;
     let delay_frac_right = delay_samples_right - delay_int_right as f32;
-    let read_pos_1_right = (effects.chorus_write_position + buffer_len - delay_int_right) % buffer_len;
+    let read_pos_1_right =
+        (effects.chorus_write_position + buffer_len - delay_int_right) % buffer_len;
     let read_pos_2_right = (read_pos_1_right + buffer_len - 1) % buffer_len;
     let delayed_right = lerp(
         effects.chorus_buffer_right[read_pos_1_right],

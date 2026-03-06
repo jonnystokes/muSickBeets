@@ -25,10 +25,10 @@
 // them one at a time. Invalid cells are treated as slow release.
 // ============================================================================
 
-use std::collections::HashSet;
 use crate::effects::ChannelEffectState;
+use crate::helper::{FrequencyTable, parse_pitch_to_frequency};
 use crate::instruments::{find_instrument_by_name, get_instrument_by_id};
-use crate::helper::{parse_pitch_to_frequency, FrequencyTable};
+use std::collections::HashSet;
 
 // ============================================================================
 // DEBUG LEVELS
@@ -67,8 +67,7 @@ pub enum DebugLevel {
 // ============================================================================
 
 /// Per-song configuration options that can be set in the CSV file
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SongConfig {
     /// Override tick duration (seconds per row)
     pub tick_duration: Option<f32>,
@@ -88,7 +87,6 @@ pub struct SongConfig {
     /// Song tempo in BPM (informational, calculated from tick_duration)
     pub tempo_bpm: Option<f32>,
 }
-
 
 impl SongConfig {
     /// Parse a config row into settings
@@ -115,14 +113,11 @@ impl SongConfig {
                         }
                     }
                     "export_wav" | "export" | "wav" => {
-                        config.export_wav = Some(
-                            value == "true" || value == "1" || value == "yes"
-                        );
+                        config.export_wav = Some(value == "true" || value == "1" || value == "yes");
                     }
                     "normalize_wav" | "normalize" | "norm" => {
-                        config.normalize_wav = Some(
-                            value == "true" || value == "1" || value == "yes"
-                        );
+                        config.normalize_wav =
+                            Some(value == "true" || value == "1" || value == "yes");
                     }
                     "debug_level" | "debug" => {
                         config.debug_level = match value.to_lowercase().as_str() {
@@ -423,7 +418,10 @@ pub fn parse_song(
         // Skip empty lines
         if trimmed_line.is_empty() {
             if debug_level >= DebugLevel::Detailed {
-                println!("[PARSER] Line {}: Skipping empty/comment line", context.current_line);
+                println!(
+                    "[PARSER] Line {}: Skipping empty/comment line",
+                    context.current_line
+                );
             }
             continue;
         }
@@ -432,7 +430,10 @@ pub fn parse_song(
         if is_first_data_row {
             is_first_data_row = false;
             if debug_level >= DebugLevel::Verbose {
-                println!("[PARSER] Line {}: Skipping header: '{}'", context.current_line, trimmed_line);
+                println!(
+                    "[PARSER] Line {}: Skipping header: '{}'",
+                    context.current_line, trimmed_line
+                );
             }
             continue;
         }
@@ -694,18 +695,19 @@ fn parse_note_trigger(tokens: &[&str], context: &mut ParserContext) -> CellActio
 
         // Check for instrument (without colon)
         if !token.contains(':')
-            && let Some(id) = find_instrument_by_name(token) {
-                if id == 0 {
-                    context.errors.push(ParseError::warning(
-                        context.current_line,
-                        context.current_column,
-                        token,
-                        "Cannot play notes on 'master'. Use a playable instrument.".to_string(),
-                    ));
-                    return CellAction::SlowRelease;
-                }
-                instrument_id = id;
+            && let Some(id) = find_instrument_by_name(token)
+        {
+            if id == 0 {
+                context.errors.push(ParseError::warning(
+                    context.current_line,
+                    context.current_column,
+                    token,
+                    "Cannot play notes on 'master'. Use a playable instrument.".to_string(),
+                ));
+                return CellAction::SlowRelease;
             }
+            instrument_id = id;
+        }
     }
 
     // Second pass: parse instrument params and effects
@@ -769,7 +771,13 @@ fn parse_note_trigger(tokens: &[&str], context: &mut ParserContext) -> CellActio
             }
             seen_effects.insert(prefix.clone());
 
-            apply_effect_token(prefix, value_str, &mut effects, &mut transition_seconds, &mut clear_effects);
+            apply_effect_token(
+                prefix,
+                value_str,
+                &mut effects,
+                &mut transition_seconds,
+                &mut clear_effects,
+            );
         }
     }
 
@@ -811,7 +819,11 @@ fn parse_effect_change(tokens: &[&str], context: &mut ParserContext) -> CellActi
 /// Parses master bus effects
 fn parse_master_effects(tokens: &[&str], context: &mut ParserContext) -> CellAction {
     // Determine starting index (skip "master" if present)
-    let start_index = if find_instrument_by_name(tokens[0]).is_some() { 1 } else { 0 };
+    let start_index = if find_instrument_by_name(tokens[0]).is_some() {
+        1
+    } else {
+        0
+    };
     let effect_tokens = &tokens[start_index..];
 
     let mut should_clear = false;
@@ -831,12 +843,13 @@ fn parse_master_effects(tokens: &[&str], context: &mut ParserContext) -> CellAct
 
             // Extract transition time from clear:X
             if (token_lower.starts_with("clear:") || token_lower.starts_with("cl:"))
-                && let Some(colon_pos) = token.find(':') {
-                    let params = parse_parameter_list(&token[colon_pos + 1..]);
-                    if !params.is_empty() {
-                        transition_seconds = params[0].max(0.0);
-                    }
+                && let Some(colon_pos) = token.find(':')
+            {
+                let params = parse_parameter_list(&token[colon_pos + 1..]);
+                if !params.is_empty() {
+                    transition_seconds = params[0].max(0.0);
                 }
+            }
         }
     }
 
@@ -867,7 +880,8 @@ fn parse_master_effects(tokens: &[&str], context: &mut ParserContext) -> CellAct
 
             // Validate it's a master effect
             match effect_name.as_str() {
-                "rv" | "reverb" | "rv2" | "reverb2" | "dl" | "delay" | "a" | "amplitude" | "p" | "pan" | "ch" | "chorus" => {
+                "rv" | "reverb" | "rv2" | "reverb2" | "dl" | "delay" | "a" | "amplitude" | "p"
+                | "pan" | "ch" | "chorus" => {
                     if seen_effects.contains(&effect_name) {
                         context.errors.push(ParseError::warning(
                             context.current_line,
@@ -951,7 +965,13 @@ fn parse_effect_tokens(
             }
             seen_effects.insert(effect_name.clone());
 
-            apply_effect_token(&effect_name, value_str, &mut effects, &mut transition_seconds, &mut clear_first);
+            apply_effect_token(
+                &effect_name,
+                value_str,
+                &mut effects,
+                &mut transition_seconds,
+                &mut clear_first,
+            );
         }
     }
 
@@ -1047,7 +1067,10 @@ fn is_master_effect(token: &str) -> bool {
     // Check for effects that are master-only when they appear first
     if let Some(colon_pos) = token.find(':') {
         let effect_name = &token_lower[..colon_pos];
-        matches!(effect_name, "rv" | "reverb" | "rv2" | "reverb2" | "dl" | "delay")
+        matches!(
+            effect_name,
+            "rv" | "reverb" | "rv2" | "reverb2" | "dl" | "delay"
+        )
     } else {
         false
     }
@@ -1092,16 +1115,22 @@ mod tests {
 
         // "a:0.4" should be ChangeEffects (amplitude change), not TriggerNote
         let action = parse_cell("a:0.4", &mut context);
-        assert!(matches!(action, CellAction::ChangeEffects { .. }),
-                "a:0.4 should be parsed as ChangeEffects, not as a note");
+        assert!(
+            matches!(action, CellAction::ChangeEffects { .. }),
+            "a:0.4 should be parsed as ChangeEffects, not as a note"
+        );
 
         // "a4 sine" should still be TriggerNote
         let action2 = parse_cell("a4 sine", &mut context);
-        assert!(matches!(action2, CellAction::TriggerNote { .. }),
-                "a4 sine should be parsed as TriggerNote");
+        assert!(
+            matches!(action2, CellAction::TriggerNote { .. }),
+            "a4 sine should be parsed as TriggerNote"
+        );
 
         // Verify no errors were generated for "a:0.4"
-        assert!(context.errors.is_empty(),
-                "No errors should be generated for effect-only change 'a:0.4'");
+        assert!(
+            context.errors.is_empty(),
+            "No errors should be generated for effect-only change 'a:0.4'"
+        );
     }
 }

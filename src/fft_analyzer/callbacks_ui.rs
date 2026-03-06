@@ -3,10 +3,10 @@ use std::rc::Rc;
 
 use fltk::{enums::CallbackTrigger, prelude::*};
 
-use crate::app_state::{set_msg, AppState, MsgLevel, SharedCallbacks, UpdateThrottle};
+use crate::app_state::{AppState, MsgLevel, SharedCallbacks, UpdateThrottle, set_msg};
 use crate::data::{
-    eval_gradient, ColormapId, FreqScale, GradientStop, LastEditedField, SolverConstraints,
-    TimeUnit, WindowType,
+    ColormapId, FreqScale, GradientStop, LastEditedField, SolverConstraints, TimeUnit, WindowType,
+    eval_gradient,
 };
 use crate::layout::Widgets;
 use crate::settings::Settings;
@@ -724,7 +724,7 @@ pub fn setup_misc_callbacks(
             cfg.window_width = win.w();
             cfg.window_height = win.h();
             cfg.save();
-            eprintln!("[Settings] Saved current settings to settings.ini");
+            app_log!("Settings", "Saved current settings to settings.ini");
         });
     }
 }
@@ -1041,10 +1041,9 @@ fn find_stop_at_x(stops: &[GradientStop], pos_t: f32, bar_w: i32) -> Option<usiz
     let mut best: Option<(usize, f32)> = None;
     for (i, stop) in stops.iter().enumerate() {
         let dist = (stop.position - pos_t).abs();
-        if dist < tolerance
-            && (best.is_none() || dist < best.unwrap().1) {
-                best = Some((i, dist));
-            }
+        if dist < tolerance && (best.is_none() || dist < best.unwrap().1) {
+            best = Some((i, dist));
+        }
     }
     best.map(|(i, _)| i)
 }

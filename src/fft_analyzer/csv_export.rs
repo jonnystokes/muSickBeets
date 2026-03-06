@@ -106,7 +106,12 @@ pub fn export_to_csv<P: AsRef<Path>>(
 /// Returns (Spectrogram, FftParams, optional recon params, viewport params)
 pub fn import_from_csv<P: AsRef<Path>>(
     path: P,
-) -> Result<(Spectrogram, FftParams, Option<ReconParams>, ImportedViewParams)> {
+) -> Result<(
+    Spectrogram,
+    FftParams,
+    Option<ReconParams>,
+    ImportedViewParams,
+)> {
     use csv::ReaderBuilder;
 
     let mut reader = ReaderBuilder::new()
@@ -188,22 +193,14 @@ pub fn import_from_csv<P: AsRef<Path>>(
     // Optional segmentation solver metadata (fields 13-15, backward-compatible)
     let target_segments_per_active: Option<usize> = if metadata.len() >= 14 {
         let n = metadata[13].parse().unwrap_or(0);
-        if n > 0 {
-            Some(n)
-        } else {
-            None
-        }
+        if n > 0 { Some(n) } else { None }
     } else {
         None
     };
 
     let target_bins_per_segment: Option<usize> = if metadata.len() >= 15 {
         let n = metadata[14].parse().unwrap_or(0);
-        if n > 0 {
-            Some(n)
-        } else {
-            None
-        }
+        if n > 0 { Some(n) } else { None }
     } else {
         None
     };
@@ -237,13 +234,19 @@ pub fn import_from_csv<P: AsRef<Path>>(
         Some(Ok(row)) => {
             // Sanity check: first field should be the column label, not numeric data
             if let Some(first) = row.get(0)
-                && first.parse::<f64>().is_ok() {
-                    eprintln!("[CSV Import] Warning: row 2 looks like data, not a header (first field: {:?}). It will be skipped.", first);
-                }
+                && first.parse::<f64>().is_ok()
+            {
+                app_log!(
+                    "CSV Import",
+                    "Warning: row 2 looks like data, not a header (first field: {:?}). It will be skipped.",
+                    first
+                );
+            }
         }
         Some(Err(e)) => {
-            eprintln!(
-                "[CSV Import] Warning: failed to read row 2 (column labels): {}",
+            app_log!(
+                "CSV Import",
+                "Warning: failed to read row 2 (column labels): {}",
                 e
             );
         }
@@ -268,11 +271,10 @@ pub fn import_from_csv<P: AsRef<Path>>(
         let magnitude: f32 = record[2].parse().unwrap_or(0.0);
         let phase_rad: f32 = record[3].parse().unwrap_or(0.0);
 
-        frames_map.entry(time_sec).or_default().push((
-            frequency_hz,
-            magnitude,
-            phase_rad,
-        ));
+        frames_map
+            .entry(time_sec)
+            .or_default()
+            .push((frequency_hz, magnitude, phase_rad));
     }
 
     // Build frames. Frequency bins are shared across all frames (stored once
@@ -303,10 +305,8 @@ pub fn import_from_csv<P: AsRef<Path>>(
         });
     }
 
-    let spectrogram = Spectrogram::from_frames_with_frequencies(
-        frames,
-        shared_frequencies.unwrap_or_default(),
-    );
+    let spectrogram =
+        Spectrogram::from_frames_with_frequencies(frames, shared_frequencies.unwrap_or_default());
 
     let params = FftParams {
         window_length,
@@ -338,10 +338,7 @@ mod tests {
             phases: vec![0.0, 1.57, 3.14],
         };
 
-        let spec = Spectrogram::from_frames_with_frequencies(
-            vec![frame],
-            vec![0.0, 100.0, 200.0],
-        );
+        let spec = Spectrogram::from_frames_with_frequencies(vec![frame], vec![0.0, 100.0, 200.0]);
         let mut params = FftParams::default();
         params.target_segments_per_active = Some(17);
         params.target_bins_per_segment = Some(1025);
@@ -392,7 +389,8 @@ mod tests {
 ";
         std::fs::write(temp_path, csv).expect("write test csv");
 
-        let (_spec, params, _recon, _view) = import_from_csv(temp_path).expect("import should succeed");
+        let (_spec, params, _recon, _view) =
+            import_from_csv(temp_path).expect("import should succeed");
         assert_eq!(params.target_segments_per_active, None);
         assert_eq!(params.target_bins_per_segment, None);
         assert_eq!(params.last_edited_field, LastEditedField::Overlap);
@@ -415,10 +413,7 @@ mod tests {
             },
         ];
 
-        let spec = Spectrogram::from_frames_with_frequencies(
-            frames,
-            vec![0.0, 100.0],
-        );
+        let spec = Spectrogram::from_frames_with_frequencies(frames, vec![0.0, 100.0]);
         let params = FftParams::default();
         let view = ViewState::default();
 

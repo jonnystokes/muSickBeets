@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 use fltk::{app, dialog, prelude::*};
 
-use crate::app_state::{AppState, SharedCallbacks, WorkerMessage};
+use crate::app_state::{AppState, SharedCallbacks, WorkerMessage, update_status_bar};
 use crate::csv_export;
 use crate::data::{AudioData, TimeUnit, WindowType};
+use crate::debug_flags;
 use crate::layout::Widgets;
 use crate::processing::fft_engine::FftEngine;
 use crate::processing::reconstructor::Reconstructor;
@@ -46,7 +47,9 @@ fn setup_open_callback(
         // Debug: log thread state when Open is clicked
         {
             let st = state.borrow();
-            eprintln!("[Open] is_processing={}, has_audio={}, has_spectrogram={}, has_recon_audio={}, playback_state={:?}",
+            app_log!(
+                "Open",
+                "is_processing={}, has_audio={}, has_spectrogram={}, has_recon_audio={}, playback_state={:?}",
                 st.is_processing,
                 st.has_audio,
                 st.spectrogram.is_some(),
@@ -59,8 +62,8 @@ fn setup_open_callback(
         {
             let st = state.borrow();
             if st.is_processing {
-                status_bar.set_value("Still processing... please wait.");
-                eprintln!("[Open] Blocked: still processing");
+                update_status_bar(&mut status_bar, "Still processing... please wait.");
+                app_log!("Open", "Blocked: still processing");
                 return;
             }
         }
@@ -87,27 +90,35 @@ fn setup_open_callback(
             st.current_activity = "Loading audio...";
         }
 
-        status_bar.set_value("Loading audio...");
-        app::awake();
+        update_status_bar(&mut status_bar, "Loading audio...");
 
         // Move file I/O + normalization to a background thread to keep the GUI responsive.
         // The heavy work (disk read + peak scan) runs off the main thread.
         // State setup happens later in the AudioLoaded handler (main_fft.rs poll loop).
-        eprintln!("[Open] Loading file: {:?}", filename);
+        app_log!("Open", "Loading file: {:?}", filename);
         let tx_clone = tx.clone();
         let filename_for_thread = filename.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut audio = AudioData::from_wav_file(&filename_for_thread)
                     .unwrap_or_else(|e| panic!("Failed to load: {}", e));
-                eprintln!("[Open] File loaded: {} samples, {} Hz, {:.2}s",
-                    audio.num_samples(), audio.sample_rate, audio.duration_seconds);
+                app_log!(
+                    "Open",
+                    "File loaded: {} samples, {} Hz, {:.2}s",
+                    audio.num_samples(),
+                    audio.sample_rate,
+                    audio.duration_seconds
+                );
 
                 let norm_gain = if do_normalize {
                     let gain = audio.normalize(norm_peak);
                     if gain != 1.0 {
-                        eprintln!("[Open] Audio normalized: gain = {:.3}x (original peak = {:.3})",
-                            gain, norm_peak / gain);
+                        app_log!(
+                            "Open",
+                            "Audio normalized: gain = {:.3}x (original peak = {:.3})",
+                            gain,
+                            norm_peak / gain
+                        );
                     }
                     gain
                 } else {
@@ -125,13 +136,13 @@ fn setup_open_callback(
                     let msg = panic.downcast_ref::<String>().cloned()
                         .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                         .unwrap_or_else(|| "unknown panic".to_string());
-                    eprintln!("[Open] PANIC: {}", msg);
+                    app_log!("Open", "PANIC: {}", msg);
                     tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
                 }
             }
         });
 
-        status_bar.set_value("Loading audio file...");
+        update_status_bar(&mut status_bar, "Loading audio file...");
     });
 }
 
@@ -182,7 +193,7 @@ fn setup_save_fft_callback(
             return;
         }
 
-        status_bar.set_value("Saving CSV...");
+        update_status_bar(&mut status_bar, "Saving CSV...");
         let tx_clone = tx.clone();
         let (spec, params, view, proc_time_min, proc_time_max, num_frames) = export_data;
         std::thread::spawn(move || {
@@ -244,8 +255,7 @@ fn setup_load_fft_callback(
             return;
         }
 
-        status_bar.set_value("Loading CSV...");
-        app::awake();
+        update_status_bar(&mut status_bar, "Loading CSV...");
 
         match csv_export::import_from_csv(&filename) {
             Ok((imported_spec, mut imported_params, recon_params, view_params)) => {
@@ -314,19 +324,19 @@ fn setup_load_fft_callback(
                 (update_info.borrow_mut())();
                 (update_seg_label.borrow_mut())();
 
-                {
+                let csv_status = {
                     let mut st = state.borrow_mut();
                     st.current_activity = "Reconstructing...";
                     st.recon_start_time = Some(std::time::Instant::now());
                     st.last_fft_duration = None; // CSV import has no FFT pass
                     st.last_recon_duration = None;
-                    status_bar.set_value(&format!(
+                    format!(
                         "Loaded {} frames from CSV | {}",
                         num_frames,
                         st.status_bar_text()
-                    ));
-                }
-                app::awake();
+                    )
+                };
+                update_status_bar(&mut status_bar, &csv_status);
                 spec_display.redraw();
 
                 // Auto-trigger reconstruction so sound can play.
@@ -381,7 +391,7 @@ fn setup_load_fft_callback(
                                 .cloned()
                                 .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                                 .unwrap_or_else(|| "unknown panic".to_string());
-                            eprintln!("[Reconstruction thread] PANIC: {}", msg);
+                            app_log!("Reconstruction thread", "PANIC: {}", msg);
                             tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
                         }
                     }
@@ -389,7 +399,7 @@ fn setup_load_fft_callback(
             }
             Err(e) => {
                 dialog::alert_default(&format!("Error loading CSV:\n{}", e));
-                status_bar.set_value("CSV load failed");
+                update_status_bar(&mut status_bar, "CSV load failed");
             }
         }
     });
@@ -434,7 +444,7 @@ fn setup_save_wav_callback(
             return;
         }
 
-        status_bar.set_value("Saving WAV...");
+        update_status_bar(&mut status_bar, "Saving WAV...");
         let tx_clone = tx.clone();
         std::thread::spawn(move || {
             let result = audio_clone.save_wav(&filename);
@@ -464,8 +474,6 @@ pub fn setup_rerun_callback(
 ) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
-    let mut spec_display = widgets.spec_display.clone();
-    let mut waveform_display = widgets.waveform_display.clone();
     let tx = tx.clone();
     let input_start = widgets.input_start.clone();
     let input_stop = widgets.input_stop.clone();
@@ -484,7 +492,7 @@ pub fn setup_rerun_callback(
     let mut btn_rerun = widgets.btn_rerun.clone();
     btn_rerun.set_callback(move |_| {
         // Sync all field values into state before running
-        {
+        let prep_status = {
             let mut st = state.borrow_mut();
             if st.audio_data.is_none() {
                 return;
@@ -555,9 +563,22 @@ pub fn setup_rerun_callback(
 
             st.is_processing = true;
             st.dirty = false;
-            st.spec_renderer.invalidate();
-            st.wave_renderer.invalidate();
-        }
+            st.current_activity = "Preparing FFT...";
+            dbg_log!(
+                debug_flags::FFT_DBG,
+                "FFT",
+                "Rerun clicked – preparing window={} overlap={} start={} stop={} @ {}",
+                st.fft_params.window_length,
+                st.fft_params.overlap_percent,
+                st.fft_params.start_sample,
+                st.fft_params.stop_sample,
+                crate::debug_flags::instant_since_start(std::time::Instant::now())
+            );
+            st.status_bar_text()
+        };
+
+        update_status_bar(&mut status_bar, &prep_status);
+        app::awake();
 
         // FFT processes the FULL file; sidebar time range is for reconstruction only
         let (audio, params, cancel) = {
@@ -577,10 +598,13 @@ pub fn setup_rerun_callback(
         let est_cores = rayon::current_num_threads();
         let est_peak_mb = (per_thread_bytes * est_cores) / (1024 * 1024);
         if est_peak_mb > 256 {
-            eprintln!(
-                "[FFT] Warning: large zero-padded FFT (n_fft={}, {}x pad). \
-                 Estimated peak FFT buffer memory: ~{} MB across {} threads.",
-                n_fft, params.zero_pad_factor, est_peak_mb, est_cores,
+            app_log!(
+                "FFT",
+                "Warning: large zero-padded FFT (n_fft={}, {}x pad). Estimated peak memory: ~{} MB across {} threads.",
+                n_fft,
+                params.zero_pad_factor,
+                est_peak_mb,
+                est_cores
             );
         }
 
@@ -589,16 +613,30 @@ pub fn setup_rerun_callback(
 
         // Update status bar BEFORE spawning the worker so the user
         // sees immediate feedback even if the spawn itself is delayed.
-        {
+        let processing_status = {
             let mut st = state.borrow_mut();
             st.current_activity = "Processing FFT...";
             st.fft_start_time = Some(std::time::Instant::now());
-            status_bar.set_value(&st.status_bar_text());
-        }
-        app::awake();
+            dbg_log!(
+                debug_flags::FFT_DBG,
+                "FFT",
+                "Launching FFT worker (n_fft={}, threads={} ) @ {}",
+                params.n_fft_padded(),
+                rayon::current_num_threads(),
+                crate::debug_flags::instant_since_start(std::time::Instant::now())
+            );
+            st.status_bar_text()
+        };
+        update_status_bar(&mut status_bar, &processing_status);
 
         let tx_clone = tx.clone();
         std::thread::spawn(move || {
+            dbg_log!(
+                debug_flags::FFT_DBG,
+                "FFT",
+                "Worker thread started @ {}",
+                crate::debug_flags::instant_since_start(std::time::Instant::now())
+            );
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 FftEngine::process(&audio, &params, &cancel)
             }));
@@ -618,13 +656,10 @@ pub fn setup_rerun_callback(
                         .cloned()
                         .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
                         .unwrap_or_else(|| "unknown panic".to_string());
-                    eprintln!("[FFT thread] PANIC: {}", msg);
+                    app_log!("FFT thread", "PANIC: {}", msg);
                     tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
                 }
             }
         });
-
-        spec_display.redraw();
-        waveform_display.redraw();
     });
 }

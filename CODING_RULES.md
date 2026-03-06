@@ -6,6 +6,18 @@ Read this file before writing or modifying code in the muSickBeets project.
 
 ---
 
+## Workflow Guardrails
+
+- **Search first.** Before changing any shared function, macro, struct, module, or global setting, run `mcp_grep` or `lsp::findReferences` on its name so you know every call site. Update them all in one pass instead of chasing compiler errors.
+- **Capture the blast radius.** When multiple files will be touched, log them in `todowrite` up front. This keeps the work organized and prevents “forgotten” edits.
+- **Verify module order.** If visibility or macros are involved, run `lsp::documentSymbol` on the crate root (e.g., `main_fft.rs`) to confirm declarations are in the correct order before editing. Keep `#[macro_use]` modules before any consumer, and pick one export style—either global macro use or explicit `use`, not both.
+- **Consistent logging.** Use `app_log!` for runtime status/errors and `dbg_log!` (with category labels) for flag-gated diagnostics. This ensures every future log line automatically carries the `[time][category] message` format with millisecond resolution.
+- **Patch carefully.** Before using `apply_patch`, re-read the exact lines you plan to edit and target small sections (or multiple `@@` blocks) instead of one huge chunk. This prevents “failed to find expected lines” errors caused by whitespace or punctuation differences.
+
+These habits apply to every code change, not just macros: assume any name you edit might have downstream dependents and verify them proactively.
+
+---
+
 ## Spacebar Behavior — CRITICAL
 
 Spacebar is a **global shortcut** for "Recompute + Rebuild" (FFT reanalysis and

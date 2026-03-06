@@ -1,4 +1,4 @@
-use crate::data::{eval_gradient, ColormapId, GradientStop};
+use crate::data::{ColormapId, GradientStop, eval_gradient};
 
 const LUT_SIZE: usize = 1024;
 

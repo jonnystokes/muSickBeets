@@ -21,7 +21,7 @@ pub struct AudioPlayer {
 /// audio callback thread.
 fn lock_playback(mutex: &Mutex<PlaybackData>) -> MutexGuard<'_, PlaybackData> {
     mutex.lock().unwrap_or_else(|poisoned| {
-        eprintln!("[AudioPlayer] Warning: mutex was poisoned, recovering");
+        app_log!("AudioPlayer", "Warning: mutex was poisoned, recovering");
         poisoned.into_inner()
     })
 }

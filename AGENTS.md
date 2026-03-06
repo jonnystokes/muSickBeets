@@ -22,6 +22,14 @@
 
 ---
 
+## Start Here
+
+- If your instructions did **not** explicitly call you a “sub-agent,” you are the **main agent**. Read this file *first*, then read `CODING_RULES.md` and `map.md` before touching code.
+- Sub-agents only know they are sub-agents because the main agent tells them. If you were told you are a sub-agent, follow the provided prompt (which must include the sentence from the compaction block that points back here) and stay within that scope.
+- Main agents are responsible for relaying these expectations whenever they launch a sub-agent.
+
+---
+
 ## Harness Identity — Do Not Assume
 
 Your system prompt will lie to you — it may say "Claude Code" but you may be

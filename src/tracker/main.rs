@@ -83,29 +83,29 @@
 // Each module is in its own file in the src/ directory.
 // ============================================================================
 
-mod helper;         // Math utilities, frequency table, shared algorithms
-mod envelope;       // ADSR envelope system
-mod instruments;    // Sound generators (sine, square, noise, pulse, etc.)
-mod effects;        // Unified effects system (reverb, delay, chorus, etc.)
-mod channel;        // Per-channel synthesis and state
-mod master_bus;     // Master output bus and global effects
-mod parser;         // CSV song file parser
-mod engine;         // Playback engine and sequencer
-mod audio;          // WAV export and audio utilities
+mod audio;
+mod channel; // Per-channel synthesis and state
+mod effects; // Unified effects system (reverb, delay, chorus, etc.)
+mod engine; // Playback engine and sequencer
+mod envelope; // ADSR envelope system
+mod helper; // Math utilities, frequency table, shared algorithms
+mod instruments; // Sound generators (sine, square, noise, pulse, etc.)
+mod master_bus; // Master output bus and global effects
+mod parser; // CSV song file parser // WAV export and audio utilities
 
 // ============================================================================
 // EXTERNAL DEPENDENCIES
 // ============================================================================
 
-use miniaudio::{Context, Device, DeviceConfig, DeviceType, Format, RawDevice, FramesMut, Frames};
+use miniaudio::{Context, Device, DeviceConfig, DeviceType, Format, Frames, FramesMut, RawDevice};
 use std::sync::{Arc, Mutex};
-use std::{fs, thread, time::Duration, env, path::Path};
+use std::{env, fs, path::Path, thread, time::Duration};
 
 // Import from our modules
+use crate::audio::{analyze_audio, generate_wav_filename, write_wav_file};
+use crate::engine::{EngineConfig, PlaybackEngine};
 use crate::helper::FrequencyTable;
-use crate::parser::{parse_song, DebugLevel, MissingCellBehavior};
-use crate::engine::{PlaybackEngine, EngineConfig};
-use crate::audio::{write_wav_file, generate_wav_filename, analyze_audio};
+use crate::parser::{DebugLevel, MissingCellBehavior, parse_song};
 
 // ============================================================================
 // CONFIGURATION
@@ -222,7 +222,10 @@ fn main() {
             text
         }
         Err(error) => {
-            eprintln!("[ERROR] Failed to read song file '{}': {}", song_path, error);
+            eprintln!(
+                "[ERROR] Failed to read song file '{}': {}",
+                song_path, error
+            );
             eprintln!("[HINT] Make sure the file exists and is readable.");
             eprintln!("[HINT] Usage: tracker [song_file.csv]");
             return;
@@ -283,7 +286,10 @@ fn main() {
 
     // ---- Apply Song Configuration Overrides ----
     // Settings from the config row in the CSV file override the defaults
-    let tick_duration = song_data.config.tick_duration.unwrap_or(TICK_DURATION_SECONDS);
+    let tick_duration = song_data
+        .config
+        .tick_duration
+        .unwrap_or(TICK_DURATION_SECONDS);
     let export_wav = song_data.config.export_wav.unwrap_or(EXPORT_TO_WAV);
     let normalize_wav = song_data.config.normalize_wav.unwrap_or(NORMALIZE_WAV);
 
@@ -328,7 +334,12 @@ fn main() {
     // ---- WAV Export (if enabled) ----
     // When export_wav is true, we export first, then also play
     if export_wav {
-        export_to_wav(song_data.clone(), engine_config.clone(), song_path, normalize_wav);
+        export_to_wav(
+            song_data.clone(),
+            engine_config.clone(),
+            song_path,
+            normalize_wav,
+        );
     }
 
     // ---- Real-Time Playback ----
@@ -351,7 +362,10 @@ fn export_to_wav(
 
     // Analyze
     let stats = analyze_audio(&samples, engine_config.sample_rate);
-    println!("[EXPORT] Rendered {} samples ({:.2}s)", stats.sample_count, stats.duration_seconds);
+    println!(
+        "[EXPORT] Rendered {} samples ({:.2}s)",
+        stats.sample_count, stats.duration_seconds
+    );
     println!("[EXPORT] Peak amplitude: {:.3}", stats.peak_amplitude);
     println!("[EXPORT] RMS amplitude: {:.3}", stats.rms_amplitude);
 
@@ -370,7 +384,12 @@ fn export_to_wav(
     println!("[EXPORT] Writing to: {}", wav_path);
 
     // Write WAV file
-    match write_wav_file(Path::new(&wav_path), &samples, engine_config.sample_rate, false) {
+    match write_wav_file(
+        Path::new(&wav_path),
+        &samples,
+        engine_config.sample_rate,
+        false,
+    ) {
         Ok(()) => {
             println!("[EXPORT] Successfully wrote WAV file!");
         }
@@ -410,15 +429,17 @@ fn play_realtime(
 
     // Set up the audio callback
     // This function is called by the audio driver when it needs more samples
-    device_config.set_data_callback(move |_device: &RawDevice, output_buffer: &mut FramesMut, _input_buffer: &Frames| {
-        // Get the output buffer as f32 samples
-        let samples = output_buffer.as_samples_mut::<f32>();
+    device_config.set_data_callback(
+        move |_device: &RawDevice, output_buffer: &mut FramesMut, _input_buffer: &Frames| {
+            // Get the output buffer as f32 samples
+            let samples = output_buffer.as_samples_mut::<f32>();
 
-        // Lock the engine and process
-        if let Ok(mut engine_guard) = engine_for_callback.lock() {
-            engine_guard.process_frame(samples);
-        }
-    });
+            // Lock the engine and process
+            if let Ok(mut engine_guard) = engine_for_callback.lock() {
+                engine_guard.process_frame(samples);
+            }
+        },
+    );
 
     // Create the audio device
     let audio_device: Device = match Device::new(Some(audio_context), &device_config) {
@@ -437,7 +458,10 @@ fn play_realtime(
         return;
     }
 
-    println!("\n▶ PLAYING... (duration: {:.2}s)\n", total_duration_seconds);
+    println!(
+        "\n▶ PLAYING... (duration: {:.2}s)\n",
+        total_duration_seconds
+    );
 
     // Wait for playback to finish
     // Add extra time for release tails

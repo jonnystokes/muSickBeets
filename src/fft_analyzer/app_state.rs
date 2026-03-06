@@ -1,10 +1,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use fltk::prelude::WidgetExt;
+use fltk::{
+    app,
+    output::Output,
+    prelude::{InputExt, WidgetExt},
+};
 
 use crate::data::{AudioData, FftParams, Spectrogram, TransportState, ViewState};
 use crate::playback::audio_player::AudioPlayer;
@@ -347,6 +351,14 @@ pub fn set_msg(bar: &mut fltk::frame::Frame, level: MsgLevel, text: &str) {
         bar.set_label(&format!("{}{}", prefix, text));
     }
     bar.redraw();
+}
+
+/// Update the bottom status bar immediately and flush the UI so the change is
+/// visible even if a long-running task begins right after.
+pub fn update_status_bar(status_bar: &mut Output, text: &str) {
+    status_bar.set_value(text);
+    status_bar.redraw();
+    app::flush();
 }
 
 // ─── Format time as M:SS.ms ───────────────────────────────────────────────────

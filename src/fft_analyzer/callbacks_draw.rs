@@ -7,10 +7,9 @@ use fltk::{
     prelude::*,
 };
 
-use crate::app_state::format_time;
 use crate::app_state::AppState;
+use crate::app_state::format_time;
 use crate::data;
-use crate::dbg_log;
 use crate::debug_flags;
 use crate::layout::Widgets;
 use crate::ui::theme;
@@ -44,7 +43,8 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             let Ok(mut st) = state.try_borrow_mut() else {
                 dbg_log!(
                     debug_flags::RENDER_DBG,
-                    "[RENDER] Spectrogram draw skipped: state borrow conflict"
+                    "Render",
+                    "Spectrogram draw skipped: state borrow conflict"
                 );
                 return;
             };
@@ -141,20 +141,30 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 let freq = st.view.y_to_freq(ty_norm);
 
                 if st.spectrogram.is_none() {
-                    dbg_log!(debug_flags::CURSOR_DBG, "[CURSOR-DBG] No spectrogram loaded");
+                    dbg_log!(debug_flags::CURSOR_DBG, "Cursor", "No spectrogram loaded");
                 }
 
                 if let Some(ref spec) = st.spectrogram {
                     let frame_idx_opt = spec.frame_at_time(time);
                     if frame_idx_opt.is_none() {
-                        dbg_log!(debug_flags::CURSOR_DBG,
-                            "[CURSOR-DBG] frame_at_time({}) => None (frames={})", time, spec.num_frames());
+                        dbg_log!(
+                            debug_flags::CURSOR_DBG,
+                            "Cursor",
+                            "frame_at_time({}) => None (frames={})",
+                            time,
+                            spec.num_frames()
+                        );
                     }
                     if let Some(frame_idx) = frame_idx_opt {
                         let bin_idx_opt = spec.bin_at_freq(freq);
                         if bin_idx_opt.is_none() {
-                            dbg_log!(debug_flags::CURSOR_DBG,
-                                "[CURSOR-DBG] bin_at_freq({}) => None (bins={})", freq, spec.num_bins());
+                            dbg_log!(
+                                debug_flags::CURSOR_DBG,
+                                "Cursor",
+                                "bin_at_freq({}) => None (bins={})",
+                                freq,
+                                spec.num_bins()
+                            );
                         }
                         if let Some(bin_idx) = bin_idx_opt {
                             if let Some(mag) = spec
@@ -163,19 +173,28 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                                 .and_then(|f| f.magnitudes.get(bin_idx))
                             {
                                 let db = data::Spectrogram::magnitude_to_db(*mag);
-                                let text = format!(
-                                    "{:.1} Hz | {:.1} dB | {:.5}s",
-                                    freq, db, time
+                                let text = format!("{:.1} Hz | {:.1} dB | {:.5}s", freq, db, time);
+                                dbg_log!(
+                                    debug_flags::CURSOR_DBG,
+                                    "Cursor",
+                                    "OK: {} | widget geom: x={} y={} w={} h={} visible={}",
+                                    text,
+                                    cursor_readout.x(),
+                                    cursor_readout.y(),
+                                    cursor_readout.w(),
+                                    cursor_readout.h(),
+                                    cursor_readout.visible()
                                 );
-                                dbg_log!(debug_flags::CURSOR_DBG,
-                                    "[CURSOR-DBG] OK: {} | widget geom: x={} y={} w={} h={} visible={}",
-                                    text, cursor_readout.x(), cursor_readout.y(),
-                                    cursor_readout.w(), cursor_readout.h(), cursor_readout.visible());
                                 cursor_readout.set_label(&text);
                                 cursor_readout.redraw();
                             } else {
-                                dbg_log!(debug_flags::CURSOR_DBG,
-                                    "[CURSOR-DBG] mag lookup failed: frame_idx={} bin_idx={}", frame_idx, bin_idx);
+                                dbg_log!(
+                                    debug_flags::CURSOR_DBG,
+                                    "Cursor",
+                                    "mag lookup failed: frame_idx={} bin_idx={}",
+                                    frame_idx,
+                                    bin_idx
+                                );
                             }
                         }
                     }
@@ -205,7 +224,11 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
                 if has_alt {
                     // Alt held → ZOOM mode
-                    let zoom_freq = if st.swap_zoom_axes { has_ctrl } else { !has_ctrl };
+                    let zoom_freq = if st.swap_zoom_axes {
+                        has_ctrl
+                    } else {
+                        !has_ctrl
+                    };
 
                     if zoom_freq {
                         // Zoom frequency axis centered on cursor Y
@@ -328,7 +351,8 @@ fn setup_waveform_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             let Ok(mut st) = state.try_borrow_mut() else {
                 dbg_log!(
                     debug_flags::RENDER_DBG,
-                    "[RENDER] Waveform draw skipped: state borrow conflict"
+                    "Render",
+                    "Waveform draw skipped: state borrow conflict"
                 );
                 return;
             };
@@ -393,7 +417,8 @@ fn setup_freq_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let Ok(st) = state.try_borrow() else {
             dbg_log!(
                 debug_flags::RENDER_DBG,
-                "[RENDER] Freq axis draw skipped: state borrow conflict"
+                "Render",
+                "Freq axis draw skipped: state borrow conflict"
             );
             return;
         };
@@ -458,7 +483,8 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let Ok(st) = state.try_borrow() else {
             dbg_log!(
                 debug_flags::RENDER_DBG,
-                "[RENDER] Time axis draw skipped: state borrow conflict"
+                "Render",
+                "Time axis draw skipped: state borrow conflict"
             );
             return;
         };

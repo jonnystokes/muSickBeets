@@ -25,9 +25,9 @@
 // 4. Idle: Envelope finished, channel silent until next trigger
 // ============================================================================
 
-use crate::helper::{lerp, RandomNumberGenerator, calculate_phase_increment, wrap_phase};
-use crate::envelope::{EnvelopeState, EnvelopePhase};
 use crate::effects::{ChannelEffectState, apply_channel_effects, calculate_vibrato_multiplier};
+use crate::envelope::{EnvelopePhase, EnvelopeState};
+use crate::helper::{RandomNumberGenerator, calculate_phase_increment, lerp, wrap_phase};
 use crate::instruments::generate_sample;
 
 // ============================================================================
@@ -444,7 +444,12 @@ impl Channel {
             }
         }
         // Clean up completed slide
-        if self.pitch_slide.as_ref().map(|s| s.is_complete()).unwrap_or(false) {
+        if self
+            .pitch_slide
+            .as_ref()
+            .map(|s| s.is_complete())
+            .unwrap_or(false)
+        {
             self.pitch_slide = None;
             self.crossfade = None; // Crossfade completes with slide
         }
@@ -495,11 +500,8 @@ impl Channel {
         let enveloped_sample = raw_sample * envelope_amplitude;
 
         // ---- APPLY CHANNEL EFFECTS ----
-        let (left_sample, right_sample) = apply_channel_effects(
-            enveloped_sample,
-            &mut self.effects,
-            self.sample_rate,
-        );
+        let (left_sample, right_sample) =
+            apply_channel_effects(enveloped_sample, &mut self.effects, self.sample_rate);
 
         // ---- UPDATE STATE ----
         self.total_samples_processed += 1;
@@ -585,7 +587,12 @@ impl Channel {
         }
 
         // Clean up completed transition
-        if self.effect_transition.as_ref().map(|t| t.is_complete()).unwrap_or(false) {
+        if self
+            .effect_transition
+            .as_ref()
+            .map(|t| t.is_complete())
+            .unwrap_or(false)
+        {
             self.effect_transition = None;
         }
     }
@@ -594,7 +601,6 @@ impl Channel {
     pub fn is_playing(&self) -> bool {
         self.is_active
     }
-
 }
 
 // ============================================================================

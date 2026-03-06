@@ -89,7 +89,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         requires_pitch: false,
         generate_sample_function: generate_silence,
     },
-
     // -------------------------------------------------------------------------
     // ID 1: Sine Wave
     // The purest waveform - a smooth, rounded wave with no harmonics.
@@ -102,7 +101,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         requires_pitch: true,
         generate_sample_function: generate_sine,
     },
-
     // -------------------------------------------------------------------------
     // ID 2: Triangle-Sawtooth Morph (TriSaw)
     // A morphable waveform that can smoothly transition between triangle and sawtooth.
@@ -115,7 +113,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         requires_pitch: true,
         generate_sample_function: generate_trisaw,
     },
-
     // -------------------------------------------------------------------------
     // ID 3: Square Wave
     // A wave that alternates between +1 and -1 with sharp transitions.
@@ -129,7 +126,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         requires_pitch: true,
         generate_sample_function: generate_square_antialiased,
     },
-
     // -------------------------------------------------------------------------
     // ID 4: White Noise
     // Random samples with equal energy at all frequencies.
@@ -143,7 +139,6 @@ pub static INSTRUMENT_REGISTRY: &[InstrumentDefinition] = &[
         requires_pitch: false,
         generate_sample_function: generate_noise,
     },
-
     // -------------------------------------------------------------------------
     // ID 5: Pulse Wave
     // Like a square wave, but with variable pulse width.
@@ -240,7 +235,11 @@ fn generate_trisaw(phase: f32, params: &[f32], _rng: &mut RandomNumberGenerator)
 ///
 /// The basic idea: at the exact moment of a transition, we "soften" the jump
 /// using a polynomial curve instead of an instant step.
-fn generate_square_antialiased(phase: f32, _params: &[f32], _rng: &mut RandomNumberGenerator) -> f32 {
+fn generate_square_antialiased(
+    phase: f32,
+    _params: &[f32],
+    _rng: &mut RandomNumberGenerator,
+) -> f32 {
     // Normalized phase (0 to 1)
     let normalized_phase = phase / TWO_PI;
 
@@ -286,8 +285,16 @@ fn generate_pulse_antialiased(phase: f32, params: &[f32], _rng: &mut RandomNumbe
         params[0].clamp(0.01, 0.99)
     };
 
-    let pwm_rate = if params.len() > 1 { params[1].max(0.0) } else { 0.0 };
-    let pwm_depth = if params.len() > 2 { params[2].clamp(0.0, 0.49) } else { 0.0 };
+    let pwm_rate = if params.len() > 1 {
+        params[1].max(0.0)
+    } else {
+        0.0
+    };
+    let pwm_depth = if params.len() > 2 {
+        params[2].clamp(0.0, 0.49)
+    } else {
+        0.0
+    };
 
     // Calculate current pulse width (with optional modulation)
     // PWM uses a slow LFO to vary the pulse width over time
@@ -305,7 +312,11 @@ fn generate_pulse_antialiased(phase: f32, params: &[f32], _rng: &mut RandomNumbe
     let normalized_phase = phase / TWO_PI;
 
     // Basic pulse wave: +1 when phase < width, -1 otherwise
-    let naive_pulse = if normalized_phase < pulse_width { 1.0 } else { -1.0 };
+    let naive_pulse = if normalized_phase < pulse_width {
+        1.0
+    } else {
+        -1.0
+    };
 
     // Apply PolyBLEP anti-aliasing
     let phase_increment = 0.01;
@@ -315,7 +326,10 @@ fn generate_pulse_antialiased(phase: f32, params: &[f32], _rng: &mut RandomNumbe
     sample += polyblep(normalized_phase, phase_increment);
 
     // Correction at the falling edge (phase = pulse_width)
-    sample -= polyblep((normalized_phase - pulse_width + 1.0) % 1.0, phase_increment);
+    sample -= polyblep(
+        (normalized_phase - pulse_width + 1.0) % 1.0,
+        phase_increment,
+    );
 
     sample
 }

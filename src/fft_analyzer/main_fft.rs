@@ -1,3 +1,5 @@
+#[macro_use]
+mod debug_flags;
 mod app_state;
 mod callbacks_draw;
 mod callbacks_file;
@@ -5,7 +7,6 @@ mod callbacks_nav;
 mod callbacks_ui;
 mod csv_export;
 mod data;
-mod debug_flags;
 mod layout;
 mod playback;
 mod processing;
@@ -16,13 +17,15 @@ mod validation;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 use fltk::{app, prelude::*};
 
-use app_state::{format_time, AppState, SharedCallbacks, SharedCb, WorkerMessage};
+use app_state::{
+    AppState, SharedCallbacks, SharedCb, WorkerMessage, format_time, update_status_bar,
+};
 use data::TimeUnit;
-use layout::{Widgets, STATUS_FFT_OFFSET};
+use layout::{STATUS_FFT_OFFSET, Widgets};
 use playback::audio_player::PlaybackState;
 use processing::fft_engine::FftEngine;
 use processing::reconstructor::Reconstructor;
@@ -243,8 +246,9 @@ fn main() {
 
     // Load settings from INI (or create default INI if missing)
     let cfg = settings::Settings::load_or_create();
-    eprintln!(
-        "[Settings] Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
+    app_log!(
+        "Settings",
+        "Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
         cfg.recon_freq_max_hz,
         cfg.view_freq_min_hz,
         cfg.view_freq_max_hz,
@@ -474,8 +478,12 @@ fn main() {
             status_refresh_counter += 1;
             if status_refresh_counter >= 125 {
                 status_refresh_counter = 0;
-                if let Ok(st) = state.try_borrow() {
-                    status_bar.set_value(&st.status_bar_text());
+                let text = state
+                    .try_borrow()
+                    .map(|st| st.status_bar_text())
+                    .ok();
+                if let Some(text) = text {
+                    update_status_bar(&mut status_bar, &text);
                 }
             }
 
@@ -483,6 +491,13 @@ fn main() {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     WorkerMessage::FftComplete(spectrogram) => {
+                        dbg_log!(
+                            crate::debug_flags::FFT_DBG,
+                            "FFT",
+                            "FftComplete received – {} frames @ {}",
+                            spectrogram.num_frames(),
+                            crate::debug_flags::instant_since_start(std::time::Instant::now())
+                        );
                         // Store spectrogram, then auto-reconstruct
                         let recon_data = {
                             let mut st = state.borrow_mut();
@@ -519,8 +534,6 @@ fn main() {
                                 st.view.freq_max_hz = max_f;
                             }
 
-                            st.spec_renderer.invalidate();
-
                             // Prepare reconstruction: filter spectrogram to processing time range
                             let spec = st.spectrogram.clone().unwrap();
                             let params = st.fft_params.clone();
@@ -546,20 +559,19 @@ fn main() {
                         (enable_spec_widgets.borrow_mut())();
                         (update_info.borrow_mut())();
 
-                        // Record FFT timing, update activity to reconstruction
-                        {
+                        // Record FFT timing, update activity to reconstruction, then invalidate renderers
+                        let recon_status = {
                             let mut st = state.borrow_mut();
                             if let Some(start) = st.fft_start_time.take() {
                                 st.last_fft_duration = Some(start.elapsed());
                             }
                             st.current_activity = "Reconstructing...";
                             st.recon_start_time = Some(std::time::Instant::now());
-                            status_bar.set_value(&st.status_bar_text());
-                        }
-                        spec_display.redraw();
-                        freq_axis.redraw();
-                        time_axis.redraw();
-                        app::awake();
+                            st.spec_renderer.invalidate();
+                            st.wave_renderer.invalidate();
+                            st.status_bar_text()
+                        };
+                        update_status_bar(&mut status_bar, &recon_status);
 
                         // Auto-trigger reconstruction with time-filtered spectrogram.
                         // Instead of cloning frames, compute index range and pass
@@ -568,11 +580,13 @@ fn main() {
                         let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
 
                         // Compute frame index range for the processing time window
-                        let frame_start = spec.frames
+                        let frame_start = spec
+                            .frames
                             .iter()
                             .position(|f| f.time_seconds >= proc_time_min)
                             .unwrap_or(0);
-                        let frame_end = spec.frames
+                        let frame_end = spec
+                            .frames
                             .iter()
                             .rposition(|f| f.time_seconds <= proc_time_max)
                             .map(|i| i + 1) // exclusive end
@@ -590,43 +604,79 @@ fn main() {
                             st.new_cancel_flag()
                         };
 
+                        dbg_log!(
+                            crate::debug_flags::FFT_DBG,
+                            "FFT",
+                            "Spawning reconstruction worker (frames {}..{}) @ {}",
+                            frame_start,
+                            frame_end,
+                            crate::debug_flags::instant_since_start(std::time::Instant::now())
+                        );
+
                         std::thread::spawn(move || {
+                            dbg_log!(
+                                crate::debug_flags::FFT_DBG,
+                                "FFT",
+                                "Reconstruction worker running @ {}",
+                                crate::debug_flags::instant_since_start(std::time::Instant::now())
+                            );
                             let result =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    Reconstructor::reconstruct_range(&spec, &params, &view, frame_start..frame_end, &cancel)
+                                    Reconstructor::reconstruct_range(
+                                        &spec,
+                                        &params,
+                                        &view,
+                                        frame_start..frame_end,
+                                        &cancel,
+                                    )
                                 }));
                             match result {
                                 Ok(reconstructed) => {
                                     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                                        tx_clone.send(WorkerMessage::Cancelled("Reconstruction".to_string())).ok();
+                                        tx_clone
+                                            .send(WorkerMessage::Cancelled(
+                                                "Reconstruction".to_string(),
+                                            ))
+                                            .ok();
                                     } else {
                                         tx_clone
-                                            .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                                            .send(WorkerMessage::ReconstructionComplete(
+                                                reconstructed,
+                                            ))
                                             .ok();
                                     }
                                 }
                                 Err(panic) => {
                                     let msg = panic
-                                        .downcast_ref::<String>().cloned()
+                                        .downcast_ref::<String>()
+                                        .cloned()
                                         .or_else(|| {
                                             panic.downcast_ref::<&str>().map(|s| s.to_string())
                                         })
                                         .unwrap_or_else(|| "unknown panic".to_string());
-                                    eprintln!("[Reconstruction thread] PANIC: {}", msg);
+                                    app_log!("Reconstruction thread", "PANIC: {}", msg);
                                     tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
                                 }
                             }
                         });
                     }
                     WorkerMessage::ReconstructionComplete(mut reconstructed) => {
-                        // Record reconstruction timing
-                        {
+                        dbg_log!(
+                            crate::debug_flags::FFT_DBG,
+                            "FFT",
+                            "ReconstructionComplete received ({} samples) @ {}",
+                            reconstructed.num_samples(),
+                            crate::debug_flags::instant_since_start(std::time::Instant::now())
+                        );
+                        // Record reconstruction timing and update status text before redraws
+                        let ready_status = {
                             let mut st = state.borrow_mut();
                             if let Some(start) = st.recon_start_time.take() {
                                 st.last_recon_duration = Some(start.elapsed());
                             }
                             st.current_activity = "Ready";
-                        }
+                            st.status_bar_text()
+                        };
 
                         // Normalize reconstructed audio for proper playback volume
                         {
@@ -676,10 +726,7 @@ fn main() {
                         match recon_result {
                             Ok((_num_smp, _sr)) => {
                                 (enable_wav_export.borrow_mut())();
-                                {
-                                    let st = state.borrow();
-                                    status_bar.set_value(&st.status_bar_text());
-                                }
+                                update_status_bar(&mut status_bar, &ready_status);
                                 spec_display.redraw();
                                 waveform_display.redraw();
                                 freq_axis.redraw();
@@ -721,7 +768,8 @@ fn main() {
                                 }
                             }
                             Err(e) => {
-                                status_bar.set_value(&format!("Reconstruction error: {}", e));
+                                let msg = format!("Reconstruction error: {}", e);
+                                update_status_bar(&mut status_bar, &msg);
                                 fltk::dialog::alert_default(&format!(
                                     "Failed to load reconstructed audio:\n{}",
                                     e
@@ -799,9 +847,11 @@ fn main() {
                         (update_seg_label.borrow_mut())();
 
                         // Launch background FFT (reconstruction auto-follows via FftComplete)
-                        eprintln!(
-                            "[Open] Spawning FFT thread (window={}, overlap={}%)",
-                            params_clone.window_length, params_clone.overlap_percent
+                        app_log!(
+                            "Open",
+                            "Spawning FFT thread (window={}, overlap={}%)",
+                            params_clone.window_length,
+                            params_clone.overlap_percent
                         );
                         {
                             let mut st = state.borrow_mut();
@@ -817,11 +867,12 @@ fn main() {
                         std::thread::spawn(move || {
                             let result =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    eprintln!("[FFT thread] Started");
+                                    app_log!("FFT thread", "Started");
                                     let spectrogram =
                                         FftEngine::process(&audio_for_fft, &params_clone, &cancel);
-                                    eprintln!(
-                                        "[FFT thread] Complete: {} frames",
+                                    app_log!(
+                                        "FFT thread",
+                                        "Complete: {} frames",
                                         spectrogram.num_frames()
                                     );
                                     spectrogram
@@ -829,7 +880,9 @@ fn main() {
                             match result {
                                 Ok(spectrogram) => {
                                     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                                        tx_clone.send(WorkerMessage::Cancelled("FFT".to_string())).ok();
+                                        tx_clone
+                                            .send(WorkerMessage::Cancelled("FFT".to_string()))
+                                            .ok();
                                     } else {
                                         tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
                                     }
@@ -842,46 +895,50 @@ fn main() {
                                             panic_val.downcast_ref::<&str>().map(|s| s.to_string())
                                         })
                                         .unwrap_or_else(|| "unknown panic".to_string());
-                                    eprintln!("[FFT thread] PANIC: {}", msg);
+                                    app_log!("FFT thread", "PANIC: {}", msg);
                                     tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
                                 }
                             }
                         });
 
+                        if let Some(text) = state
+                            .try_borrow()
+                            .map(|st| st.status_bar_text())
+                            .ok()
                         {
-                            let st = state.borrow();
-                            status_bar.set_value(&st.status_bar_text());
+                            update_status_bar(&mut status_bar, &text);
                         }
-                        app::awake();
                         spec_display.redraw();
                         waveform_display.redraw();
                     }
 
                     WorkerMessage::WavSaved(result) => match result {
                         Ok(path) => {
-                            status_bar.set_value(&format!("WAV saved: {:?}", path));
+                            let msg = format!("WAV saved: {:?}", path);
+                            update_status_bar(&mut status_bar, &msg);
                         }
                         Err(msg) => {
                             fltk::dialog::alert_default(&format!("Error saving WAV:\n{}", msg));
-                            status_bar.set_value("WAV save failed");
+                            update_status_bar(&mut status_bar, "WAV save failed");
                         }
                     },
 
                     WorkerMessage::CsvSaved(result) => match result {
                         Ok((_, num_frames, time_min, time_max)) => {
-                            status_bar.set_value(&format!(
+                            let msg = format!(
                                 "FFT saved ({} frames, {:.2}s-{:.2}s)",
                                 num_frames, time_min, time_max
-                            ));
+                            );
+                            update_status_bar(&mut status_bar, &msg);
                         }
                         Err(msg) => {
                             fltk::dialog::alert_default(&format!("Error saving CSV:\n{}", msg));
-                            status_bar.set_value("Save failed");
+                            update_status_bar(&mut status_bar, "Save failed");
                         }
                     },
 
                     WorkerMessage::WorkerPanic(msg) => {
-                        eprintln!("[Worker] PANIC: {}", msg);
+                        app_log!("Worker", "PANIC: {}", msg);
                         {
                             let mut st = state.borrow_mut();
                             st.is_processing = false;
@@ -890,11 +947,12 @@ fn main() {
                             st.fft_start_time = None;
                             st.recon_start_time = None;
                         }
-                        status_bar.set_value(&format!("Error: worker thread panicked: {}", msg));
+                        let msg_text = format!("Error: worker thread panicked: {}", msg);
+                        update_status_bar(&mut status_bar, &msg_text);
                     }
 
                     WorkerMessage::Cancelled(what) => {
-                        eprintln!("[Worker] Cancelled: {}", what);
+                        app_log!("Worker", "Cancelled: {}", what);
                         // Don't reset is_processing or current_activity —
                         // a new operation likely replaced this one.
                     }
@@ -905,12 +963,18 @@ fn main() {
             if state.borrow().is_processing {
                 use std::sync::mpsc::TryRecvError;
                 if let Err(TryRecvError::Disconnected) = rx.try_recv() {
-                    eprintln!("[Worker] Channel disconnected — worker thread likely panicked without sending a message");
+                    app_log!(
+                        "Worker",
+                        "Channel disconnected — worker thread likely panicked without sending a message"
+                    );
                     let mut st = state.borrow_mut();
                     st.is_processing = false;
                     st.play_pending = false;
                     drop(st);
-                    status_bar.set_value("Error: processing failed (worker thread lost)");
+                    update_status_bar(
+                        &mut status_bar,
+                        "Error: processing failed (worker thread lost)",
+                    );
                 }
             }
 

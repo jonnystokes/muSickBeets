@@ -103,15 +103,17 @@ impl WaveformRenderer {
 
         // Draw playback cursor on top
         if let Some(cx) = cursor_x
-            && cx >= 0 && cx < w {
-                use fltk::draw;
-                draw::set_draw_color(fltk::enums::Color::from_rgb(
-                    CURSOR_COLOR.0,
-                    CURSOR_COLOR.1,
-                    CURSOR_COLOR.2,
-                ));
-                draw::draw_line(x + cx, y, x + cx, y + h);
-            }
+            && cx >= 0
+            && cx < w
+        {
+            use fltk::draw;
+            draw::set_draw_color(fltk::enums::Color::from_rgb(
+                CURSOR_COLOR.0,
+                CURSOR_COLOR.1,
+                CURSOR_COLOR.2,
+            ));
+            draw::draw_line(x + cx, y, x + cx, y + h);
+        }
     }
 
     fn draw_no_data(&self, x: i32, y: i32, w: i32, h: i32) {
@@ -337,7 +339,12 @@ impl WaveformRenderer {
 
         // Draw dots at sample positions when very zoomed in
         if show_dots {
-            for (i, &sample) in samples.iter().enumerate().take(last_sample + 1).skip(first_sample) {
+            for (i, &sample) in samples
+                .iter()
+                .enumerate()
+                .take(last_sample + 1)
+                .skip(first_sample)
+            {
                 let px = sample_to_px(i);
                 let py = val_to_py(sample);
                 let ipx = px.round() as i32;
@@ -427,7 +434,11 @@ impl WaveformRenderer {
                 self.cached_image = Some(img);
             }
             Err(e) => {
-                eprintln!("Failed to create waveform image: {:?}", e);
+                app_log!(
+                    "WaveformRenderer",
+                    "Failed to create waveform image: {:?}",
+                    e
+                );
                 self.cached_image = None;
             }
         }
