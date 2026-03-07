@@ -46,4 +46,3 @@ For tasks that require broad reading across many files or exploring unfamiliar a
 
 - Refer to `map.md` for architecture summaries. This section stays empty so the map remains the single source of truth.
 
-
