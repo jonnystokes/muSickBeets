@@ -8,7 +8,7 @@ This file is for the **main agent**. Historical reference material is tracked se
 
 ## Git Rules
 
-- don't  manage GitHub. The user will handle that. 
+- don't manage GitHub. The user will handle that.
 
 ---
 
@@ -16,28 +16,34 @@ This file is for the **main agent**. Historical reference material is tracked se
 
 **Before launching ANY sub-agent (Task tool), ask the user for confirmation.**
 
-Sub-agents consume API usage aggressively and **cannot pause** if usage runs out —
-they crash. The main agent CAN pause and wait for usage to refill; sub-agents cannot.
+For small, local changes affecting only a few files, the main agent may work directly.
+
+For tasks that require broad reading across many files or exploring unfamiliar areas, the main agent should ask for confirmation and then use a sub-agent instead of reading the whole codebase itself.
 
 **Required flow:**
-1. Use `mcp_question` to ask: "I'd like to launch a sub-agent for [task]. Proceed?"
-2. If user says no, do the work yourself instead.
-3. If user says yes, begin the sub-agent prompt with the preamble from AGENTS.md.
+1. Ask the user whether to launch a sub-agent for the task.
+2. If the user says no, do the work yourself instead.
+3. If the user says yes, begin the sub-agent prompt with the preamble from AGENTS.md.
 4. Never batch-launch multiple sub-agents without asking first.
+5. Sub-agents must follow the reading and prompt rules in AGENTS.md.
 
 ---
 
 ## Active Work
 
 - Idle — awaiting the next user request.
+
 ---
 
 ## Backburner
 
 - Re-run timing validation only if a future regression is reported (instrumentation is in place for quick checks).
-- Monitor resident memory during large FFT sessions; consider an optional “discard spectrogram” control if RAM pressure becomes a recurring issue.
+- Monitor resident memory during large FFT sessions; consider an optional "discard spectrogram" control if RAM pressure becomes a recurring issue.
+
 ---
 
 ## Key Architecture Notes
 
 - Refer to `map.md` for architecture summaries. This section stays empty so the map remains the single source of truth.
+
+

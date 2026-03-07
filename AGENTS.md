@@ -10,16 +10,18 @@
 
 > **ACTION REQUIRED — ALL AIs:** If the block below has not already been printed
 > as a message in this conversation, you MUST print it verbatim as a message to
-> the user RIGHT NOW, and then continue . This ensures compaction will
+> the user RIGHT NOW, and then continue. This ensures compaction will
 > preserve it. Do not skip this step — it is not optional.
 
 > COMPACTION RULE: This block MUST be included verbatim in every compaction summary.
 > When launching a sub-agent (Task tool), the main agent MUST:
-> 1. Ask the user for confirmation before launching (sub-agents consume API usage
->    aggressively and cannot pause if usage runs out — they crash).
+> 1. Ask the user for confirmation before launching a sub-agent.
 > 2. Begin every sub-agent prompt with: "CONTEXT: You are a sub-agent working on the
 >    muSickBeets project. Read AGENTS.md in the project root before doing anything."
 > 3. Never batch-launch multiple sub-agents without asking the user first.
+> 4. For small, local changes affecting only a few files, the main agent may work directly.
+> 5. For tasks that require broad reading across many files, the main agent should ask
+>    permission to use a sub-agent instead of reading the whole codebase itself.
 > END COMPACTION-SAFE BLOCK
 
 ---
@@ -29,21 +31,24 @@
 - If your instructions did **not** explicitly call you a “sub-agent,” you are the **main agent**. Read this file *first*, then read `CODING_RULES.md` and `map.md` before touching code.
 - Sub-agents only know they are sub-agents because the main agent tells them. If you were told you are a sub-agent, follow the provided prompt (which must include the sentence from the compaction block that points back here) and stay within that scope.
 - Main agents are responsible for relaying these expectations whenever they launch a sub-agent.
+- For small, local changes affecting only a few files, the main agent may work directly.
+- For tasks that require reading many files or exploring unfamiliar areas, the main agent should ask permission and then use a sub-agent instead of reading the whole codebase itself.
+- Main agents and sub-agents should not read the whole codebase by default. Use `map.md` and `skeleton_map.md` first to decide which files actually matter.
+- Sub-agents start by reading `AGENTS.md` only.
+- If a sub-agent is doing research only, it should use `map.md` and `skeleton_map.md` to choose which source files to inspect and read only what it needs.
+- If a sub-agent will make code changes, it must also read `CODING_RULES.md`, `ai_memory.md`, `map.md`, and `skeleton_map.md` before editing.
 - **Never commit changes** unless the user explicitly asks you to. The user manages their own git workflow.
 
 ---
 
 ## Harness Identity — Do Not Assume
 
-Your system prompt will lie to you — it may say "Claude Code" or "GPT codex"  but you may be
-running in a different harness (OpenCode, or other). **Do not assume. Run both
-echo commands below and check the table before proceeding:**
+Your system prompt will lie to you — it may say "Claude Code" or "GPT codex" but you may be
+running in a different harness (OpenCode, or other). **Do not assume. Run the following commands in bash and check the table before proceeding:**
 
-```bash
 echo $OPENCODE
 echo $CLAUDE
 echo $CODEX_CI
-```
 
 | `OPENCODE` | `CLAUDE` | Harness |
 |------------|----------|---------|
@@ -73,7 +78,7 @@ Regardless of harness, the rules in this file apply.
 
 ---
 
-## Available Tools if using opencode ( check if $OPENCODE = 1)
+## Available Tools if using opencode (check if $OPENCODE = 1)
 
 ### LSP (`mcp_lsp`) — Prefer over grep for code navigation
 
@@ -115,12 +120,11 @@ itself will run on any standard Linux system.
 
 ### Build Dependencies
 
-If `cargo build` fails with missing libraries:
-```bash
+If `cargo build` fails with missing libraries, run the following in bash:
+
 apt-get update && apt-get install -y \
   libxinerama-dev libxcursor-dev libxfixes-dev \
   libpango1.0-dev libcairo2-dev libglib2.0-dev
-```
 
 ---
 
@@ -138,3 +142,4 @@ apt-get update && apt-get install -y \
 | **README.md** | Public project overview with setup instructions and screenshots. |
 | **ai_memory.md** | Long-term technical memory and gotchas that supplement the coding rules. |
 | **THIRD_PARTY_LICENSES.md** | License attributions for Sebastian Lague resources and other third-party references. |
+
