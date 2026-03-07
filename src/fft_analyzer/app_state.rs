@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fltk::{
@@ -93,7 +93,8 @@ pub struct AppState {
     /// Duration of the last completed reconstruction pass.
     pub last_recon_duration: Option<Duration>,
     /// What the worker is currently doing (for status bar display).
-    pub current_activity: &'static str,
+    /// Dynamic string so it can include filenames, frame counts, etc.
+    pub current_activity: String,
 }
 
 impl AppState {
@@ -133,7 +134,7 @@ impl AppState {
             last_fft_duration: None,
             recon_start_time: None,
             last_recon_duration: None,
-            current_activity: "Ready",
+            current_activity: "Ready | Load an audio file to begin".to_string(),
         }
     }
 
@@ -161,7 +162,7 @@ impl AppState {
     ///   `Processing FFT... | Memory: 1.2 GB`
     pub fn status_bar_text(&self) -> String {
         let mem = format_memory_usage();
-        let activity = self.current_activity;
+        let activity = &self.current_activity;
 
         let mut parts = vec![activity.to_string()];
 

@@ -3,15 +3,28 @@ use std::time::Instant;
 
 /// Toggleable debug flags for diagnostic output.
 /// Set any flag to `true` to enable that category of logging.
-/// All flags default to `false` for normal builds.
+/// All flags default to `false` for normal builds unless noted.
+
+/// Mouse cursor position, frequency/dB readout under the spectrogram.
 #[allow(dead_code)]
 pub const CURSOR_DBG: bool = false;
+
+/// FFT processing pipeline: worker spawn, frame counts, timing, reconstruction lifecycle.
 #[allow(dead_code)]
 pub const FFT_DBG: bool = false;
+
+/// Audio playback state machine: play/pause/stop transitions, seek, loop events.
 #[allow(dead_code)]
 pub const PLAYBACK_DBG: bool = false;
+
+/// Spectrogram and waveform rendering: draw calls, cache hits/misses, pixel mapping.
 #[allow(dead_code)]
 pub const RENDER_DBG: bool = false;
+
+/// File I/O operations: open/save/load audio and FFT CSV, with bin/frame/sample counts.
+/// Default: true (always logs file operations for troubleshooting).
+#[allow(dead_code)]
+pub const FILE_IO_DBG: bool = true;
 
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 

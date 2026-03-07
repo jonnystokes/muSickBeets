@@ -17,15 +17,16 @@ Use the sections below to find the module that owns a piece of behavior. Line co
 - `main_fft.rs` (~367 lines) — Binary entry point. Loads settings, builds UI (`layout::build_ui`), wires callbacks, creates shared callbacks. Poll loop delegated to `poll_loop.rs`.
 - `layout.rs` (~431) — Declares `Widgets` struct and constructs the FLTK layout skeleton (menus, right-panel displays, transport, status bars). Sidebar delegated to `layout_sidebar.rs`.
 - `layout_sidebar.rs` (~691) — Builds all sidebar controls (FILE, ANALYSIS, DISPLAY, RECONSTRUCTION, INFO sections) inside a `SidebarWidgets` struct.
-- `app_state.rs` (~402) — Central `AppState`, worker message enums, shared callback handles, derived info helpers, status-bar formatting.
+- `app_state.rs` (~403) — Central `AppState`, worker message enums, shared callback handles, derived info helpers, status-bar formatting.
 - `validation.rs` (~205) — Input sanitizers (float/uint) plus `_with_recompute` variants that enforce the spacebar defenses.
-- `settings.rs` (~773) — INI persistence (load/create/save, “Save as Default”, custom gradient serialization).
-- `poll_loop.rs` (~791) — 16 ms FLTK poll loop: dispatches `WorkerMessage` variants (FFT complete, reconstruction complete, audio loaded, CSV saved/loaded, WAV saved), syncs scrollbars, updates transport/scrubber.
-- `csv_export.rs` (~428) — FFT CSV import/export, including viewport metadata and post-import reconstruction.
+- `settings.rs` (~773) — INI persistence (load/create/save, "Save as Default", custom gradient serialization).
+- `poll_loop.rs` (~844) — 16 ms FLTK poll loop: dispatches `WorkerMessage` variants (FFT complete, reconstruction complete, audio loaded, CSV saved/loaded, WAV saved), syncs scrollbars, updates transport/scrubber.
+- `csv_export.rs` (~455) — FFT CSV import/export with FILE_IO logging, including viewport metadata and post-import reconstruction.
+- `debug_flags.rs` (~68) — Toggleable debug flags (`CURSOR_DBG`, `FFT_DBG`, `PLAYBACK_DBG`, `RENDER_DBG`, `FILE_IO_DBG`), timing macros (`dbg_log!`, `app_log!`).
 - `test_audio_gen.rs` (~124) — Utility binary for generating chirps/noise for analyzer testing.
 
 ### UI Callbacks
-- `callbacks_file.rs` (~665) — File I/O (open WAV, save/load FFT CSV, export WAV) and the Reconstruct/Rerun button; spawns FFT/reconstruction workers safely.
+- `callbacks_file.rs` (~841) — File I/O (open WAV, save/load FFT CSV, export WAV) and the Reconstruct/Rerun button; spawns FFT/reconstruction workers safely. Rerun supports reconstruction-only mode when no source audio (FFT CSV loaded).
 - `callbacks_ui.rs` (~729) — Parameter, display, playback, tooltip, lock-to-active, and “save defaults” callbacks.
 - `gradient_editor.rs` (~327) — Custom gradient editor: draw callback (pixel-by-pixel bar + stop handles) and mouse interaction (add/move/delete/color-pick stops).
 - `callbacks_nav.rs` (~545) — Menu actions, scrollbars, time/freq zoom buttons, snap-to-view, and the three-layer spacebar guard wiring.

@@ -540,7 +540,11 @@ tooltips.rs: struct TooltipManager { enabled }
 ```
 macro app_log!(tag, fmt, args...)           -- always prints to stderr with timestamp
 macro dbg_log!(flag, tag, fmt, args...)     -- only prints if flag is true
-const FFT_DBG, RENDER_DBG, CURSOR_DBG, SETTINGS_DBG: bool  -- compile-time debug toggles
+const CURSOR_DBG: bool      -- mouse cursor position/freq/dB readout
+const FFT_DBG: bool         -- FFT processing pipeline, worker lifecycle, timing
+const PLAYBACK_DBG: bool    -- audio playback state transitions, seek, loop
+const RENDER_DBG: bool      -- spectrogram/waveform draw calls, cache hits/misses
+const FILE_IO_DBG: bool     -- file open/save/load operations with counts (default: true)
 fn instant_since_start(Instant) -> String   -- elapsed since program start
 ```
 

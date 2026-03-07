@@ -62,12 +62,12 @@ pub fn start_poll_loop(
     let mut status_refresh_counter: u32 = 0;
 
     app::add_timeout3(0.016, move |handle| {
-        // Skip expensive per-tick work when idle: no audio loaded means
-        // no scrollbars to sync, no transport to update, no info to refresh.
+        // Skip expensive per-tick work when idle: no audio and no spectrogram
+        // means no scrollbars to sync, no transport to update, no info to refresh.
         // Worker messages (rx) are still polled so FFT completion is handled.
         let is_idle = state
             .try_borrow()
-            .map(|st| st.audio_data.is_none() && !st.is_processing)
+            .map(|st| st.audio_data.is_none() && st.spectrogram.is_none() && !st.is_processing)
             .unwrap_or(false);
 
         if !is_idle {
@@ -146,23 +146,60 @@ pub fn start_poll_loop(
                 }
                 WorkerMessage::WavSaved(result) => match result {
                     Ok(path) => {
-                        let msg = format!("WAV saved: {:?}", path);
-                        update_status_bar(&mut status_bar, &msg);
+                        dbg_log!(
+                            crate::debug_flags::FILE_IO_DBG,
+                            "File",
+                            "WAV save complete: {:?}",
+                            path
+                        );
+                        let done_status = {
+                            let mut st = state.borrow_mut();
+                            let fname = path.file_name().unwrap_or_default().to_string_lossy();
+                            st.current_activity = format!("WAV saved: {}", fname);
+                            st.status_bar_text()
+                        };
+                        update_status_bar(&mut status_bar, &done_status);
                     }
                     Err(msg) => {
+                        dbg_log!(
+                            crate::debug_flags::FILE_IO_DBG,
+                            "File",
+                            "WAV save FAILED: {}",
+                            msg
+                        );
                         fltk::dialog::alert_default(&format!("Error saving WAV:\n{}", msg));
                         update_status_bar(&mut status_bar, "WAV save failed");
                     }
                 },
                 WorkerMessage::CsvSaved(result) => match result {
-                    Ok((_, num_frames, time_min, time_max)) => {
-                        let msg = format!(
-                            "FFT saved ({} frames, {:.2}s-{:.2}s)",
-                            num_frames, time_min, time_max
+                    Ok((path, num_frames, time_min, time_max)) => {
+                        dbg_log!(
+                            crate::debug_flags::FILE_IO_DBG,
+                            "File",
+                            "FFT CSV save complete: {:?} ({} frames, {:.3}s-{:.3}s)",
+                            path,
+                            num_frames,
+                            time_min,
+                            time_max
                         );
-                        update_status_bar(&mut status_bar, &msg);
+                        let done_status = {
+                            let mut st = state.borrow_mut();
+                            let fname = path.file_name().unwrap_or_default().to_string_lossy();
+                            st.current_activity = format!(
+                                "FFT saved: {} ({} frames, {:.2}s-{:.2}s)",
+                                fname, num_frames, time_min, time_max
+                            );
+                            st.status_bar_text()
+                        };
+                        update_status_bar(&mut status_bar, &done_status);
                     }
                     Err(msg) => {
+                        dbg_log!(
+                            crate::debug_flags::FILE_IO_DBG,
+                            "File",
+                            "FFT CSV save FAILED: {}",
+                            msg
+                        );
                         fltk::dialog::alert_default(&format!("Error saving CSV:\n{}", msg));
                         update_status_bar(&mut status_bar, "Save failed");
                     }
@@ -173,7 +210,7 @@ pub fn start_poll_loop(
                         let mut st = state.borrow_mut();
                         st.is_processing = false;
                         st.play_pending = false;
-                        st.current_activity = "Ready";
+                        st.current_activity = "Error: worker crashed".to_string();
                         st.fft_start_time = None;
                         st.recon_start_time = None;
                     }
@@ -381,7 +418,7 @@ fn handle_fft_complete(
         if let Some(start) = st.fft_start_time.take() {
             st.last_fft_duration = Some(start.elapsed());
         }
-        st.current_activity = "Reconstructing...";
+        st.current_activity = "Reconstructing...".to_string();
         st.recon_start_time = Some(std::time::Instant::now());
         st.spec_renderer.invalidate();
         st.wave_renderer.invalidate();
@@ -490,7 +527,12 @@ fn handle_reconstruction_complete(
         if let Some(start) = st.recon_start_time.take() {
             st.last_recon_duration = Some(start.elapsed());
         }
-        st.current_activity = "Ready";
+        let fname = if st.current_filename.is_empty() {
+            "Spectrogram".to_string()
+        } else {
+            st.current_filename.clone()
+        };
+        st.current_activity = format!("{} | Ready", fname);
         st.status_bar_text()
     };
 
@@ -608,6 +650,17 @@ fn handle_audio_loaded(
     let duration = audio.duration_seconds;
     let nyquist = audio.nyquist_freq();
     let sample_rate = audio.sample_rate;
+    dbg_log!(
+        crate::debug_flags::FILE_IO_DBG,
+        "File",
+        "Audio loaded: {:?} — {} samples, sr={}, {:.2}s, nyquist={:.0}Hz, norm_gain={:.3}",
+        filename,
+        num_smp,
+        sample_rate,
+        duration,
+        nyquist,
+        norm_gain
+    );
     let audio = Arc::new(audio);
 
     let params_clone;
@@ -680,7 +733,7 @@ fn handle_audio_loaded(
     );
     {
         let mut st = state.borrow_mut();
-        st.current_activity = "Processing FFT...";
+        st.current_activity = format!("{} | Processing FFT...", st.current_filename);
         st.fft_start_time = Some(std::time::Instant::now());
         // Clear previous timings for a fresh load
         st.last_fft_duration = None;

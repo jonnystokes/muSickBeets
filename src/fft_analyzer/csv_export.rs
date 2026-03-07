@@ -77,6 +77,8 @@ pub fn export_to_csv<P: AsRef<Path>>(
 
     // Write data (row 3+)
     let freqs = &spectrogram.frequencies;
+    let num_bins = freqs.len();
+    let mut num_frames_written: usize = 0;
     for frame in &spectrogram.frames {
         // Skip frames outside the time range if specified
         if let Some((t_min, t_max)) = time_range
@@ -96,9 +98,20 @@ pub fn export_to_csv<P: AsRef<Path>>(
                 ])
                 .context("Failed to write CSV record")?;
         }
+        num_frames_written += 1;
     }
 
     writer.flush().context("Failed to flush CSV writer")?;
+
+    dbg_log!(
+        crate::debug_flags::FILE_IO_DBG,
+        "CSV Export",
+        "Wrote {} frames x {} bins ({} records) to {:?}",
+        num_frames_written,
+        num_bins,
+        num_frames_written * num_bins,
+        path.as_ref()
+    );
 
     Ok(())
 }
@@ -305,8 +318,22 @@ pub fn import_from_csv<P: AsRef<Path>>(
         });
     }
 
+    let freq_count = shared_frequencies.as_ref().map_or(0, |f| f.len());
+    let frame_count = frames.len();
     let spectrogram =
         Spectrogram::from_frames_with_frequencies(frames, shared_frequencies.unwrap_or_default());
+
+    dbg_log!(
+        crate::debug_flags::FILE_IO_DBG,
+        "CSV Import",
+        "Read {} frames x {} bins from {:?} (sr={}, window={}, overlap={}%)",
+        frame_count,
+        freq_count,
+        path.as_ref(),
+        sample_rate,
+        window_length,
+        overlap_percent
+    );
 
     let params = FftParams {
         window_length,

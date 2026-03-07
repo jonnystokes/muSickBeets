@@ -26,7 +26,7 @@ pub fn setup_file_callbacks(
 ) {
     setup_open_callback(widgets, state, tx, shared, win);
     setup_save_fft_callback(widgets, state, tx);
-    setup_load_fft_callback(widgets, state, tx, shared);
+    setup_load_fft_callback(widgets, state, tx, shared, win);
     setup_save_wav_callback(widgets, state, tx);
 }
 
@@ -87,7 +87,7 @@ fn setup_open_callback(
         {
             let mut st = state.borrow_mut();
             st.is_processing = true;
-            st.current_activity = "Loading audio...";
+            st.current_activity = "Loading audio...".to_string();
         }
 
         update_status_bar(&mut status_bar, "Loading audio...");
@@ -95,6 +95,14 @@ fn setup_open_callback(
         // Move file I/O + normalization to a background thread to keep the GUI responsive.
         // The heavy work (disk read + peak scan) runs off the main thread.
         // State setup happens later in the AudioLoaded handler (main_fft.rs poll loop).
+        dbg_log!(
+            debug_flags::FILE_IO_DBG,
+            "File",
+            "Opening audio file: {:?} (normalize={}, peak={:.2})",
+            filename,
+            do_normalize,
+            norm_peak
+        );
         app_log!("Open", "Loading file: {:?}", filename);
         let tx_clone = tx.clone();
         let filename_for_thread = filename.clone();
@@ -193,9 +201,24 @@ fn setup_save_fft_callback(
             return;
         }
 
-        update_status_bar(&mut status_bar, "Saving CSV...");
+        {
+            let mut st = state.borrow_mut();
+            st.current_activity = format!("Saving FFT data ({} frames)...", export_data.5);
+        }
+        update_status_bar(&mut status_bar, &state.borrow().status_bar_text());
         let tx_clone = tx.clone();
         let (spec, params, view, proc_time_min, proc_time_max, num_frames) = export_data;
+        let num_bins = spec.frequencies.len();
+        dbg_log!(
+            debug_flags::FILE_IO_DBG,
+            "File",
+            "Saving FFT CSV: {} frames x {} bins, time range {:.3}s-{:.3}s, file {:?}",
+            num_frames,
+            num_bins,
+            proc_time_min,
+            proc_time_max,
+            filename
+        );
         std::thread::spawn(move || {
             let result = csv_export::export_to_csv(
                 &spec,
@@ -231,6 +254,7 @@ fn setup_load_fft_callback(
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
     shared: &SharedCallbacks,
+    win: &fltk::window::Window,
 ) {
     let state = state.clone();
     let tx = tx.clone();
@@ -243,6 +267,7 @@ fn setup_load_fft_callback(
     let update_seg_label = shared.update_seg_label.clone();
     let enable_audio_widgets = shared.enable_audio_widgets.clone();
     let enable_spec_widgets = shared.enable_spec_widgets.clone();
+    let mut win_load = win.clone();
 
     let mut btn_load_fft = widgets.btn_load_fft.clone();
     btn_load_fft.set_callback(move |_| {
@@ -255,11 +280,30 @@ fn setup_load_fft_callback(
             return;
         }
 
-        update_status_bar(&mut status_bar, "Loading CSV...");
+        update_status_bar(&mut status_bar, "Loading FFT data...");
+        dbg_log!(
+            debug_flags::FILE_IO_DBG,
+            "File",
+            "Loading FFT CSV from {:?}",
+            filename
+        );
 
         match csv_export::import_from_csv(&filename) {
             Ok((imported_spec, mut imported_params, recon_params, view_params)) => {
                 let num_frames = imported_spec.num_frames();
+                let num_bins = imported_spec.frequencies.len();
+                let max_freq = imported_spec.max_freq;
+                dbg_log!(
+                    debug_flags::FILE_IO_DBG,
+                    "File",
+                    "FFT CSV loaded: {} frames x {} bins, sr={}, max_freq={:.1}Hz, time {:.5}s-{:.5}s",
+                    num_frames,
+                    num_bins,
+                    imported_params.sample_rate,
+                    max_freq,
+                    imported_spec.min_time,
+                    imported_spec.max_time
+                );
 
                 // Ensure proc_time covers the full spectrogram range
                 let spec_min_time = imported_spec.min_time;
@@ -269,9 +313,17 @@ fn setup_load_fft_callback(
                 imported_params.start_sample = (spec_min_time * sr as f64).round() as usize;
                 imported_params.stop_sample = (spec_max_time * sr as f64).round() as usize;
 
+                // Set filename for status bar and window title
+                let csv_fname = filename
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+
                 let recon_data = {
                     let mut st = state.borrow_mut();
                     st.fft_params = imported_params.clone();
+                    st.current_filename = csv_fname.clone();
 
                     // Compute adaptive dB ceiling from actual data max amplitude
                     let max_mag = imported_spec.max_magnitude();
@@ -319,6 +371,8 @@ fn setup_load_fft_callback(
                 input_stop.set_value(&format!("{:.5}", imported_params.stop_seconds()));
                 slider_overlap.set_value(imported_params.overlap_percent as f64);
 
+                win_load.set_label(&format!("muSickBeets - {} (FFT)", csv_fname));
+
                 (enable_audio_widgets.borrow_mut())();
                 (enable_spec_widgets.borrow_mut())();
                 (update_info.borrow_mut())();
@@ -326,15 +380,14 @@ fn setup_load_fft_callback(
 
                 let csv_status = {
                     let mut st = state.borrow_mut();
-                    st.current_activity = "Reconstructing...";
+                    st.current_activity = format!(
+                        "{} | Reconstructing ({} frames)...",
+                        csv_fname, num_frames
+                    );
                     st.recon_start_time = Some(std::time::Instant::now());
                     st.last_fft_duration = None; // CSV import has no FFT pass
                     st.last_recon_duration = None;
-                    format!(
-                        "Loaded {} frames from CSV | {}",
-                        num_frames,
-                        st.status_bar_text()
-                    )
+                    st.status_bar_text()
                 };
                 update_status_bar(&mut status_bar, &csv_status);
                 spec_display.redraw();
@@ -444,7 +497,19 @@ fn setup_save_wav_callback(
             return;
         }
 
-        update_status_bar(&mut status_bar, "Saving WAV...");
+        {
+            let mut st = state.borrow_mut();
+            st.current_activity = "Saving WAV...".to_string();
+        }
+        update_status_bar(&mut status_bar, &state.borrow().status_bar_text());
+        dbg_log!(
+            debug_flags::FILE_IO_DBG,
+            "File",
+            "Saving WAV: {} samples, sr={}, file {:?}",
+            audio_clone.num_samples(),
+            audio_clone.sample_rate,
+            filename
+        );
         let tx_clone = tx.clone();
         std::thread::spawn(move || {
             let result = audio_clone.save_wav(&filename);
@@ -491,175 +556,286 @@ pub fn setup_rerun_callback(
 
     let mut btn_rerun = widgets.btn_rerun.clone();
     btn_rerun.set_callback(move |_| {
-        // Sync all field values into state before running
-        let prep_status = {
-            let mut st = state.borrow_mut();
-            if st.audio_data.is_none() {
-                return;
+        // Check if we have anything to work with
+        let has_audio;
+        let has_spectrogram;
+        {
+            let st = state.borrow();
+            has_audio = st.audio_data.is_some();
+            has_spectrogram = st.spectrogram.is_some();
+            if !has_audio && !has_spectrogram {
+                return; // Nothing to process
             }
             if st.is_processing {
                 return;
             }
+        }
 
-            // Read current field values and convert to sample counts
-            let sr = st.fft_params.sample_rate as f64;
-            match st.fft_params.time_unit {
-                TimeUnit::Seconds => {
-                    st.fft_params.start_sample =
-                        (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
-                    st.fft_params.stop_sample =
-                        (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
-                }
-                TimeUnit::Samples => {
-                    st.fft_params.start_sample = parse_or_zero_usize(&input_start.value());
-                    st.fft_params.stop_sample = parse_or_zero_usize(&input_stop.value());
-                }
-            }
-
-            // Read segment size from input field, validate
-            let seg_size: usize = parse_or_zero_usize(&input_seg_size.value()).max(2);
-            let seg_size = if !seg_size.is_multiple_of(2) {
-                seg_size + 1
-            } else {
-                seg_size
-            };
-            let active_len = st
-                .fft_params
-                .stop_sample
-                .saturating_sub(st.fft_params.start_sample)
-                .max(2);
-            st.fft_params.window_length = seg_size.min(active_len);
-
-            // Read zero-pad factor from dropdown
-            st.fft_params.zero_pad_factor = match zero_pad_choice.value() {
-                0 => 1,
-                1 => 2,
-                2 => 4,
-                3 => 8,
-                _ => 1,
-            };
-
-            st.fft_params.overlap_percent = slider_overlap.value() as f32;
-            st.fft_params.use_center = check_center.is_checked();
-
-            // Read window type + kaiser beta
-            st.fft_params.window_type = match window_type_choice.value() {
-                0 => WindowType::Hann,
-                1 => WindowType::Hamming,
-                2 => WindowType::Blackman,
-                3 => {
-                    let beta = parse_or_zero_f32(&input_kaiser_beta.value());
-                    WindowType::Kaiser(if beta > 0.0 { beta } else { 8.6 })
-                }
-                _ => WindowType::Hann,
-            };
-
-            // Update reconstruction params
+        // ── Sync reconstruction params from UI (always needed) ──
+        {
+            let mut st = state.borrow_mut();
             let fc = parse_or_zero_usize(&input_freq_count.value()).max(1);
             st.view.recon_freq_count = fc;
             st.view.recon_freq_min_hz = parse_or_zero_f32(&input_recon_freq_min.value());
             st.view.recon_freq_max_hz = parse_or_zero_f32(&input_recon_freq_max.value());
-            st.view.max_freq_bins = st.fft_params.num_frequency_bins();
-
-            st.is_processing = true;
-            st.dirty = false;
-            st.current_activity = "Preparing FFT...";
-            dbg_log!(
-                debug_flags::FFT_DBG,
-                "FFT",
-                "Rerun clicked – preparing window={} overlap={} start={} stop={} @ {}",
-                st.fft_params.window_length,
-                st.fft_params.overlap_percent,
-                st.fft_params.start_sample,
-                st.fft_params.stop_sample,
-                crate::debug_flags::instant_since_start(std::time::Instant::now())
-            );
-            st.status_bar_text()
-        };
-
-        update_status_bar(&mut status_bar, &prep_status);
-        app::awake();
-
-        // FFT processes the FULL file; sidebar time range is for reconstruction only
-        let (audio, params, cancel) = {
-            let mut st = state.borrow_mut();
-            let cancel = st.new_cancel_flag();
-            let mut fft_params = st.fft_params.clone();
-            // Override start/stop to process full file (sample-based)
-            fft_params.start_sample = 0;
-            fft_params.stop_sample = st.audio_data.as_ref().unwrap().num_samples();
-            (st.audio_data.clone().unwrap(), fft_params, cancel)
-        };
-
-        // Warn if zero-padded FFT size is very large (memory estimate).
-        // Each rayon thread allocates ~2 buffers of n_fft f32s.
-        let n_fft = params.n_fft_padded();
-        let per_thread_bytes = n_fft * 4 * 2; // input + output buffers
-        let est_cores = rayon::current_num_threads();
-        let est_peak_mb = (per_thread_bytes * est_cores) / (1024 * 1024);
-        if est_peak_mb > 256 {
-            app_log!(
-                "FFT",
-                "Warning: large zero-padded FFT (n_fft={}, {}x pad). Estimated peak memory: ~{} MB across {} threads.",
-                n_fft,
-                params.zero_pad_factor,
-                est_peak_mb,
-                est_cores
-            );
         }
 
-        (update_info.borrow_mut())();
-        (update_seg_label.borrow_mut())();
+        if has_audio {
+            // ── Full path: re-FFT from source audio + reconstruct ──
+            let prep_status = {
+                let mut st = state.borrow_mut();
 
-        // Update status bar BEFORE spawning the worker so the user
-        // sees immediate feedback even if the spawn itself is delayed.
-        let processing_status = {
-            let mut st = state.borrow_mut();
-            st.current_activity = "Processing FFT (full file)...";
-            st.fft_start_time = Some(std::time::Instant::now());
-            dbg_log!(
-                debug_flags::FFT_DBG,
-                "FFT",
-                "Launching FFT worker (n_fft={}, threads={} ) @ {}",
-                params.n_fft_padded(),
-                rayon::current_num_threads(),
-                crate::debug_flags::instant_since_start(std::time::Instant::now())
-            );
-            st.status_bar_text()
-        };
-        update_status_bar(&mut status_bar, &processing_status);
-
-        let tx_clone = tx.clone();
-        std::thread::spawn(move || {
-            dbg_log!(
-                debug_flags::FFT_DBG,
-                "FFT",
-                "Worker thread started @ {}",
-                crate::debug_flags::instant_since_start(std::time::Instant::now())
-            );
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                FftEngine::process(&audio, &params, &cancel)
-            }));
-            match result {
-                Ok(spectrogram) => {
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        tx_clone
-                            .send(WorkerMessage::Cancelled("FFT".to_string()))
-                            .ok();
-                    } else {
-                        tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
+                // Read current field values and convert to sample counts
+                let sr = st.fft_params.sample_rate as f64;
+                match st.fft_params.time_unit {
+                    TimeUnit::Seconds => {
+                        st.fft_params.start_sample =
+                            (parse_or_zero_f64(&input_start.value()) * sr).round() as usize;
+                        st.fft_params.stop_sample =
+                            (parse_or_zero_f64(&input_stop.value()) * sr).round() as usize;
+                    }
+                    TimeUnit::Samples => {
+                        st.fft_params.start_sample = parse_or_zero_usize(&input_start.value());
+                        st.fft_params.stop_sample = parse_or_zero_usize(&input_stop.value());
                     }
                 }
-                Err(panic) => {
-                    let msg = panic
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                        .unwrap_or_else(|| "unknown panic".to_string());
-                    app_log!("FFT thread", "PANIC: {}", msg);
-                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-                }
+
+                // Read segment size from input field, validate
+                let seg_size: usize = parse_or_zero_usize(&input_seg_size.value()).max(2);
+                let seg_size = if !seg_size.is_multiple_of(2) {
+                    seg_size + 1
+                } else {
+                    seg_size
+                };
+                let active_len = st
+                    .fft_params
+                    .stop_sample
+                    .saturating_sub(st.fft_params.start_sample)
+                    .max(2);
+                st.fft_params.window_length = seg_size.min(active_len);
+
+                // Read zero-pad factor from dropdown
+                st.fft_params.zero_pad_factor = match zero_pad_choice.value() {
+                    0 => 1,
+                    1 => 2,
+                    2 => 4,
+                    3 => 8,
+                    _ => 1,
+                };
+
+                st.fft_params.overlap_percent = slider_overlap.value() as f32;
+                st.fft_params.use_center = check_center.is_checked();
+
+                // Read window type + kaiser beta
+                st.fft_params.window_type = match window_type_choice.value() {
+                    0 => WindowType::Hann,
+                    1 => WindowType::Hamming,
+                    2 => WindowType::Blackman,
+                    3 => {
+                        let beta = parse_or_zero_f32(&input_kaiser_beta.value());
+                        WindowType::Kaiser(if beta > 0.0 { beta } else { 8.6 })
+                    }
+                    _ => WindowType::Hann,
+                };
+
+                st.view.max_freq_bins = st.fft_params.num_frequency_bins();
+
+                st.is_processing = true;
+                st.dirty = false;
+                st.current_activity = "Preparing FFT...".to_string();
+                dbg_log!(
+                    debug_flags::FFT_DBG,
+                    "FFT",
+                    "Rerun clicked – preparing window={} overlap={} start={} stop={} @ {}",
+                    st.fft_params.window_length,
+                    st.fft_params.overlap_percent,
+                    st.fft_params.start_sample,
+                    st.fft_params.stop_sample,
+                    crate::debug_flags::instant_since_start(std::time::Instant::now())
+                );
+                st.status_bar_text()
+            };
+
+            update_status_bar(&mut status_bar, &prep_status);
+            app::awake();
+
+            // FFT processes the FULL file; sidebar time range is for reconstruction only
+            let (audio, params, cancel) = {
+                let mut st = state.borrow_mut();
+                let cancel = st.new_cancel_flag();
+                let mut fft_params = st.fft_params.clone();
+                // Override start/stop to process full file (sample-based)
+                fft_params.start_sample = 0;
+                fft_params.stop_sample = st.audio_data.as_ref().unwrap().num_samples();
+                (st.audio_data.clone().unwrap(), fft_params, cancel)
+            };
+
+            // Warn if zero-padded FFT size is very large (memory estimate).
+            // Each rayon thread allocates ~2 buffers of n_fft f32s.
+            let n_fft = params.n_fft_padded();
+            let per_thread_bytes = n_fft * 4 * 2; // input + output buffers
+            let est_cores = rayon::current_num_threads();
+            let est_peak_mb = (per_thread_bytes * est_cores) / (1024 * 1024);
+            if est_peak_mb > 256 {
+                app_log!(
+                    "FFT",
+                    "Warning: large zero-padded FFT (n_fft={}, {}x pad). Estimated peak memory: ~{} MB across {} threads.",
+                    n_fft,
+                    params.zero_pad_factor,
+                    est_peak_mb,
+                    est_cores
+                );
             }
-        });
+
+            (update_info.borrow_mut())();
+            (update_seg_label.borrow_mut())();
+
+            // Update status bar BEFORE spawning the worker so the user
+            // sees immediate feedback even if the spawn itself is delayed.
+            let processing_status = {
+                let mut st = state.borrow_mut();
+                st.current_activity = "Processing FFT (full file)...".to_string();
+                st.fft_start_time = Some(std::time::Instant::now());
+                dbg_log!(
+                    debug_flags::FFT_DBG,
+                    "FFT",
+                    "Launching FFT worker (n_fft={}, threads={} ) @ {}",
+                    params.n_fft_padded(),
+                    rayon::current_num_threads(),
+                    crate::debug_flags::instant_since_start(std::time::Instant::now())
+                );
+                st.status_bar_text()
+            };
+            update_status_bar(&mut status_bar, &processing_status);
+
+            let tx_clone = tx.clone();
+            std::thread::spawn(move || {
+                dbg_log!(
+                    debug_flags::FFT_DBG,
+                    "FFT",
+                    "Worker thread started @ {}",
+                    crate::debug_flags::instant_since_start(std::time::Instant::now())
+                );
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    FftEngine::process(&audio, &params, &cancel)
+                }));
+                match result {
+                    Ok(spectrogram) => {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            tx_clone
+                                .send(WorkerMessage::Cancelled("FFT".to_string()))
+                                .ok();
+                        } else {
+                            tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
+                        }
+                    }
+                    Err(panic) => {
+                        let msg = panic
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "unknown panic".to_string());
+                        app_log!("FFT thread", "PANIC: {}", msg);
+                        tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                    }
+                }
+            });
+        } else {
+            // ── Reconstruction-only path: spectrogram loaded from CSV, no source audio ──
+            // Skip FFT, go straight to reconstruction with updated recon params.
+            let recon_data = {
+                let mut st = state.borrow_mut();
+                st.is_processing = true;
+                st.dirty = false;
+                st.last_fft_duration = None;
+                st.last_recon_duration = None;
+                st.recon_start_time = Some(std::time::Instant::now());
+                st.current_activity = format!(
+                    "{} | Reconstructing...",
+                    st.current_filename
+                );
+                let cancel = st.new_cancel_flag();
+
+                let spec = st.spectrogram.clone().unwrap();
+                let params = st.fft_params.clone();
+                let view = st.view.clone();
+                let proc_time_min = params.start_seconds();
+                let proc_time_max = params.stop_seconds();
+                (spec, params, view, proc_time_min, proc_time_max, cancel)
+            };
+
+            (update_info.borrow_mut())();
+
+            let recon_status = state.borrow().status_bar_text();
+            update_status_bar(&mut status_bar, &recon_status);
+            app::awake();
+
+            let tx_clone = tx.clone();
+            let (spec, params, view, proc_time_min, proc_time_max, cancel) = recon_data;
+
+            // Compute frame index range for the processing time window
+            let frame_start = spec
+                .frames
+                .iter()
+                .position(|f| f.time_seconds >= proc_time_min)
+                .unwrap_or(0);
+            let frame_end = spec
+                .frames
+                .iter()
+                .rposition(|f| f.time_seconds <= proc_time_max)
+                .map(|i| i + 1)
+                .unwrap_or(0);
+
+            if frame_start < frame_end {
+                let sr = params.sample_rate as f64;
+                state.borrow_mut().recon_start_sample =
+                    (spec.frames[frame_start].time_seconds * sr).round() as usize;
+            }
+
+            dbg_log!(
+                debug_flags::FFT_DBG,
+                "FFT",
+                "Rerun (recon-only): frames {}..{}, freq_count={}, freq_range={:.0}-{:.0}Hz",
+                frame_start,
+                frame_end,
+                view.recon_freq_count,
+                view.recon_freq_min_hz,
+                view.recon_freq_max_hz
+            );
+
+            std::thread::spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    Reconstructor::reconstruct_range(
+                        &spec,
+                        &params,
+                        &view,
+                        frame_start..frame_end,
+                        &cancel,
+                    )
+                }));
+                match result {
+                    Ok(reconstructed) => {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            tx_clone
+                                .send(WorkerMessage::Cancelled("Reconstruction".to_string()))
+                                .ok();
+                        } else {
+                            tx_clone
+                                .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                                .ok();
+                        }
+                    }
+                    Err(panic) => {
+                        let msg = panic
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                            .unwrap_or_else(|| "unknown panic".to_string());
+                        app_log!("Reconstruction thread", "PANIC: {}", msg);
+                        tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                    }
+                }
+            });
+        }
     });
 }
