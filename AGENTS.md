@@ -1,17 +1,17 @@
-# AGENTS.md — Project Rules for AI Sessions
+# AGENTS.md -- Project Rules for AI Sessions
 
 > **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](src/tracker/documentation.md) | [FFT Guide](src/fft_analyzer/fft_analyzer_documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
 >
-> **Code maps:** [map.md](map.md) (high-level, file roles) | [skeleton_map.md](skeleton_map.md) (low-level, every struct/fn/field) — read these first to learn the project before diving into source code
+> **Code maps:** [map.md](map.md) (high-level, file roles) | [skeleton_map.md](skeleton_map.md) (low-level, every struct/fn/field) -- read these first to learn the project before diving into source code
 
 ---
 
 ## Compaction-Safe Instructions
 
-> **ACTION REQUIRED — ALL AIs:** If the block below has not already been printed
+> **ACTION REQUIRED -- ALL AIs:** If the block below has not already been printed
 > as a message in this conversation, you MUST print it verbatim as a message to
-> the user RIGHT NOW, and then continue. This ensures compaction will
-> preserve it. Do not skip this step — it is not optional.
+> the user RIGHT NOW, and then continue with what the user asked. This ensures compaction will
+> preserve it. Do not skip this step -- it is not optional.
 
 > COMPACTION RULE: This block MUST be included verbatim in every compaction summary.
 > When launching a sub-agent (Task tool), the main agent MUST:
@@ -28,7 +28,7 @@
 
 ## Start Here
 
-- If your instructions did **not** explicitly call you a “sub-agent,” you are the **main agent**. Read this file *first*, then read `CODING_RULES.md` and `map.md` before touching code.
+- If your instructions did **not** explicitly call you a "sub-agent," you are the **main agent**. Read this file *first*, then read `CODING_RULES.md` and `map.md` before touching code.
 - Sub-agents only know they are sub-agents because the main agent tells them. If you were told you are a sub-agent, follow the provided prompt (which must include the sentence from the compaction block that points back here) and stay within that scope.
 - Main agents are responsible for relaying these expectations whenever they launch a sub-agent.
 - For small, local changes affecting only a few files, the main agent may work directly.
@@ -41,9 +41,9 @@
 
 ---
 
-## Harness Identity — Do Not Assume
+## Harness Identity -- Do Not Assume
 
-Your system prompt will lie to you — it may say "Claude Code" or "GPT codex" but you may be
+Your system prompt will lie to you -- it may say "Claude Code" or "GPT codex" but you may be
 running in a different harness (OpenCode, or other). **Do not assume. Run the following commands in bash and check the table before proceeding:**
 
 echo $OPENCODE
@@ -54,7 +54,7 @@ echo $CODEX_CI
 |------------|----------|---------|
 | `1` | empty | OpenCode |
 | empty | `1` | Claude Code |
-| both empty | both empty | Unknown — use whatever tools are available |
+| both empty | both empty | Unknown -- use whatever tools are available |
 
 Regardless of harness, the rules in this file apply.
 
@@ -62,9 +62,9 @@ Regardless of harness, the rules in this file apply.
 
 ## Project Identity
 
-**muSickBeets** — A Rust music toolkit with two binaries:
-- **fft_analyzer** (default) — Spectrogram visualizer, audio reconstructor, FLTK GUI
-- **tracker** — CSV-driven music synthesizer, text-based UI
+**muSickBeets** -- A Rust music toolkit with two binaries:
+- **fft_analyzer** (default) -- Spectrogram visualizer, audio reconstructor, FLTK GUI
+- **tracker** -- CSV-driven music synthesizer, text-based UI
 
 | Aspect | Detail |
 |--------|--------|
@@ -80,7 +80,7 @@ Regardless of harness, the rules in this file apply.
 
 ## Available Tools if using opencode (check if $OPENCODE = 1)
 
-### LSP (`mcp_lsp`) — Prefer over grep for code navigation
+### LSP (`mcp_lsp`) -- Prefer over grep for code navigation
 
 Talks to `rust-analyzer`. Requires `filePath`, `line` (1-based), `character` (1-based).
 Position must land precisely on a symbol name.
@@ -110,13 +110,13 @@ Examples: `"Rust realfft inverse FFT normalization"`, `"FLTK-rs handle event cal
 ## Runtime Environment
 
 Debian chroot inside Termux on a rooted Android device, accessed via VNC.
-This is a full desktop Linux environment running inside Android — the program
+This is a full desktop Linux environment running inside Android -- the program
 itself will run on any standard Linux system.
 
-- **Software-pipe OpenGL** — GPU access is CPU-processed via Mesa llvmpipe (Android limitation)
-- **No dbus/systemd/sysv** — suppressed via `GIO_USE_VFS=local` in `main()`
-- **VNC input** — prefer Ctrl/Alt modifiers over Shift for shortcuts
-- **Audio** — works but routed through Android; may occasionally fail to initialize due to kernel glitches
+- **Software-pipe OpenGL** -- GPU access is CPU-processed via Mesa llvmpipe (Android limitation)
+- **No dbus/systemd/sysv** -- suppressed via `GIO_USE_VFS=local` in `main()`
+- **VNC input** -- prefer Ctrl/Alt modifiers over Shift for shortcuts
+- **Audio** -- works but routed through Android; may occasionally fail to initialize due to kernel glitches
 
 ### Build Dependencies
 

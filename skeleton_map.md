@@ -552,9 +552,9 @@ fn instant_since_start(Instant) -> String   -- elapsed since program start
 
 ## Known Issues / Gaps (from full code review)
 
-1. ~~**Duplicate active-bin logic**~~: FIXED — extracted to shared `compute_active_bins()` in `spectrogram.rs`.
+1. ~~**Duplicate active-bin logic**~~: FIXED -- extracted to shared `compute_active_bins()` in `spectrogram.rs`.
 2. **Sample buffer clone**: `main_fft.rs` clones reconstructed samples into `Arc<Vec<f32>>` for AudioPlayer. Could share allocation if AudioData used Arc internally. (Low impact ~1MB, skipped.)
-3. ~~**Absolute-positioned status bars**~~: FIXED — `Event::Resize` handler in `setup_spacebar_handler()` repositions them on window resize.
+3. ~~**Absolute-positioned status bars**~~: FIXED -- `Event::Resize` handler in `setup_spacebar_handler()` repositions them on window resize.
 4. **No source audio playback**: Only reconstructed audio plays. No A/B comparison.
 5. **No progress indication**: FFT/reconstruction show "Processing..." with no progress bar.
 6. **CSV doesn't preserve custom gradient**: Gradient stops aren't serialized in CSV export.

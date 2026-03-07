@@ -31,7 +31,7 @@ For tasks that require broad reading across many files or exploring unfamiliar a
 
 ## Active Work
 
-- Idle — awaiting the next user request.
+- Idle -- awaiting the next user request.
 
 ---
 
