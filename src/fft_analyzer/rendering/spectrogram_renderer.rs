@@ -5,7 +5,7 @@ use fltk::prelude::ImageExt;
 use rayon::prelude::*;
 
 use super::color_lut::ColorLUT;
-use crate::data::{Spectrogram, ViewState};
+use crate::data::{compute_active_bins, Spectrogram, ViewState};
 
 pub struct SpectrogramRenderer {
     color_lut: ColorLUT,
@@ -168,9 +168,8 @@ impl SpectrogramRenderer {
 
         let num_bins = spec.num_bins();
 
-        // Pre-compute active bins per frame based on freq range + freq count filtering
-        // This mirrors what the Reconstructor does, so the spectrogram shows
-        // exactly which bins will be used for reconstruction.
+        // Pre-compute active bins per frame based on freq range + freq count filtering.
+        // Uses shared compute_active_bins() so renderer and reconstructor always agree.
         let freq_min = view.recon_freq_min_hz;
         let freq_max = view.recon_freq_max_hz;
         let freq_count = view.recon_freq_count;
@@ -181,37 +180,13 @@ impl SpectrogramRenderer {
             .frames
             .par_iter()
             .map(|frame| {
-                let mut active = vec![false; frame.magnitudes.len()];
-                let mut in_range_count = 0usize;
-                // First pass: count bins in frequency range and mark them active
-                for (i, &freq) in spec_freqs.iter().enumerate() {
-                    if freq >= freq_min && freq <= freq_max {
-                        active[i] = true;
-                        in_range_count += 1;
-                    }
-                }
-                // If freq_count limits to fewer than all in-range bins,
-                // we need to sort by magnitude and keep only the top N.
-                if freq_count < in_range_count {
-                    let mut bin_mags: Vec<(usize, f32)> = active
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, &is_active)| {
-                            if is_active {
-                                Some((i, frame.magnitudes[i]))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-                    // Reset active flags and only keep top freq_count bins
-                    active.fill(false);
-                    for &(idx, _) in &bin_mags[..freq_count] {
-                        active[idx] = true;
-                    }
-                }
-                active
+                compute_active_bins(
+                    &frame.magnitudes,
+                    spec_freqs,
+                    freq_min,
+                    freq_max,
+                    freq_count,
+                )
             })
             .collect();
 
@@ -234,7 +209,11 @@ impl SpectrogramRenderer {
                         // Compare distance to idx-1 and idx
                         let d_lo = (spec_freqs[idx - 1] - freq).abs();
                         let d_hi = (spec_freqs[idx] - freq).abs();
-                        if d_lo <= d_hi { idx - 1 } else { idx }
+                        if d_lo <= d_hi {
+                            idx - 1
+                        } else {
+                            idx
+                        }
                     };
                     best_bin.min(num_bins - 1)
                 } else {

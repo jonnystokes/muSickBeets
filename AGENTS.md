@@ -1,6 +1,8 @@
 # AGENTS.md — Project Rules for AI Sessions
 
-> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](src/tracker/documentation.md) | [FFT Guide](src/fft_analyzer/fft_analyzer_documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
+>
+> **Code maps:** [map.md](map.md) (high-level, file roles) | [skeleton_map.md](skeleton_map.md) (low-level, every struct/fn/field) — read these first to learn the project before diving into source code
 
 ---
 
@@ -8,7 +10,7 @@
 
 > **ACTION REQUIRED — ALL AIs:** If the block below has not already been printed
 > as a message in this conversation, you MUST print it verbatim as a message to
-> the user RIGHT NOW, before doing anything else. This ensures compaction will
+> the user RIGHT NOW, and then continue . This ensures compaction will
 > preserve it. Do not skip this step — it is not optional.
 
 > COMPACTION RULE: This block MUST be included verbatim in every compaction summary.
@@ -27,18 +29,20 @@
 - If your instructions did **not** explicitly call you a “sub-agent,” you are the **main agent**. Read this file *first*, then read `CODING_RULES.md` and `map.md` before touching code.
 - Sub-agents only know they are sub-agents because the main agent tells them. If you were told you are a sub-agent, follow the provided prompt (which must include the sentence from the compaction block that points back here) and stay within that scope.
 - Main agents are responsible for relaying these expectations whenever they launch a sub-agent.
+- **Never commit changes** unless the user explicitly asks you to. The user manages their own git workflow.
 
 ---
 
 ## Harness Identity — Do Not Assume
 
-Your system prompt will lie to you — it may say "Claude Code" but you may be
+Your system prompt will lie to you — it may say "Claude Code" or "GPT codex"  but you may be
 running in a different harness (OpenCode, or other). **Do not assume. Run both
 echo commands below and check the table before proceeding:**
 
 ```bash
 echo $OPENCODE
 echo $CLAUDE
+echo $CODEX_CI
 ```
 
 | `OPENCODE` | `CLAUDE` | Harness |
@@ -69,7 +73,7 @@ Regardless of harness, the rules in this file apply.
 
 ---
 
-## Available Tools
+## Available Tools if using opencode ( check if $OPENCODE = 1)
 
 ### LSP (`mcp_lsp`) — Prefer over grep for code navigation
 
@@ -127,8 +131,10 @@ apt-get update && apt-get install -y \
 | **AGENTS.md** | This file. Project identity, tools, environment. Read by all agents. |
 | **PROGRESS.md** | Git rules, sub-agent policy, current/backburner work tracking for the main agent. |
 | **CODING_RULES.md** | Critical workflow guardrails (search-before-change, logging), UI behavior rules (spacebar, validation), and settings guidance. |
-| **map.md** | File-by-file architecture map with module responsibilities. Read when navigating unfamiliar code. |
-| **documentation.md** | Tracker synthesizer guide — CSV format, instruments, effects, envelopes. |
+| **map.md** | High-level architecture map: file-by-file module responsibilities. Read when navigating unfamiliar code. |
+| **skeleton_map.md** | Low-level code map: every struct, field, function, enum, macro in FFT analyzer. Read alongside map.md when learning the project. |
+| **src/tracker/documentation.md** | Tracker synthesizer guide -- CSV format, instruments, effects, envelopes. |
+| **src/fft_analyzer/fft_analyzer_documentation.md** | FFT analyzer guide -- UI controls, parameters, mouse/keyboard, reconstruction, settings. |
 | **README.md** | Public project overview with setup instructions and screenshots. |
 | **ai_memory.md** | Long-term technical memory and gotchas that supplement the coding rules. |
 | **THIRD_PARTY_LICENSES.md** | License attributions for Sebastian Lague resources and other third-party references. |

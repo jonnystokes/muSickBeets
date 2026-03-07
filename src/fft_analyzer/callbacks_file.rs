@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, mpsc};
+use std::sync::{mpsc, Arc};
 
 use fltk::{app, dialog, prelude::*};
 
-use crate::app_state::{AppState, SharedCallbacks, WorkerMessage, update_status_bar};
+use crate::app_state::{update_status_bar, AppState, SharedCallbacks, WorkerMessage};
 use crate::csv_export;
 use crate::data::{AudioData, TimeUnit, WindowType};
 use crate::debug_flags;
@@ -615,7 +615,7 @@ pub fn setup_rerun_callback(
         // sees immediate feedback even if the spawn itself is delayed.
         let processing_status = {
             let mut st = state.borrow_mut();
-            st.current_activity = "Processing FFT...";
+            st.current_activity = "Processing FFT (full file)...";
             st.fft_start_time = Some(std::time::Instant::now());
             dbg_log!(
                 debug_flags::FFT_DBG,

@@ -7,7 +7,7 @@ use std::time::Instant;
 #[allow(dead_code)]
 pub const CURSOR_DBG: bool = false;
 #[allow(dead_code)]
-pub const FFT_DBG: bool = true;
+pub const FFT_DBG: bool = false;
 #[allow(dead_code)]
 pub const PLAYBACK_DBG: bool = false;
 #[allow(dead_code)]

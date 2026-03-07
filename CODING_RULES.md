@@ -1,8 +1,10 @@
 # Coding Rules
 
-> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](src/tracker/documentation.md) | [FFT Guide](src/fft_analyzer/fft_analyzer_documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
 
 Read this file before writing or modifying code in the muSickBeets project.
+
+> **Code navigation tip:** Start with `map.md` (high-level, file-by-file) + `skeleton_map.md` (low-level, every struct/fn/field/enum) to learn the project structure. Then read the specific source files you need to edit.
 
 ---
 

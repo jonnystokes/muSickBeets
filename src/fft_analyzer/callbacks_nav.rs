@@ -361,25 +361,41 @@ pub fn setup_snap_to_view(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
 pub fn setup_spacebar_handler(win: &mut Window, widgets: &Widgets) {
     let mut btn_rerun = widgets.btn_rerun.clone();
-    win.handle(move |_, event| {
-        let is_space = app::event_key() == Key::from_char(' ');
-        if !is_space {
-            return false;
-        }
-
+    let mut status_fft = widgets.status_fft.clone();
+    let mut status_bar = widgets.status_bar.clone();
+    let mut root = widgets.root.clone();
+    win.handle(move |w, event| {
         match event {
-            // Consume KeyDown to prevent space from reaching any focused widget
-            // (buttons, dropdowns, text inputs). This is the primary guard.
-            Event::KeyDown => true,
-
-            // Trigger recompute on KeyUp (not KeyDown to avoid double-fire)
-            Event::KeyUp => {
+            // ── Spacebar handling ──
+            Event::KeyDown | Event::Shortcut if app::event_key() == Key::from_char(' ') => true,
+            Event::KeyUp if app::event_key() == Key::from_char(' ') => {
                 btn_rerun.do_callback();
                 true
             }
 
-            // VNC/remote desktop may send space as a Shortcut event
-            Event::Shortcut => true,
+            // ── Window resize: reposition absolute-positioned status bars ──
+            Event::Resize => {
+                let win_w = w.w();
+                let win_h = w.h();
+                let menu_h = 25;
+                let base_h = 25;
+                let fft_h = status_fft.h(); // preserve current height
+                root.resize(
+                    0,
+                    menu_h,
+                    win_w,
+                    win_h - menu_h - base_h - fft_h - crate::layout::STATUS_FFT_OFFSET,
+                );
+                status_fft.resize(
+                    0,
+                    win_h - base_h - fft_h - crate::layout::STATUS_FFT_OFFSET,
+                    win_w,
+                    fft_h,
+                );
+                status_bar.resize(0, win_h - base_h, win_w, base_h);
+                // Return false so FLTK still processes the resize internally
+                false
+            }
 
             _ => false,
         }

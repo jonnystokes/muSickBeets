@@ -125,3 +125,55 @@ impl Default for Spectrogram {
         Self::from_frames_with_frequencies(Vec::new(), Vec::new())
     }
 }
+
+// ─── Shared active-bin filtering ──────────────────────────────────────────────
+
+/// Determine which frequency bins are "active" for a single frame,
+/// applying both a frequency bandpass filter and a top-N magnitude filter.
+///
+/// This logic is shared between the spectrogram renderer (which dims inactive
+/// bins) and the reconstructor (which zeroes them). Keeping it in one place
+/// ensures they always agree on which bins are active.
+///
+/// Returns a `Vec<bool>` of length `magnitudes.len()`, where `true` = active.
+pub fn compute_active_bins(
+    magnitudes: &[f32],
+    frequencies: &[f32],
+    freq_min: f32,
+    freq_max: f32,
+    freq_count: usize,
+) -> Vec<bool> {
+    let mut active = vec![false; magnitudes.len()];
+    let mut in_range_count = 0usize;
+
+    // Pass 1: mark bins within frequency range
+    for (i, &freq) in frequencies.iter().enumerate() {
+        if i < magnitudes.len() && freq >= freq_min && freq <= freq_max {
+            active[i] = true;
+            in_range_count += 1;
+        }
+    }
+
+    // Pass 2: if freq_count limits to fewer than all in-range bins,
+    // keep only the top-N by magnitude
+    if freq_count < in_range_count {
+        let mut bin_mags: Vec<(usize, f32)> = active
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &is_active)| {
+                if is_active {
+                    Some((i, magnitudes[i]))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        active.fill(false);
+        for &(idx, _) in &bin_mags[..freq_count] {
+            active[idx] = true;
+        }
+    }
+
+    active
+}

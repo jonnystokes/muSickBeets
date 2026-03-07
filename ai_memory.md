@@ -37,3 +37,44 @@
 - **FLTK Scrollbar**: `slider_size()` returns `f32` (not f64). slider_size is PURELY VISUAL (thumb size) — value range is always `[min, max]`, NOT clipped by slider_size. Use max=10000 (not 1.0) to avoid quantization. Timer must NOT call `set_value()` during user drag — use generation counters (`Rc<Cell<u64>>`) to detect active dragging. Simple: `frac = value / max`, `set_value(frac * max)`.
 - **CSV load**: Must trigger reconstruction after loading FFT from CSV, otherwise no audio/waveform. Set proc_time to match spectrogram's time range to avoid graying.
 - Build deps: needs libxft-dev, libpango1.0-dev, libxinerama-dev, libxcursor-dev, libxfixes-dev on Linux
+
+## Session Context (2026-03-06, opencode branch)
+
+### What was done
+- Pulled latest from `origin/opencode` (reset --hard to match remote)
+- Full code read of all FFT analyzer source files (18+ files)
+- Created `skeleton_map.md` — low-level code map of every struct/fn/field/enum
+- Project builds clean, all 39 tests pass
+- User wants to add features to FFT analyzer (tracker is being ignored)
+
+### Bugs & Issues Found (Full Code Review)
+
+1. **Duplicate active-bin logic** (medium priority)
+   - `spectrogram_renderer.rs:180-216` and `reconstructor.rs:92-113` compute identical bin filtering
+   - Same freq range + top-N magnitude filter, duplicated code
+   - Should be extracted to a shared function in `data/` module
+
+2. **Sample buffer clone for AudioPlayer** (low priority)
+   - `main_fft.rs` does `Arc::new(audio.samples.clone())` to feed AudioPlayer
+   - Full sample buffer is cloned every time reconstruction completes
+   - Could be avoided if AudioData stored samples as `Arc<Vec<f32>>`
+
+3. **Absolute-positioned status bars** (bug)
+   - `status_fft` and `status_bar` use `with_pos()` instead of being in Flex layout
+   - Window resize leaves them misaligned
+
+4. **Status bar text during FFT doesn't indicate full-file processing** (UX)
+   - FFT always processes full file (by design), but user may have narrow time range
+   - Status bar doesn't clarify this; could confuse users who set start/stop
+
+5. **No progress indication during FFT/reconstruction** (feature gap, backburner)
+   - Status bar just says "Processing FFT..." or "Reconstructing..."
+   - No percentage, frame count, or ETA. Long operations feel frozen.
+
+### Files created this session
+- `skeleton_map.md` — low-level code map for AI agents (every struct, fn, field, enum)
+
+### What to do next
+- Reference `skeleton_map.md` in AGENTS.md and CODING_RULES.md
+- User wants to improve the program and do cleanup
+- Prioritize: features and cleanup that benefit from the full context already loaded

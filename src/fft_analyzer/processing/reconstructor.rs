@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use realfft::RealFftPlanner;
 use rustfft::num_complex::Complex;
 
-use crate::data::{AudioData, FftParams, Spectrogram, ViewState};
+use crate::data::{compute_active_bins, AudioData, FftParams, Spectrogram, ViewState};
 
 thread_local! {
     /// Per-thread IFFT planner cache. Reusing one planner per rayon thread
@@ -88,36 +88,24 @@ impl Reconstructor {
                 let mut spectrum = ifft.make_input_vec();
                 let mut time_buffer = ifft.make_output_vec();
 
-                // Build filtered spectrum
-                // First, determine which bins to include based on frequency range
-                let mut bin_mags: Vec<(usize, f32)> = Vec::new();
+                // Determine active bins using shared logic (same as renderer).
+                let active = compute_active_bins(
+                    &frame.magnitudes,
+                    &spectrogram.frequencies,
+                    view.recon_freq_min_hz,
+                    view.recon_freq_max_hz,
+                    view.recon_freq_count,
+                );
 
-                for (i, (&mag, &freq)) in frame
-                    .magnitudes
-                    .iter()
-                    .zip(spectrogram.frequencies.iter())
-                    .enumerate()
-                {
-                    if i < spectrum.len()
-                        && freq >= view.recon_freq_min_hz
-                        && freq <= view.recon_freq_max_hz
-                    {
-                        bin_mags.push((i, mag));
-                    }
-                }
-
-                // Sort by magnitude descending, keep only top N
-                bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-                let keep_count = view.recon_freq_count.min(bin_mags.len());
-                let kept_bins: Vec<usize> =
-                    bin_mags[..keep_count].iter().map(|&(idx, _)| idx).collect();
-
-                // Zero the spectrum, then fill in kept bins
+                // Zero the spectrum, then fill in active bins
                 for s in spectrum.iter_mut() {
                     *s = Complex::new(0.0, 0.0);
                 }
 
-                for &i in &kept_bins {
+                for (i, &is_active) in active.iter().enumerate() {
+                    if !is_active || i >= spectrum.len() {
+                        continue;
+                    }
                     let mag = frame.magnitudes[i];
                     let phase = frame.phases[i];
 
