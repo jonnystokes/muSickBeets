@@ -1,12 +1,13 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fltk::{
     app,
-    output::Output,
+    output::MultilineOutput,
     prelude::{InputExt, WidgetExt},
 };
 
@@ -27,10 +28,231 @@ pub enum WorkerMessage {
     WavSaved(Result<std::path::PathBuf, String>),
     /// CSV export finished. Contains Ok((filename, num_frames, time_min, time_max)) or Err(message).
     CsvSaved(Result<(std::path::PathBuf, usize, f64, f64), String>),
+    /// CSV/FFT data loaded from disk. Contains Ok((spectrogram, params, recon_params, view_params, filename))
+    /// or Err(message).
+    CsvLoaded(
+        Result<
+            (
+                Spectrogram,
+                crate::data::FftParams,
+                Option<crate::csv_export::ReconParams>,
+                crate::csv_export::ImportedViewParams,
+                std::path::PathBuf,
+            ),
+            String,
+        >,
+    ),
     /// Worker thread panicked. Contains the panic message for logging.
     WorkerPanic(String),
     /// Worker was cancelled via the cancel flag. Contains a description of what was cancelled.
     Cancelled(String),
+}
+
+// ─── Status Bar Manager ────────────────────────────────────────────────────────
+//
+// Single system managing all status bar writes.
+//
+// Layout: `Activity  |  Timing1  |  Timing2  |  ...  |  Memory: X MB`
+//
+// - First slot: current activity (what the program is doing NOW)
+// - Middle slots: timed items list (FILO -- most recent first, never deleted,
+//   only replaced when a new timing for the same key arrives)
+// - Last slot: memory usage (always present, always last)
+// - Optional progress text appended to the activity slot
+
+/// A single timed entry in the status bar (e.g. "FFT load 4.7s").
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct TimedEntry {
+    /// Unique key for this category (e.g. "FFT", "Reconstruction", "CSV load").
+    key: String,
+    /// How long the operation took.
+    duration: Duration,
+    /// When this entry was recorded (for FILO ordering -- most recent first).
+    recorded_at: Instant,
+}
+
+/// Unified manager for the bottom status bar.
+///
+/// All status bar writes go through this struct. Call `render()` to get the
+/// final display string.
+pub struct StatusBarManager {
+    /// Current activity text (first slot): "Ready", "Loading audio...", etc.
+    activity: String,
+    /// Optional progress indicator appended to activity: " (42%)", " (1200/3000 frames)".
+    progress: Option<String>,
+    /// Timed entries (middle slots). Ordered by most-recently-recorded first.
+    /// Items are never removed, only replaced when the same key is recorded again.
+    timings: VecDeque<TimedEntry>,
+    /// Optional start time for the currently running operation.
+    /// Used to compute elapsed time for in-progress operations.
+    operation_start: Option<(String, Instant)>,
+}
+
+impl StatusBarManager {
+    pub fn new() -> Self {
+        Self {
+            activity: "Ready | Load an audio file to begin".to_string(),
+            progress: None,
+            timings: VecDeque::new(),
+            operation_start: None,
+        }
+    }
+
+    /// Set the current activity text (first slot).
+    /// Clears any progress indicator.
+    pub fn set_activity(&mut self, text: &str) {
+        self.activity = text.to_string();
+        self.progress = None;
+    }
+
+    /// Set an optional progress indicator that is appended to the activity slot.
+    /// Pass `None` to clear. Examples: `Some("42%")`, `Some("1200/3000 frames")`.
+    #[allow(dead_code)]
+    pub fn set_progress(&mut self, text: Option<&str>) {
+        self.progress = text.map(|s| s.to_string());
+    }
+
+    /// Record a timed operation. If `key` already exists, it is replaced.
+    /// New/replaced entries go to the front (most recent first -- FILO).
+    pub fn record_timing(&mut self, key: &str, duration: Duration) {
+        // Remove existing entry with same key
+        self.timings.retain(|e| e.key != key);
+        // Insert at front (most recent first)
+        self.timings.push_front(TimedEntry {
+            key: key.to_string(),
+            duration,
+            recorded_at: Instant::now(),
+        });
+    }
+
+    /// Start timing an operation. Call `finish_timing()` when it completes.
+    /// This is a convenience wrapper -- you can also just call `record_timing()`
+    /// directly if you manage your own `Instant`.
+    pub fn start_timing(&mut self, key: &str) {
+        self.operation_start = Some((key.to_string(), Instant::now()));
+    }
+
+    /// Finish the currently timed operation and record its duration.
+    /// Returns the duration if an operation was in progress, None otherwise.
+    pub fn finish_timing(&mut self) -> Option<Duration> {
+        if let Some((key, start)) = self.operation_start.take() {
+            let duration = start.elapsed();
+            self.record_timing(&key, duration);
+            Some(duration)
+        } else {
+            None
+        }
+    }
+
+    /// Clear the currently timed operation without recording it.
+    /// Used when an operation is cancelled or errors out.
+    pub fn cancel_timing(&mut self) {
+        self.operation_start = None;
+    }
+
+    /// Clear all timed entries. Used on full reset (e.g. new file load).
+    pub fn clear_timings(&mut self) {
+        self.timings.clear();
+        self.operation_start = None;
+    }
+
+    /// Build the full status bar text.
+    ///
+    /// Format: `Activity (progress)  |  Timing1  |  Timing2  |  Memory: X MB`
+    pub fn render(&self) -> String {
+        let mem = format_memory_usage();
+
+        // Build activity slot with optional progress
+        let activity = match &self.progress {
+            Some(p) => format!("{} ({})", self.activity, p),
+            None => self.activity.clone(),
+        };
+
+        let mut parts = vec![activity];
+
+        // Add timed entries (already in FILO order -- most recent first)
+        for entry in &self.timings {
+            let secs = entry.duration.as_secs_f64();
+            if secs >= 60.0 {
+                let mins = secs as u32 / 60;
+                let remaining = secs % 60.0;
+                parts.push(format!("{}: {}m {:.1}s", entry.key, mins, remaining));
+            } else {
+                parts.push(format!("{}: {:.2}s", entry.key, secs));
+            }
+        }
+
+        parts.push(format!("Memory: {}", mem));
+        parts.join("  |  ")
+    }
+
+    /// Build the status bar text, inserting line breaks at `|` boundaries
+    /// when a line would exceed `max_chars` characters. Returns the wrapped
+    /// text ready for a MultilineOutput widget.
+    pub fn render_wrapped(&self, max_chars: usize) -> String {
+        let mem = format_memory_usage();
+
+        // Build activity slot with optional progress
+        let activity = match &self.progress {
+            Some(p) => format!("{} ({})", self.activity, p),
+            None => self.activity.clone(),
+        };
+
+        let sep = "  |  ";
+        let mut parts: Vec<String> = vec![activity];
+
+        for entry in &self.timings {
+            let secs = entry.duration.as_secs_f64();
+            if secs >= 60.0 {
+                let mins = secs as u32 / 60;
+                let remaining = secs % 60.0;
+                parts.push(format!("{}: {}m {:.1}s", entry.key, mins, remaining));
+            } else {
+                parts.push(format!("{}: {:.2}s", entry.key, secs));
+            }
+        }
+        parts.push(format!("Memory: {}", mem));
+
+        // Join parts, wrapping to new lines at `|` boundaries
+        let max = max_chars.max(20);
+        let mut lines: Vec<String> = Vec::new();
+        let mut current_line = String::new();
+
+        for (i, part) in parts.iter().enumerate() {
+            let candidate = if current_line.is_empty() {
+                part.clone()
+            } else {
+                format!("{}{}{}", current_line, sep, part)
+            };
+
+            if candidate.len() > max && !current_line.is_empty() {
+                // Current line is full -- push it and start new line with this part
+                lines.push(current_line);
+                current_line = part.clone();
+            } else {
+                current_line = candidate;
+            }
+
+            // Last part -- always push
+            if i == parts.len() - 1 {
+                lines.push(current_line.clone());
+            }
+        }
+
+        lines.join("\n")
+    }
+
+    /// Estimate the pixel height needed for the status bar given a window
+    /// width in pixels. Uses 7px per character estimate (same as status_fft).
+    /// Returns pixel height (minimum 25px for single line).
+    pub fn measure_height(&self, win_width: i32) -> i32 {
+        let max_chars = ((win_width - 16).max(40) / 7).max(20) as usize;
+        let text = self.render_wrapped(max_chars);
+        let line_count = text.lines().count().max(1) as i32;
+        // 17px per line + 8px padding, minimum 25px (single line)
+        (line_count * 17 + 8).max(25)
+    }
 }
 
 // ─── App State ─────────────────────────────────────────────────────────────────
@@ -83,18 +305,16 @@ pub struct AppState {
     /// affect newly-launched workers.
     pub cancel_flag: Arc<AtomicBool>,
 
-    // ── Timing for status bar ──
-    /// When the current FFT processing started.
-    pub fft_start_time: Option<Instant>,
-    /// Duration of the last completed FFT pass.
-    pub last_fft_duration: Option<Duration>,
-    /// When the current reconstruction started.
-    pub recon_start_time: Option<Instant>,
-    /// Duration of the last completed reconstruction pass.
-    pub last_recon_duration: Option<Duration>,
-    /// What the worker is currently doing (for status bar display).
-    /// Dynamic string so it can include filenames, frame counts, etc.
-    pub current_activity: String,
+    /// Unified status bar manager. All status bar writes go through this.
+    pub status: StatusBarManager,
+
+    /// Progress counter for in-flight operations. Shared with worker threads
+    /// via `Arc`. The UI poll loop reads this to update the status bar progress.
+    /// Reset to 0 at the start of each operation.
+    pub progress_counter: Arc<AtomicUsize>,
+    /// Total number of items for the current operation (frames, rows, etc.).
+    /// Used to compute percentage: `progress_counter / progress_total * 100`.
+    pub progress_total: usize,
 }
 
 impl AppState {
@@ -130,11 +350,9 @@ impl AppState {
             normalize_peak: 0.97,
             source_norm_gain: 1.0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            fft_start_time: None,
-            last_fft_duration: None,
-            recon_start_time: None,
-            last_recon_duration: None,
-            current_activity: "Ready | Load an audio file to begin".to_string(),
+            status: StatusBarManager::new(),
+            progress_counter: Arc::new(AtomicUsize::new(0)),
+            progress_total: 0,
         }
     }
 
@@ -152,30 +370,6 @@ impl AppState {
     /// Reconstruction start time in seconds, derived from sample count.
     pub fn recon_start_seconds(&self) -> f64 {
         self.recon_start_sample as f64 / self.fft_params.sample_rate.max(1) as f64
-    }
-
-    /// Build the status bar string showing current activity + timing + memory.
-    ///
-    /// Format when idle:
-    ///   `Ready | FFT: 32.64s | Reconstruction: 4.78s | Memory: 1.2 GB`
-    /// Format when processing:
-    ///   `Processing FFT... | Memory: 1.2 GB`
-    pub fn status_bar_text(&self) -> String {
-        let mem = format_memory_usage();
-        let activity = &self.current_activity;
-
-        let mut parts = vec![activity.to_string()];
-
-        // Show timing info
-        if let Some(d) = self.last_fft_duration {
-            parts.push(format!("FFT: {:.2}s", d.as_secs_f64()));
-        }
-        if let Some(d) = self.last_recon_duration {
-            parts.push(format!("Reconstruction: {:.2}s", d.as_secs_f64()));
-        }
-
-        parts.push(format!("Memory: {}", mem));
-        parts.join("  |  ")
     }
 
     /// Compute all derived info values from current params
@@ -310,12 +504,24 @@ impl UpdateThrottle {
 
 pub type SharedCb = Rc<RefCell<Box<dyn FnMut()>>>;
 
+#[derive(Clone)]
 pub struct SharedCallbacks {
     pub update_info: SharedCb,
     pub update_seg_label: SharedCb,
     pub enable_audio_widgets: SharedCb,
     pub enable_spec_widgets: SharedCb,
     pub enable_wav_export: SharedCb,
+    /// Disable sidebar/transport widgets during processing.
+    /// The rerun button gets special treatment via `set_btn_cancel_mode` / `set_btn_busy_mode`.
+    pub disable_for_processing: SharedCb,
+    /// Re-enable sidebar/transport widgets after processing completes.
+    pub enable_after_processing: SharedCb,
+    /// Set the rerun button to "Cancel" mode (red, active, triggers cancellation).
+    pub set_btn_cancel_mode: SharedCb,
+    /// Set the rerun button to "Busy..." mode (gray, inactive).
+    pub set_btn_busy_mode: SharedCb,
+    /// Restore the rerun button to normal "Recompute + Rebuild" mode.
+    pub set_btn_normal_mode: SharedCb,
 }
 
 // ─── Message bar helper ───────────────────────────────────────────────────────
@@ -356,7 +562,7 @@ pub fn set_msg(bar: &mut fltk::frame::Frame, level: MsgLevel, text: &str) {
 
 /// Update the bottom status bar immediately and flush the UI so the change is
 /// visible even if a long-running task begins right after.
-pub fn update_status_bar(status_bar: &mut Output, text: &str) {
+pub fn update_status_bar(status_bar: &mut MultilineOutput, text: &str) {
     status_bar.set_value(text);
     status_bar.redraw();
     app::flush();

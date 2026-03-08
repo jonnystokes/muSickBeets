@@ -378,7 +378,7 @@ pub fn setup_spacebar_handler(win: &mut Window, widgets: &Widgets) {
                 let win_w = w.w();
                 let win_h = w.h();
                 let menu_h = 25;
-                let base_h = 25;
+                let base_h = status_bar.h(); // preserve current auto-expanded height
                 let fft_h = status_fft.h(); // preserve current height
                 root.resize(
                     0,

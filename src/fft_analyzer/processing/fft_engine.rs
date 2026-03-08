@@ -1,6 +1,6 @@
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use rayon::prelude::*;
 use realfft::RealFftPlanner;
@@ -20,7 +20,13 @@ impl FftEngine {
     /// Each frame's FFT runs independently on a rayon thread.
     /// If `cancel` is set to true, processing stops early and returns
     /// whatever frames have been computed so far (may be empty).
-    pub fn process(audio: &AudioData, params: &FftParams, cancel: &AtomicBool) -> Spectrogram {
+    /// If `progress` is provided, it is incremented after each frame completes.
+    pub fn process(
+        audio: &AudioData,
+        params: &FftParams,
+        cancel: &AtomicBool,
+        progress: Option<&AtomicUsize>,
+    ) -> Spectrogram {
         let start_sample = params.start_sample;
         let stop_sample = params.stop_sample.min(audio.num_samples());
 
@@ -106,6 +112,10 @@ impl FftEngine {
                     magnitudes.push((complex_val.norm() / n_fft as f32) * amplitude_scale);
 
                     phases.push(complex_val.arg());
+                }
+
+                if let Some(ctr) = progress {
+                    ctr.fetch_add(1, Ordering::Relaxed);
                 }
 
                 Some(FftFrame {

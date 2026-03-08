@@ -14,19 +14,19 @@ Use the sections below to find the module that owns a piece of behavior. Line co
 ## FFT Analyzer (`src/fft_analyzer/`)
 
 ### Entry, Layout, and Shared State
-- `main_fft.rs` (~367 lines) -- Binary entry point. Loads settings, builds UI (`layout::build_ui`), wires callbacks, creates shared callbacks. Poll loop delegated to `poll_loop.rs`.
+- `main_fft.rs` (~367 lines) -- Binary entry point. Loads settings, builds UI (`layout::build_ui`), wires callbacks, creates shared callbacks (including `disable_for_processing`, `enable_after_processing`, and three button-mode callbacks for cancel/busy/normal states). Poll loop delegated to `poll_loop.rs`.
 - `layout.rs` (~431) -- Declares `Widgets` struct and constructs the FLTK layout skeleton (menus, right-panel displays, transport, status bars). Sidebar delegated to `layout_sidebar.rs`.
 - `layout_sidebar.rs` (~691) -- Builds all sidebar controls (FILE, ANALYSIS, DISPLAY, RECONSTRUCTION, INFO sections) inside a `SidebarWidgets` struct.
-- `app_state.rs` (~403) -- Central `AppState`, worker message enums, shared callback handles, derived info helpers, status-bar formatting.
+- `app_state.rs` (~507) -- Central `AppState`, worker message enums, shared callback handles, derived info helpers. `StatusBarManager` consolidates status-bar text, activity tracking, operation timing, and multi-line wrapping for the status bar. `AppState` includes `progress_counter: Arc<AtomicUsize>` and `progress_total` for worker progress reporting. `WorkerMessage::CsvLoaded` variant for async CSV import results. `SharedCallbacks` includes `disable_for_processing`, `enable_after_processing`, `set_btn_cancel_mode`, `set_btn_busy_mode`, `set_btn_normal_mode` for UI state management during long operations.
 - `validation.rs` (~205) -- Input sanitizers (float/uint) plus `_with_recompute` variants that enforce the spacebar defenses.
 - `settings.rs` (~773) -- INI persistence (load/create/save, "Save as Default", custom gradient serialization).
-- `poll_loop.rs` (~844) -- 16 ms FLTK poll loop: dispatches `WorkerMessage` variants (FFT complete, reconstruction complete, audio loaded, CSV saved/loaded, WAV saved), syncs scrollbars, updates transport/scrubber.
+- `poll_loop.rs` (~844) -- 16 ms FLTK poll loop: dispatches `WorkerMessage` variants (FFT complete, reconstruction complete, audio loaded, CSV saved/loaded, WAV saved, CSV loaded), syncs scrollbars, updates transport/scrubber. Progress refresh at 500ms intervals. All completion/error handlers call `enable_after_processing` + `set_btn_normal_mode`.
 - `csv_export.rs` (~455) -- FFT CSV import/export with FILE_IO logging, including viewport metadata and post-import reconstruction.
 - `debug_flags.rs` (~68) -- Toggleable debug flags (`CURSOR_DBG`, `FFT_DBG`, `PLAYBACK_DBG`, `RENDER_DBG`, `FILE_IO_DBG`), timing macros (`dbg_log!`, `app_log!`).
 - `test_audio_gen.rs` (~124) -- Utility binary for generating chirps/noise for analyzer testing.
 
 ### UI Callbacks
-- `callbacks_file.rs` (~841) -- File I/O (open WAV, save/load FFT CSV, export WAV) and the Reconstruct/Rerun button; spawns FFT/reconstruction workers safely. Rerun supports reconstruction-only mode when no source audio (FFT CSV loaded).
+- `callbacks_file.rs` (~841) -- File I/O (open WAV, save/load FFT CSV, export WAV) and the Reconstruct/Rerun button; spawns FFT/reconstruction workers safely. Rerun supports reconstruction-only mode when no source audio (FFT CSV loaded). CSV load now runs in background thread. All operations call `disable_for_processing` + button mode on start. Rerun button triggers cancellation when clicked during processing. New: `handle_csv_load_result`, `handle_csv_load_error`.
 - `callbacks_ui.rs` (~729) -- Parameter, display, playback, tooltip, lock-to-active, and "save defaults" callbacks.
 - `gradient_editor.rs` (~327) -- Custom gradient editor: draw callback (pixel-by-pixel bar + stop handles) and mouse interaction (add/move/delete/color-pick stops).
 - `callbacks_nav.rs` (~545) -- Menu actions, scrollbars, time/freq zoom buttons, snap-to-view, and the three-layer spacebar guard wiring.
@@ -41,8 +41,8 @@ Use the sections below to find the module that owns a piece of behavior. Line co
 - `mod.rs` (~15) -- Re-exports for convenience.
 
 ### Processing + Playback
-- `processing/fft_engine.rs` (~121) -- Rayon-powered forward FFT pipeline with cancellation checks and window management.
-- `processing/reconstructor.rs` (~193) -- Inverse FFT with overlap-add, freq-range filtering, and top-N bin selection.
+- `processing/fft_engine.rs` (~121) -- Rayon-powered forward FFT pipeline with cancellation checks, per-frame progress reporting, and window management.
+- `processing/reconstructor.rs` (~193) -- Inverse FFT with overlap-add, freq-range filtering, top-N bin selection, and per-frame progress reporting.
 - `playback/audio_player.rs` (~202) -- Miniaudio device wrapper, playback state, ARC-managed sample buffers.
 
 ### Rendering (`rendering/`)

@@ -14,7 +14,7 @@ fn main()
   - Creates Rc<RefCell<AppState>>
   - Creates mpsc::channel<WorkerMessage> (tx, rx)
   - Applies Settings to AppState + Widgets
-  - Creates SharedCallbacks (update_info, update_seg_label, enable_*)
+   - Creates SharedCallbacks (update_info, update_seg_label, enable_*, disable_for_processing, set_btn_*_mode)
   - Wires all callback groups:
       setup_file_callbacks, setup_rerun_callback, setup_parameter_callbacks,
       setup_display_callbacks, setup_playback_callbacks, setup_misc_callbacks,
@@ -22,12 +22,19 @@ fn main()
       setup_zoom_callbacks, setup_snap_to_view,
       gradient_editor::setup_gradient_editor,
       setup_spacebar_handler, setup_spacebar_guards (MUST be last)
-  - 16ms poll timer: checks rx for WorkerMessage, updates transport/scrubber/status
+   - 16ms poll timer: checks rx for WorkerMessage, updates transport/scrubber/status
+   - Five new shared callbacks defined here:
+       disable_for_processing: deactivates all sidebar/transport widgets
+       enable_after_processing: calls enable_audio + enable_spec + enable_wav
+       set_btn_cancel_mode: red "Cancel (Space)" button
+       set_btn_busy_mode: gray "Busy..." (inactive) button
+       set_btn_normal_mode: blue "Recompute + Rebuild (Space)" button
 
-Poll loop message handlers:
+Poll loop message handlers (progress refresh: 500ms / 30 ticks):
   WorkerMessage::AudioLoaded(audio, path, gain)
     -> Stores Arc<AudioData>, sets fft_params (start=0, stop=num_samples, sample_rate)
     -> Updates view bounds, enables widgets, triggers recompute via btn_rerun.do_callback()
+    -> handle_audio_loaded takes shared: &SharedCallbacks parameter
   WorkerMessage::FftComplete(spectrogram)
     -> Stores Arc<Spectrogram>, computes db_ceiling from max_magnitude
     -> Spawns reconstruction worker thread (filters frames by processing time range)
@@ -37,10 +44,17 @@ Poll loop message handlers:
     -> Updates transport state, enables WAV export, auto-plays if play_pending
     -> If lock_to_active: snaps viewport to processing range
     -> Records recon_duration timing
+    -> handle_reconstruction_complete takes shared: &SharedCallbacks parameter
+  WorkerMessage::CsvLoaded(result)
+    -> On Ok: stores Spectrogram, applies FftParams/ReconParams/ViewParams, spawns reconstruction
+    -> On Err: shows error dialog via handle_csv_load_error
+    -> Dispatches to callbacks_file::handle_csv_load_result / handle_csv_load_error
   WorkerMessage::WavSaved(result) -> status bar feedback
   WorkerMessage::CsvSaved(result) -> status bar feedback
   WorkerMessage::WorkerPanic(msg) -> logs error, clears is_processing
   WorkerMessage::Cancelled(desc) -> logs, clears is_processing
+
+All completion/error handlers call shared.enable_after_processing() + shared.set_btn_normal_mode()
 ```
 
 ---
@@ -77,15 +91,36 @@ struct AppState
   normalize_peak: f32                       -- normalization target (default 0.97)
   source_norm_gain: f32                     -- applied gain (to recover original)
   cancel_flag: Arc<AtomicBool>              -- cancels in-flight workers
-
-  fft_start_time, last_fft_duration         -- timing for status bar
-  recon_start_time, last_recon_duration
-  current_activity: &'static str            -- "Ready", "Processing FFT...", etc.
+  progress_counter: Arc<AtomicUsize>        -- shared with worker threads for progress reporting
+  progress_total: usize                     -- total items for current operation
+  status: StatusBarManager                  -- consolidated status text, activity, and operation timing
 
 fn new_cancel_flag() -> Arc<AtomicBool>     -- cancels old, creates fresh flag
 fn recon_start_seconds() -> f64             -- recon_start_sample / sample_rate
-fn status_bar_text() -> String              -- "Ready | FFT: 32.6s | Recon: 4.8s | Memory: 1.2 GB"
 fn derived_info() -> DerivedInfo            -- computes segments, bins, hop, freq_res from current params
+
+struct TimedEntry                           -- (private) single recorded timing
+  key: String                               -- label (e.g. "FFT", "Recon")
+  duration: Duration
+  recorded_at: Instant                      -- for potential expiry/ordering
+
+struct StatusBarManager                     -- consolidates status bar state (replaces scattered timing fields)
+  activity: String                          -- current activity ("Ready", "Processing FFT...", etc.)
+  progress: Option<String>                  -- optional progress detail
+  timings: VecDeque<TimedEntry>             -- recorded operation timings (ordered)
+  operation_start: Option<(String, Instant)> -- in-flight timed operation
+
+fn new() -> Self                            -- activity="Ready", empty timings
+fn set_activity(&mut self, &str)            -- update current activity label
+fn set_progress(&mut self, Option<&str>)    -- set or clear progress detail
+fn record_timing(&mut self, &str, Duration) -- add/update a named timing entry
+fn start_timing(&mut self, &str)            -- begin timing a named operation
+fn finish_timing(&mut self) -> Option<Duration> -- end timing, record result, return duration
+fn cancel_timing(&mut self)                 -- discard in-flight timing without recording
+fn clear_timings(&mut self)                 -- remove all recorded timings
+fn render(&self) -> String                  -- "Ready | FFT: 32.6s | Recon: 4.8s | Memory: 1.2 GB"
+fn render_wrapped(max_chars: usize) -> String -- renders with line breaks at | boundaries
+fn measure_height(win_width: i32) -> i32    -- estimates pixel height needed for wrapped status
 
 struct DerivedInfo { total_samples, freq_bins, freq_resolution, hop_length, segments, bin_duration_ms, window_length, sample_rate, overlap_percent }
   fn format_info() -> String                -- compact multi-line info
@@ -96,11 +131,12 @@ struct UpdateThrottle { last_update, min_interval }
   fn should_update() -> bool                -- rate-limit redraws (e.g. 50ms)
 
 type SharedCb = Rc<RefCell<Box<dyn FnMut()>>>
-struct SharedCallbacks { update_info, update_seg_label, enable_audio_widgets, enable_spec_widgets, enable_wav_export }
+struct SharedCallbacks { update_info, update_seg_label, enable_audio_widgets, enable_spec_widgets, enable_wav_export,
+  disable_for_processing, enable_after_processing, set_btn_cancel_mode, set_btn_busy_mode, set_btn_normal_mode }
 
 enum MsgLevel { Info, Warning, Error }
 fn set_msg(bar, level, text)                -- color-coded message on top bar
-fn update_status_bar(status_bar, text)      -- bottom status bar + flush
+fn update_status_bar(status_bar: &mut MultilineOutput, text) -- bottom status bar + flush
 fn format_time(seconds) -> String           -- "M:SS.sssss"
 fn format_memory_usage() -> String          -- reads /proc/self/status VmRSS
 ```
@@ -237,7 +273,7 @@ fn num_segments(active, window, hop) -> usize
 thread_local FFT_PLANNER: RefCell<RealFftPlanner<f32>>  -- per-rayon-thread cache
 
 struct FftEngine (stateless)
-fn process(audio, params, cancel) -> Spectrogram
+fn process(audio, params, cancel, progress: Option<&AtomicUsize>) -> Spectrogram
   1. Slices audio[start_sample..stop_sample]
   2. Optionally center-pads (window_len/2 zeros each side)
   3. Computes shared frequencies vector once
@@ -254,8 +290,8 @@ fn process(audio, params, cancel) -> Spectrogram
 thread_local IFFT_PLANNER: RefCell<RealFftPlanner<f32>>
 
 struct Reconstructor (stateless)
-fn reconstruct(spec, params, view, cancel) -> AudioData       -- full spectrogram
-fn reconstruct_range(spec, params, view, frame_range, cancel) -> AudioData
+fn reconstruct(spec, params, view, cancel, progress: Option<&AtomicUsize>) -> AudioData       -- full spectrogram
+fn reconstruct_range(spec, params, view, frame_range, cancel, progress: Option<&AtomicUsize>) -> AudioData
   Phase 1 (parallel): For each frame in range:
     - Filter bins by [recon_freq_min, recon_freq_max]
     - Sort by magnitude, keep top recon_freq_count
@@ -335,6 +371,7 @@ Colormaps (all fn(t:f32) -> (u8,u8,u8)):
 
 ```
 Constants: WIN_W=1200, WIN_H=1555, MENU_H=25, STATUS_H=25, SIDEBAR_W=215
+Note: status_bar widget is MultilineOutput (supports wrapped status text)
 
 struct Widgets -- 70+ cloneable handles to every UI widget
 
@@ -363,16 +400,27 @@ fn build_sidebar(left: &mut Flex) -> SidebarWidgets
 ### `callbacks_file.rs`
 ```
 fn setup_file_callbacks(widgets, state, tx, shared, win)
-  setup_open_callback: file dialog -> spawn thread -> AudioData::from_wav_file -> normalize -> tx.send(AudioLoaded)
-  setup_save_fft_callback: file dialog -> spawn thread -> csv_export::export_to_csv -> tx.send(CsvSaved)
-  setup_load_fft_callback: file dialog -> csv_import -> setup state -> spawn recon thread
-  setup_save_wav_callback: file dialog -> spawn thread -> audio.save_wav -> tx.send(WavSaved)
+  setup_open_callback: file dialog -> disable_for_processing -> set_btn_busy_mode -> spawn thread -> AudioData::from_wav_file -> normalize -> tx.send(AudioLoaded)
+  setup_save_fft_callback: file dialog -> disable_for_processing -> set_btn_busy_mode -> spawn thread -> csv_export::export_to_csv -> tx.send(CsvSaved)
+  setup_load_fft_callback: file dialog -> disable_for_processing -> set_btn_busy_mode -> spawn thread -> csv_import -> tx.send(CsvLoaded)
+  setup_save_wav_callback: file dialog -> disable_for_processing -> set_btn_busy_mode -> spawn thread -> audio.save_wav -> tx.send(WavSaved)
+  All file operations call disable_for_processing + set_btn_busy_mode on start
+  CSV load I/O now runs in a background thread (was blocking UI)
 
 fn setup_rerun_callback(widgets, state, tx, shared)
+  - If is_processing: triggers cancel_flag (rerun button acts as cancel during processing)
+  - Calls disable_for_processing + set_btn_cancel_mode on start
   - Syncs all UI fields into FftParams (time range, window, overlap, window_type, zero-pad, recon params)
   - Overrides start/stop to process FULL file for FFT
   - Spawns FFT worker thread -> tx.send(FftComplete)
   - Memory warning if zero-padded size > 256MB estimated
+
+fn handle_csv_load_result(result, state, widgets, tx, shared)
+  - On Ok: stores Spectrogram, applies FftParams/ReconParams/ViewParams, spawns reconstruction
+  - On Err: delegates to handle_csv_load_error
+
+fn handle_csv_load_error(error_msg)
+  - Shows FLTK error dialog for failed CSV load
 ```
 
 ### `callbacks_ui.rs`
@@ -556,5 +604,5 @@ fn instant_since_start(Instant) -> String   -- elapsed since program start
 2. **Sample buffer clone**: `main_fft.rs` clones reconstructed samples into `Arc<Vec<f32>>` for AudioPlayer. Could share allocation if AudioData used Arc internally. (Low impact ~1MB, skipped.)
 3. ~~**Absolute-positioned status bars**~~: FIXED -- `Event::Resize` handler in `setup_spacebar_handler()` repositions them on window resize.
 4. **No source audio playback**: Only reconstructed audio plays. No A/B comparison.
-5. **No progress indication**: FFT/reconstruction show "Processing..." with no progress bar.
+5. ~~**No progress indication**~~: FIXED -- `progress_counter: Arc<AtomicUsize>` in AppState is shared with FFT/reconstruction workers, which increment it per frame. Poll loop reads the counter and updates status bar with percentage.
 6. **CSV doesn't preserve custom gradient**: Gradient stops aren't serialized in CSV export.

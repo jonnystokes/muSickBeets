@@ -1,10 +1,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 
 use fltk::{app, prelude::*};
 
 use crate::app_state::{format_time, update_status_bar, AppState, SharedCb, WorkerMessage};
+use crate::callbacks_file;
 use crate::data::TimeUnit;
 use crate::playback::audio_player::PlaybackState;
 use crate::processing::fft_engine::FftEngine;
@@ -41,19 +43,26 @@ pub fn start_poll_loop(
     let mut lbl_time = widgets.lbl_time.clone();
     let mut slider_ceiling = widgets.slider_ceiling.clone();
     let mut lbl_ceiling_val = widgets.lbl_ceiling_val.clone();
+    let shared = shared.clone();
     let enable_spec_widgets = shared.enable_spec_widgets.clone();
     let enable_wav_export = shared.enable_wav_export.clone();
     let enable_audio_widgets = shared.enable_audio_widgets.clone();
     let update_info = shared.update_info.clone();
     let update_seg_label = shared.update_seg_label.clone();
+    let mut input_start = widgets.input_start.clone();
     let mut input_stop = widgets.input_stop.clone();
     let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+    let mut slider_overlap = widgets.slider_overlap.clone();
     let mut x_scroll = widgets.x_scroll.clone();
     let mut y_scroll = widgets.y_scroll.clone();
     let tx = tx.clone();
     let x_scroll_gen = x_scroll_gen.clone();
     let y_scroll_gen = y_scroll_gen.clone();
     let mut win_poll = win.clone();
+    // Clones for status bar auto-expand resizing (periodic timer)
+    let mut root_poll = widgets.root.clone();
+    let mut status_fft_poll = widgets.status_fft.clone();
+    let win_resize = win.clone();
 
     // Track last-seen generation to detect user scrollbar interaction
     let mut last_x_gen: u64 = 0;
@@ -87,13 +96,57 @@ pub fn start_poll_loop(
             );
         }
 
-        // ── Periodic status bar refresh (~every 2s = 125 ticks at 16ms) ──
+        // ── Periodic status bar refresh (~every 500ms = 30 ticks at 16ms) ──
         status_refresh_counter += 1;
-        if status_refresh_counter >= 125 {
+        if status_refresh_counter >= 30 {
             status_refresh_counter = 0;
-            let text = state.try_borrow().map(|st| st.status_bar_text()).ok();
-            if let Some(text) = text {
+
+            // Update progress indicator if an operation is in flight
+            if let Ok(mut st) = state.try_borrow_mut() {
+                if st.is_processing && st.progress_total > 0 {
+                    let done = st.progress_counter.load(Ordering::Relaxed);
+                    let total = st.progress_total;
+                    if done > 0 && done < total {
+                        let pct = (done as f64 / total as f64 * 100.0) as u32;
+                        st.status
+                            .set_progress(Some(&format!("{}/{} frames, {}%", done, total, pct)));
+                    } else if done >= total {
+                        st.status.set_progress(None);
+                    }
+                }
+            }
+
+            let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
+            let result = state
+                .try_borrow()
+                .map(|st| {
+                    let text = st.status.render_wrapped(max_chars);
+                    let bar_h = st.status.measure_height(win_resize.w());
+                    (text, bar_h)
+                })
+                .ok();
+            if let Some((text, bar_h)) = result {
                 update_status_bar(&mut status_bar, &text);
+                // Auto-expand/collapse status bar height if changed
+                if bar_h != status_bar.h() {
+                    let win_h = win_resize.h();
+                    let win_w = win_resize.w();
+                    let menu_h = 25;
+                    let fft_h = status_fft_poll.h();
+                    root_poll.resize(
+                        0,
+                        menu_h,
+                        win_w,
+                        win_h - menu_h - bar_h - fft_h - crate::layout::STATUS_FFT_OFFSET,
+                    );
+                    status_fft_poll.resize(
+                        0,
+                        win_h - bar_h - fft_h - crate::layout::STATUS_FFT_OFFSET,
+                        win_w,
+                        fft_h,
+                    );
+                    status_bar.resize(0, win_h - bar_h, win_w, bar_h);
+                }
             }
         }
 
@@ -118,6 +171,7 @@ pub fn start_poll_loop(
                     handle_reconstruction_complete(
                         reconstructed,
                         &state,
+                        &shared,
                         &mut status_bar,
                         &mut spec_display,
                         &mut waveform_display,
@@ -132,6 +186,7 @@ pub fn start_poll_loop(
                         filename,
                         norm_gain,
                         &state,
+                        &shared,
                         &mut status_bar,
                         &mut spec_display,
                         &mut waveform_display,
@@ -152,13 +207,16 @@ pub fn start_poll_loop(
                             "WAV save complete: {:?}",
                             path
                         );
+                        let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
                         let done_status = {
                             let mut st = state.borrow_mut();
-                            let fname = path.file_name().unwrap_or_default().to_string_lossy();
-                            st.current_activity = format!("WAV saved: {}", fname);
-                            st.status_bar_text()
+                            st.status.set_activity("WAV saved");
+                            st.status.finish_timing();
+                            st.status.set_activity("Ready");
+                            st.status.render_wrapped(max_chars)
                         };
                         update_status_bar(&mut status_bar, &done_status);
+                        (shared.set_btn_normal_mode.borrow_mut())();
                     }
                     Err(msg) => {
                         dbg_log!(
@@ -169,6 +227,7 @@ pub fn start_poll_loop(
                         );
                         fltk::dialog::alert_default(&format!("Error saving WAV:\n{}", msg));
                         update_status_bar(&mut status_bar, "WAV save failed");
+                        (shared.set_btn_normal_mode.borrow_mut())();
                     }
                 },
                 WorkerMessage::CsvSaved(result) => match result {
@@ -182,16 +241,19 @@ pub fn start_poll_loop(
                             time_min,
                             time_max
                         );
+                        let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
                         let done_status = {
                             let mut st = state.borrow_mut();
-                            let fname = path.file_name().unwrap_or_default().to_string_lossy();
-                            st.current_activity = format!(
-                                "FFT saved: {} ({} frames, {:.2}s-{:.2}s)",
-                                fname, num_frames, time_min, time_max
-                            );
-                            st.status_bar_text()
+                            st.status.set_activity(&format!(
+                                "FFT saved ({} frames, {:.2}s-{:.2}s)",
+                                num_frames, time_min, time_max
+                            ));
+                            st.status.finish_timing();
+                            st.status.set_activity("Ready");
+                            st.status.render_wrapped(max_chars)
                         };
                         update_status_bar(&mut status_bar, &done_status);
+                        (shared.set_btn_normal_mode.borrow_mut())();
                     }
                     Err(msg) => {
                         dbg_log!(
@@ -202,6 +264,7 @@ pub fn start_poll_loop(
                         );
                         fltk::dialog::alert_default(&format!("Error saving CSV:\n{}", msg));
                         update_status_bar(&mut status_bar, "Save failed");
+                        (shared.set_btn_normal_mode.borrow_mut())();
                     }
                 },
                 WorkerMessage::WorkerPanic(msg) => {
@@ -210,17 +273,59 @@ pub fn start_poll_loop(
                         let mut st = state.borrow_mut();
                         st.is_processing = false;
                         st.play_pending = false;
-                        st.current_activity = "Error: worker crashed".to_string();
-                        st.fft_start_time = None;
-                        st.recon_start_time = None;
+                        st.progress_total = 0;
+                        st.status.set_progress(None);
+                        st.status.set_activity("Error: worker crashed");
+                        st.status.cancel_timing();
                     }
+                    (shared.enable_after_processing.borrow_mut())();
+                    (shared.set_btn_normal_mode.borrow_mut())();
                     let msg_text = format!("Error: worker thread panicked: {}", msg);
                     update_status_bar(&mut status_bar, &msg_text);
                 }
+                WorkerMessage::CsvLoaded(result) => match result {
+                    Ok((spec, params, recon, view, path)) => {
+                        callbacks_file::handle_csv_load_result(
+                            spec,
+                            params,
+                            recon,
+                            view,
+                            path,
+                            &state,
+                            &shared,
+                            &tx,
+                            &mut status_bar,
+                            &mut win_poll,
+                            &mut spec_display,
+                            &mut input_start,
+                            &mut input_stop,
+                            &mut slider_overlap,
+                        );
+                    }
+                    Err(msg) => {
+                        {
+                            let mut st = state.borrow_mut();
+                            st.is_processing = false;
+                            st.status.cancel_timing();
+                            st.status.set_activity("Ready");
+                        }
+                        (shared.enable_after_processing.borrow_mut())();
+                        (shared.set_btn_normal_mode.borrow_mut())();
+                        callbacks_file::handle_csv_load_error(&msg);
+                        update_status_bar(&mut status_bar, "CSV load failed");
+                    }
+                },
                 WorkerMessage::Cancelled(what) => {
                     app_log!("Worker", "Cancelled: {}", what);
-                    // Don't reset is_processing or current_activity —
-                    // a new operation likely replaced this one.
+                    {
+                        let mut st = state.borrow_mut();
+                        st.is_processing = false;
+                        st.progress_total = 0;
+                        st.status.set_progress(None);
+                        st.status.set_activity("Ready");
+                    }
+                    (shared.enable_after_processing.borrow_mut())();
+                    (shared.set_btn_normal_mode.borrow_mut())();
                 }
             }
         }
@@ -340,7 +445,7 @@ fn handle_fft_complete(
     state: &Rc<RefCell<AppState>>,
     slider_ceiling: &mut fltk::valuator::HorNiceSlider,
     lbl_ceiling_val: &mut fltk::frame::Frame,
-    status_bar: &mut fltk::output::Output,
+    status_bar: &mut fltk::output::MultilineOutput,
     spec_display: &mut fltk::widget::Widget,
     waveform_display: &mut fltk::widget::Widget,
     enable_spec_widgets: &SharedCb,
@@ -357,6 +462,10 @@ fn handle_fft_complete(
     // Store spectrogram, then auto-reconstruct
     let recon_data = {
         let mut st = state.borrow_mut();
+
+        // Clear FFT progress (reconstruction will set its own)
+        st.progress_total = 0;
+        st.status.set_progress(None);
 
         st.view.max_freq_bins = st.fft_params.num_frequency_bins();
 
@@ -413,16 +522,15 @@ fn handle_fft_complete(
     (update_info.borrow_mut())();
 
     // Record FFT timing, update activity to reconstruction, then invalidate renderers
+    let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
     let recon_status = {
         let mut st = state.borrow_mut();
-        if let Some(start) = st.fft_start_time.take() {
-            st.last_fft_duration = Some(start.elapsed());
-        }
-        st.current_activity = "Reconstructing...".to_string();
-        st.recon_start_time = Some(std::time::Instant::now());
+        st.status.finish_timing();
+        st.status.set_activity("Reconstructing...");
+        st.status.start_timing("Reconstruction");
         st.spec_renderer.invalidate();
         st.wave_renderer.invalidate();
-        st.status_bar_text()
+        st.status.render_wrapped(max_chars)
     };
     update_status_bar(status_bar, &recon_status);
 
@@ -456,6 +564,11 @@ fn handle_fft_complete(
         st.new_cancel_flag()
     };
 
+    // Set up progress tracking for reconstruction
+    let progress = state.borrow().progress_counter.clone();
+    progress.store(0, Ordering::Relaxed);
+    state.borrow_mut().progress_total = frame_end.saturating_sub(frame_start);
+
     dbg_log!(
         crate::debug_flags::FFT_DBG,
         "FFT",
@@ -473,7 +586,14 @@ fn handle_fft_complete(
             crate::debug_flags::instant_since_start(std::time::Instant::now())
         );
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Reconstructor::reconstruct_range(&spec, &params, &view, frame_start..frame_end, &cancel)
+            Reconstructor::reconstruct_range(
+                &spec,
+                &params,
+                &view,
+                frame_start..frame_end,
+                &cancel,
+                Some(&progress),
+            )
         }));
         match result {
             Ok(reconstructed) => {
@@ -507,7 +627,8 @@ fn handle_fft_complete(
 fn handle_reconstruction_complete(
     mut reconstructed: crate::data::AudioData,
     state: &Rc<RefCell<AppState>>,
-    status_bar: &mut fltk::output::Output,
+    shared: &crate::app_state::SharedCallbacks,
+    status_bar: &mut fltk::output::MultilineOutput,
     spec_display: &mut fltk::widget::Widget,
     waveform_display: &mut fltk::widget::Widget,
     freq_axis: &mut fltk::widget::Widget,
@@ -522,18 +643,14 @@ fn handle_reconstruction_complete(
         crate::debug_flags::instant_since_start(std::time::Instant::now())
     );
     // Record reconstruction timing and update status text before redraws
+    let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
     let ready_status = {
         let mut st = state.borrow_mut();
-        if let Some(start) = st.recon_start_time.take() {
-            st.last_recon_duration = Some(start.elapsed());
-        }
-        let fname = if st.current_filename.is_empty() {
-            "Spectrogram".to_string()
-        } else {
-            st.current_filename.clone()
-        };
-        st.current_activity = format!("{} | Ready", fname);
-        st.status_bar_text()
+        st.progress_total = 0;
+        st.status.set_progress(None);
+        st.status.finish_timing();
+        st.status.set_activity("Ready");
+        st.status.render_wrapped(max_chars)
     };
 
     // Normalize reconstructed audio for proper playback volume
@@ -628,6 +745,9 @@ fn handle_reconstruction_complete(
             fltk::dialog::alert_default(&format!("Failed to load reconstructed audio:\n{}", e));
         }
     }
+    // Re-enable widgets and restore button after processing completes
+    (shared.enable_after_processing.borrow_mut())();
+    (shared.set_btn_normal_mode.borrow_mut())();
 }
 
 fn handle_audio_loaded(
@@ -635,7 +755,8 @@ fn handle_audio_loaded(
     filename: std::path::PathBuf,
     norm_gain: f32,
     state: &Rc<RefCell<AppState>>,
-    status_bar: &mut fltk::output::Output,
+    shared: &crate::app_state::SharedCallbacks,
+    status_bar: &mut fltk::output::MultilineOutput,
     spec_display: &mut fltk::widget::Widget,
     waveform_display: &mut fltk::widget::Widget,
     input_stop: &mut fltk::input::FloatInput,
@@ -733,19 +854,45 @@ fn handle_audio_loaded(
     );
     {
         let mut st = state.borrow_mut();
-        st.current_activity = format!("{} | Processing FFT...", st.current_filename);
-        st.fft_start_time = Some(std::time::Instant::now());
-        // Clear previous timings for a fresh load
-        st.last_fft_duration = None;
-        st.last_recon_duration = None;
+        st.status.finish_timing(); // Records "Audio load" timing if start_timing was called
+        st.status.set_activity("Processing FFT...");
+        st.status.start_timing("FFT");
     }
     let cancel = state.borrow_mut().new_cancel_flag();
+
+    // Set up progress tracking for FFT
+    let progress = state.borrow().progress_counter.clone();
+    progress.store(0, Ordering::Relaxed);
+    {
+        let mut st = state.borrow_mut();
+        // Estimate num_frames the same way FftEngine::process does
+        let start_sample = st.fft_params.start_sample;
+        let stop_sample = st
+            .fft_params
+            .stop_sample
+            .min(st.audio_data.as_ref().map(|a| a.num_samples()).unwrap_or(0));
+        let audio_len = stop_sample.saturating_sub(start_sample);
+        let padded_len = if st.fft_params.use_center {
+            audio_len + st.fft_params.window_length
+        } else {
+            audio_len
+        };
+        let hop = st.fft_params.hop_length();
+        let wl = st.fft_params.window_length;
+        st.progress_total = if padded_len >= wl {
+            (padded_len - wl) / hop + 1
+        } else {
+            0
+        };
+    }
+
     let tx_clone = tx.clone();
     let audio_for_fft = audio.clone();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             app_log!("FFT thread", "Started");
-            let spectrogram = FftEngine::process(&audio_for_fft, &params_clone, &cancel);
+            let spectrogram =
+                FftEngine::process(&audio_for_fft, &params_clone, &cancel, Some(&progress));
             app_log!(
                 "FFT thread",
                 "Complete: {} frames",
@@ -775,7 +922,15 @@ fn handle_audio_loaded(
         }
     });
 
-    if let Some(text) = state.try_borrow().map(|st| st.status_bar_text()).ok() {
+    // Switch rerun button from "Busy..." to "Cancel" for the cancelable FFT operation
+    (shared.set_btn_cancel_mode.borrow_mut())();
+
+    let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
+    if let Some(text) = state
+        .try_borrow()
+        .map(|st| st.status.render_wrapped(max_chars))
+        .ok()
+    {
         update_status_bar(status_bar, &text);
     }
     spec_display.redraw();

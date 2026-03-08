@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rayon::prelude::*;
 use realfft::RealFftPlanner;
@@ -25,6 +25,7 @@ impl Reconstructor {
         params: &FftParams,
         view: &ViewState,
         cancel: &AtomicBool,
+        progress: Option<&AtomicUsize>,
     ) -> AudioData {
         Self::reconstruct_range(
             spectrogram,
@@ -32,6 +33,7 @@ impl Reconstructor {
             view,
             0..spectrogram.num_frames(),
             cancel,
+            progress,
         )
     }
 
@@ -41,12 +43,14 @@ impl Reconstructor {
     /// computes the index range on the main thread and passes it here (zero-copy).
     /// For a 1000-frame spectrogram with 4096 bins, this saves ~49 MB of cloning.
     /// If `cancel` is set to true, processing stops early.
+    /// If `progress` is provided, it is incremented after each frame completes.
     pub fn reconstruct_range(
         spectrogram: &Spectrogram,
         params: &FftParams,
         view: &ViewState,
         frame_range: Range<usize>,
         cancel: &AtomicBool,
+        progress: Option<&AtomicUsize>,
     ) -> AudioData {
         let hop = params.hop_length();
         let window_len = params.window_length;
@@ -144,6 +148,10 @@ impl Reconstructor {
                     .zip(window.iter())
                     .map(|(&s, &w)| s * w)
                     .collect();
+
+                if let Some(ctr) = progress {
+                    ctr.fetch_add(1, Ordering::Relaxed);
+                }
 
                 // Use local index for overlap-add positioning
                 let start_pos = local_idx * hop;

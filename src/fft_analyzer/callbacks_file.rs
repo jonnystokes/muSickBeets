@@ -25,9 +25,9 @@ pub fn setup_file_callbacks(
     win: &fltk::window::Window,
 ) {
     setup_open_callback(widgets, state, tx, shared, win);
-    setup_save_fft_callback(widgets, state, tx);
+    setup_save_fft_callback(widgets, state, tx, shared);
     setup_load_fft_callback(widgets, state, tx, shared, win);
-    setup_save_wav_callback(widgets, state, tx);
+    setup_save_wav_callback(widgets, state, tx, shared);
 }
 
 // ── Open Audio File ──
@@ -35,12 +35,13 @@ fn setup_open_callback(
     widgets: &Widgets,
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
-    _shared: &SharedCallbacks,
+    shared: &SharedCallbacks,
     _win: &fltk::window::Window,
 ) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
     let tx = tx.clone();
+    let shared_cb = shared.clone();
 
     let mut btn_open = widgets.btn_open.clone();
     btn_open.set_callback(move |_| {
@@ -87,8 +88,11 @@ fn setup_open_callback(
         {
             let mut st = state.borrow_mut();
             st.is_processing = true;
-            st.current_activity = "Loading audio...".to_string();
+            st.status.set_activity("Loading audio...");
+            st.status.start_timing("Audio load");
         }
+        (shared_cb.disable_for_processing.borrow_mut())();
+        (shared_cb.set_btn_busy_mode.borrow_mut())();
 
         update_status_bar(&mut status_bar, "Loading audio...");
 
@@ -159,10 +163,12 @@ fn setup_save_fft_callback(
     widgets: &Widgets,
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
+    shared: &SharedCallbacks,
 ) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
     let tx = tx.clone();
+    let shared_cb = shared.clone();
 
     let mut btn_save_fft = widgets.btn_save_fft.clone();
     btn_save_fft.set_callback(move |_| {
@@ -203,9 +209,11 @@ fn setup_save_fft_callback(
 
         {
             let mut st = state.borrow_mut();
-            st.current_activity = format!("Saving FFT data ({} frames)...", export_data.5);
+            st.status
+                .set_activity(&format!("Saving FFT data ({} frames)...", export_data.5));
+            st.status.start_timing("FFT save");
         }
-        update_status_bar(&mut status_bar, &state.borrow().status_bar_text());
+        update_status_bar(&mut status_bar, &state.borrow().status.render());
         let tx_clone = tx.clone();
         let (spec, params, view, proc_time_min, proc_time_max, num_frames) = export_data;
         let num_bins = spec.frequencies.len();
@@ -219,6 +227,7 @@ fn setup_save_fft_callback(
             proc_time_max,
             filename
         );
+        (shared_cb.set_btn_busy_mode.borrow_mut())();
         std::thread::spawn(move || {
             let result = csv_export::export_to_csv(
                 &spec,
@@ -254,23 +263,24 @@ fn setup_load_fft_callback(
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
     shared: &SharedCallbacks,
-    win: &fltk::window::Window,
+    _win: &fltk::window::Window,
 ) {
     let state = state.clone();
     let tx = tx.clone();
     let mut status_bar = widgets.status_bar.clone();
-    let mut spec_display = widgets.spec_display.clone();
-    let mut input_start = widgets.input_start.clone();
-    let mut input_stop = widgets.input_stop.clone();
-    let mut slider_overlap = widgets.slider_overlap.clone();
-    let update_info = shared.update_info.clone();
-    let update_seg_label = shared.update_seg_label.clone();
-    let enable_audio_widgets = shared.enable_audio_widgets.clone();
-    let enable_spec_widgets = shared.enable_spec_widgets.clone();
-    let mut win_load = win.clone();
+    let shared_cb = shared.clone();
 
     let mut btn_load_fft = widgets.btn_load_fft.clone();
     btn_load_fft.set_callback(move |_| {
+        // Don't allow loading while already processing
+        {
+            let st = state.borrow();
+            if st.is_processing {
+                update_status_bar(&mut status_bar, "Still processing... please wait.");
+                return;
+            }
+        }
+
         let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
         chooser.set_filter("*.csv");
         chooser.show();
@@ -280,7 +290,6 @@ fn setup_load_fft_callback(
             return;
         }
 
-        update_status_bar(&mut status_bar, "Loading FFT data...");
         dbg_log!(
             debug_flags::FILE_IO_DBG,
             "File",
@@ -288,174 +297,245 @@ fn setup_load_fft_callback(
             filename
         );
 
-        match csv_export::import_from_csv(&filename) {
-            Ok((imported_spec, mut imported_params, recon_params, view_params)) => {
-                let num_frames = imported_spec.num_frames();
-                let num_bins = imported_spec.frequencies.len();
-                let max_freq = imported_spec.max_freq;
-                dbg_log!(
-                    debug_flags::FILE_IO_DBG,
-                    "File",
-                    "FFT CSV loaded: {} frames x {} bins, sr={}, max_freq={:.1}Hz, time {:.5}s-{:.5}s",
-                    num_frames,
-                    num_bins,
-                    imported_params.sample_rate,
-                    max_freq,
-                    imported_spec.min_time,
-                    imported_spec.max_time
-                );
+        // Start timing and set status
+        {
+            let mut st = state.borrow_mut();
+            st.is_processing = true;
+            st.status.set_activity("Loading FFT data...");
+            st.status.start_timing("FFT load");
+        }
+        (shared_cb.disable_for_processing.borrow_mut())();
+        (shared_cb.set_btn_busy_mode.borrow_mut())();
+        let max_chars = ((status_bar.w() - 16).max(40) / 7).max(20) as usize;
+        update_status_bar(
+            &mut status_bar,
+            &state.borrow().status.render_wrapped(max_chars),
+        );
 
-                // Ensure proc_time covers the full spectrogram range
-                let spec_min_time = imported_spec.min_time;
-                let spec_max_time = imported_spec.max_time;
-                let sr = imported_params.sample_rate;
-                // Convert spectrogram time range to sample counts (ground truth)
-                imported_params.start_sample = (spec_min_time * sr as f64).round() as usize;
-                imported_params.stop_sample = (spec_max_time * sr as f64).round() as usize;
-
-                // Set filename for status bar and window title
-                let csv_fname = filename
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-
-                let recon_data = {
-                    let mut st = state.borrow_mut();
-                    st.fft_params = imported_params.clone();
-                    st.current_filename = csv_fname.clone();
-
-                    // Compute adaptive dB ceiling from actual data max amplitude
-                    let max_mag = imported_spec.max_magnitude();
-                    if max_mag > 0.0 {
-                        st.view.db_ceiling = 20.0 * max_mag.log10();
-                    }
-
-                    st.view.time_min_sec = spec_min_time;
-                    st.view.time_max_sec = spec_max_time;
-                    st.view.data_time_min_sec = spec_min_time;
-                    st.view.data_time_max_sec = spec_max_time;
-                    st.view.data_freq_max_hz = imported_spec.max_freq;
-
-                    // Restore viewport frequency range if saved, otherwise default
-                    st.view.freq_min_hz = view_params.freq_min_hz.unwrap_or(1.0).max(1.0);
-                    st.view.freq_max_hz = view_params
-                        .freq_max_hz
-                        .unwrap_or(5000.0_f32.min(imported_spec.max_freq))
-                        .min(imported_spec.max_freq);
-
-                    // Restore reconstruction params if present
-                    if let Some((fc, fmin, fmax)) = recon_params {
-                        st.view.recon_freq_count = fc;
-                        st.view.recon_freq_min_hz = fmin;
-                        st.view.recon_freq_max_hz = fmax;
-                    }
-
-                    st.spectrogram = Some(Arc::new(imported_spec));
-                    st.spec_renderer.invalidate();
-                    st.wave_renderer.invalidate();
-                    st.recon_start_sample = imported_params.start_sample;
-                    st.is_processing = true;
-                    st.dirty = false;
-                    let cancel = st.new_cancel_flag();
-
-                    // Prepare reconstruction data
-                    let spec = st.spectrogram.clone().unwrap();
-                    let params = st.fft_params.clone();
-                    let view = st.view.clone();
-                    (spec, params, view, spec_min_time, spec_max_time, cancel)
-                };
-
-                // Display values based on time_unit (default: Seconds for CSV import)
-                input_start.set_value(&format!("{:.5}", imported_params.start_seconds()));
-                input_stop.set_value(&format!("{:.5}", imported_params.stop_seconds()));
-                slider_overlap.set_value(imported_params.overlap_percent as f64);
-
-                win_load.set_label(&format!("muSickBeets - {} (FFT)", csv_fname));
-
-                (enable_audio_widgets.borrow_mut())();
-                (enable_spec_widgets.borrow_mut())();
-                (update_info.borrow_mut())();
-                (update_seg_label.borrow_mut())();
-
-                let csv_status = {
-                    let mut st = state.borrow_mut();
-                    st.current_activity = format!(
-                        "{} | Reconstructing ({} frames)...",
-                        csv_fname, num_frames
-                    );
-                    st.recon_start_time = Some(std::time::Instant::now());
-                    st.last_fft_duration = None; // CSV import has no FFT pass
-                    st.last_recon_duration = None;
-                    st.status_bar_text()
-                };
-                update_status_bar(&mut status_bar, &csv_status);
-                spec_display.redraw();
-
-                // Auto-trigger reconstruction so sound can play.
-                // Zero-copy: pass Arc<Spectrogram> + index range instead of cloning frames.
-                let tx_clone = tx.clone();
-                let (spec, params, view, proc_time_min, proc_time_max, cancel) = recon_data;
-
-                // Compute frame index range for the processing time window
-                let frame_start = spec
-                    .frames
-                    .iter()
-                    .position(|f| f.time_seconds >= proc_time_min)
-                    .unwrap_or(0);
-                let frame_end = spec
-                    .frames
-                    .iter()
-                    .rposition(|f| f.time_seconds <= proc_time_max)
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-
-                if frame_start < frame_end {
-                    let frame_sr = params.sample_rate as f64;
-                    state.borrow_mut().recon_start_sample =
-                        (spec.frames[frame_start].time_seconds * frame_sr).round() as usize;
+        let tx_clone = tx.clone();
+        let filename_for_thread = filename.clone();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                csv_export::import_from_csv(&filename_for_thread)
+            }));
+            match result {
+                Ok(Ok((spec, params, recon, view))) => {
+                    tx_clone
+                        .send(WorkerMessage::CsvLoaded(Ok((
+                            spec,
+                            params,
+                            recon,
+                            view,
+                            filename_for_thread,
+                        ))))
+                        .ok();
                 }
-
-                std::thread::spawn(move || {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        Reconstructor::reconstruct_range(
-                            &spec,
-                            &params,
-                            &view,
-                            frame_start..frame_end,
-                            &cancel,
-                        )
-                    }));
-                    match result {
-                        Ok(reconstructed) => {
-                            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                                tx_clone
-                                    .send(WorkerMessage::Cancelled("Reconstruction".to_string()))
-                                    .ok();
-                            } else {
-                                tx_clone
-                                    .send(WorkerMessage::ReconstructionComplete(reconstructed))
-                                    .ok();
-                            }
-                        }
-                        Err(panic) => {
-                            let msg = panic
-                                .downcast_ref::<String>()
-                                .cloned()
-                                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                                .unwrap_or_else(|| "unknown panic".to_string());
-                            app_log!("Reconstruction thread", "PANIC: {}", msg);
-                            tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-                        }
-                    }
-                });
+                Ok(Err(e)) => {
+                    tx_clone
+                        .send(WorkerMessage::CsvLoaded(Err(e.to_string())))
+                        .ok();
+                }
+                Err(panic) => {
+                    let msg = panic
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    app_log!("CSV load thread", "PANIC: {}", msg);
+                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+                }
             }
-            Err(e) => {
-                dialog::alert_default(&format!("Error loading CSV:\n{}", e));
-                update_status_bar(&mut status_bar, "CSV load failed");
+        });
+    });
+}
+
+/// Handle successful CSV/FFT data load. Called from poll_loop when `CsvLoaded(Ok(...))` arrives.
+///
+/// Sets up spectrogram state, updates UI widgets, and auto-triggers reconstruction.
+pub fn handle_csv_load_result(
+    imported_spec: crate::data::Spectrogram,
+    mut imported_params: crate::data::FftParams,
+    recon_params: Option<crate::csv_export::ReconParams>,
+    view_params: crate::csv_export::ImportedViewParams,
+    filename: std::path::PathBuf,
+    state: &Rc<RefCell<AppState>>,
+    shared: &SharedCallbacks,
+    tx: &mpsc::Sender<WorkerMessage>,
+    status_bar: &mut fltk::output::MultilineOutput,
+    win: &mut fltk::window::Window,
+    spec_display: &mut fltk::widget::Widget,
+    input_start: &mut fltk::input::FloatInput,
+    input_stop: &mut fltk::input::FloatInput,
+    slider_overlap: &mut fltk::valuator::HorNiceSlider,
+) {
+    let num_frames = imported_spec.num_frames();
+    let num_bins = imported_spec.frequencies.len();
+    let max_freq = imported_spec.max_freq;
+    dbg_log!(
+        debug_flags::FILE_IO_DBG,
+        "File",
+        "FFT CSV loaded: {} frames x {} bins, sr={}, max_freq={:.1}Hz, time {:.5}s-{:.5}s",
+        num_frames,
+        num_bins,
+        imported_params.sample_rate,
+        max_freq,
+        imported_spec.min_time,
+        imported_spec.max_time
+    );
+
+    // Ensure proc_time covers the full spectrogram range
+    let spec_min_time = imported_spec.min_time;
+    let spec_max_time = imported_spec.max_time;
+    let sr = imported_params.sample_rate;
+    // Convert spectrogram time range to sample counts (ground truth)
+    imported_params.start_sample = (spec_min_time * sr as f64).round() as usize;
+    imported_params.stop_sample = (spec_max_time * sr as f64).round() as usize;
+
+    // Set filename for status bar and window title
+    let csv_fname = filename
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let recon_data = {
+        let mut st = state.borrow_mut();
+        st.fft_params = imported_params.clone();
+        st.current_filename = csv_fname.clone();
+
+        // Compute adaptive dB ceiling from actual data max amplitude
+        let max_mag = imported_spec.max_magnitude();
+        if max_mag > 0.0 {
+            st.view.db_ceiling = 20.0 * max_mag.log10();
+        }
+
+        st.view.time_min_sec = spec_min_time;
+        st.view.time_max_sec = spec_max_time;
+        st.view.data_time_min_sec = spec_min_time;
+        st.view.data_time_max_sec = spec_max_time;
+        st.view.data_freq_max_hz = imported_spec.max_freq;
+
+        // Restore viewport frequency range if saved, otherwise default
+        st.view.freq_min_hz = view_params.freq_min_hz.unwrap_or(1.0).max(1.0);
+        st.view.freq_max_hz = view_params
+            .freq_max_hz
+            .unwrap_or(5000.0_f32.min(imported_spec.max_freq))
+            .min(imported_spec.max_freq);
+
+        // Restore reconstruction params if present
+        if let Some((fc, fmin, fmax)) = recon_params {
+            st.view.recon_freq_count = fc;
+            st.view.recon_freq_min_hz = fmin;
+            st.view.recon_freq_max_hz = fmax;
+        }
+
+        st.spectrogram = Some(Arc::new(imported_spec));
+        st.spec_renderer.invalidate();
+        st.wave_renderer.invalidate();
+        st.recon_start_sample = imported_params.start_sample;
+        st.is_processing = true;
+        st.dirty = false;
+        let cancel = st.new_cancel_flag();
+
+        // Prepare reconstruction data
+        let spec = st.spectrogram.clone().unwrap();
+        let params = st.fft_params.clone();
+        let view = st.view.clone();
+        (spec, params, view, spec_min_time, spec_max_time, cancel)
+    };
+
+    // Display values based on time_unit (default: Seconds for CSV import)
+    input_start.set_value(&format!("{:.5}", imported_params.start_seconds()));
+    input_stop.set_value(&format!("{:.5}", imported_params.stop_seconds()));
+    slider_overlap.set_value(imported_params.overlap_percent as f64);
+
+    win.set_label(&format!("muSickBeets - {} (FFT)", csv_fname));
+
+    (shared.enable_audio_widgets.borrow_mut())();
+    (shared.enable_spec_widgets.borrow_mut())();
+    (shared.update_info.borrow_mut())();
+    (shared.update_seg_label.borrow_mut())();
+
+    let csv_status = {
+        let mut st = state.borrow_mut();
+        st.status
+            .set_activity(&format!("Reconstructing ({} frames)...", num_frames));
+        st.status.finish_timing(); // Finish "FFT load" timing
+        st.status.start_timing("Reconstruction");
+        st.status.render()
+    };
+    update_status_bar(status_bar, &csv_status);
+    spec_display.redraw();
+
+    // Auto-trigger reconstruction so sound can play.
+    // Zero-copy: pass Arc<Spectrogram> + index range instead of cloning frames.
+    let tx_clone = tx.clone();
+    let (spec, params, view, proc_time_min, proc_time_max, cancel) = recon_data;
+
+    // Compute frame index range for the processing time window
+    let frame_start = spec
+        .frames
+        .iter()
+        .position(|f| f.time_seconds >= proc_time_min)
+        .unwrap_or(0);
+    let frame_end = spec
+        .frames
+        .iter()
+        .rposition(|f| f.time_seconds <= proc_time_max)
+        .map(|i| i + 1)
+        .unwrap_or(0);
+
+    if frame_start < frame_end {
+        let frame_sr = params.sample_rate as f64;
+        state.borrow_mut().recon_start_sample =
+            (spec.frames[frame_start].time_seconds * frame_sr).round() as usize;
+    }
+
+    let progress = state.borrow().progress_counter.clone();
+    progress.store(0, std::sync::atomic::Ordering::Relaxed);
+    state.borrow_mut().progress_total = frame_end.saturating_sub(frame_start);
+
+    (shared.set_btn_cancel_mode.borrow_mut())();
+
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Reconstructor::reconstruct_range(
+                &spec,
+                &params,
+                &view,
+                frame_start..frame_end,
+                &cancel,
+                Some(&progress),
+            )
+        }));
+        match result {
+            Ok(reconstructed) => {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    tx_clone
+                        .send(WorkerMessage::Cancelled("Reconstruction".to_string()))
+                        .ok();
+                } else {
+                    tx_clone
+                        .send(WorkerMessage::ReconstructionComplete(reconstructed))
+                        .ok();
+                }
+            }
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                app_log!("Reconstruction thread", "PANIC: {}", msg);
+                tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
             }
         }
     });
+}
+
+/// Handle CSV load error. Called from poll_loop when `CsvLoaded(Err(...))` arrives.
+pub fn handle_csv_load_error(error_msg: &str) {
+    dialog::alert_default(&format!("Error loading CSV:\n{}", error_msg));
 }
 
 // ── Export WAV ──
@@ -463,10 +543,12 @@ fn setup_save_wav_callback(
     widgets: &Widgets,
     state: &Rc<RefCell<AppState>>,
     tx: &mpsc::Sender<WorkerMessage>,
+    shared: &SharedCallbacks,
 ) {
     let state = state.clone();
     let mut status_bar = widgets.status_bar.clone();
     let tx = tx.clone();
+    let shared_cb = shared.clone();
 
     let mut btn_save_wav = widgets.btn_save_wav.clone();
     btn_save_wav.set_callback(move |_| {
@@ -499,9 +581,10 @@ fn setup_save_wav_callback(
 
         {
             let mut st = state.borrow_mut();
-            st.current_activity = "Saving WAV...".to_string();
+            st.status.set_activity("Saving WAV...");
+            st.status.start_timing("WAV save");
         }
-        update_status_bar(&mut status_bar, &state.borrow().status_bar_text());
+        update_status_bar(&mut status_bar, &state.borrow().status.render());
         dbg_log!(
             debug_flags::FILE_IO_DBG,
             "File",
@@ -510,6 +593,7 @@ fn setup_save_wav_callback(
             audio_clone.sample_rate,
             filename
         );
+        (shared_cb.set_btn_busy_mode.borrow_mut())();
         let tx_clone = tx.clone();
         std::thread::spawn(move || {
             let result = audio_clone.save_wav(&filename);
@@ -547,6 +631,7 @@ pub fn setup_rerun_callback(
     let input_recon_freq_min = widgets.input_recon_freq_min.clone();
     let input_recon_freq_max = widgets.input_recon_freq_max.clone();
     let check_center = widgets.check_center.clone();
+    let shared_cb = shared.clone();
     let update_info = shared.update_info.clone();
     let update_seg_label = shared.update_seg_label.clone();
     let window_type_choice = widgets.window_type_choice.clone();
@@ -560,13 +645,17 @@ pub fn setup_rerun_callback(
         let has_audio;
         let has_spectrogram;
         {
-            let st = state.borrow();
+            let mut st = state.borrow_mut();
             has_audio = st.audio_data.is_some();
             has_spectrogram = st.spectrogram.is_some();
             if !has_audio && !has_spectrogram {
                 return; // Nothing to process
             }
             if st.is_processing {
+                st.cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                st.status.set_activity("Cancelling...");
+                drop(st);
+                // Don't return -- the cancellation message will arrive via the poll loop
                 return;
             }
         }
@@ -642,7 +731,7 @@ pub fn setup_rerun_callback(
 
                 st.is_processing = true;
                 st.dirty = false;
-                st.current_activity = "Preparing FFT...".to_string();
+                st.status.set_activity("Preparing FFT...");
                 dbg_log!(
                     debug_flags::FFT_DBG,
                     "FFT",
@@ -653,8 +742,10 @@ pub fn setup_rerun_callback(
                     st.fft_params.stop_sample,
                     crate::debug_flags::instant_since_start(std::time::Instant::now())
                 );
-                st.status_bar_text()
+                st.status.render()
             };
+            (shared_cb.disable_for_processing.borrow_mut())();
+            (shared_cb.set_btn_cancel_mode.borrow_mut())();
 
             update_status_bar(&mut status_bar, &prep_status);
             app::awake();
@@ -694,8 +785,8 @@ pub fn setup_rerun_callback(
             // sees immediate feedback even if the spawn itself is delayed.
             let processing_status = {
                 let mut st = state.borrow_mut();
-                st.current_activity = "Processing FFT (full file)...".to_string();
-                st.fft_start_time = Some(std::time::Instant::now());
+                st.status.set_activity("Processing FFT (full file)...");
+                st.status.start_timing("FFT");
                 dbg_log!(
                     debug_flags::FFT_DBG,
                     "FFT",
@@ -704,11 +795,17 @@ pub fn setup_rerun_callback(
                     rayon::current_num_threads(),
                     crate::debug_flags::instant_since_start(std::time::Instant::now())
                 );
-                st.status_bar_text()
+                st.status.render()
             };
             update_status_bar(&mut status_bar, &processing_status);
 
             let tx_clone = tx.clone();
+            let progress = state.borrow().progress_counter.clone();
+            progress.store(0, std::sync::atomic::Ordering::Relaxed);
+            {
+                let total_active = params.stop_sample.saturating_sub(params.start_sample);
+                state.borrow_mut().progress_total = params.num_segments(total_active);
+            }
             std::thread::spawn(move || {
                 dbg_log!(
                     debug_flags::FFT_DBG,
@@ -717,7 +814,7 @@ pub fn setup_rerun_callback(
                     crate::debug_flags::instant_since_start(std::time::Instant::now())
                 );
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    FftEngine::process(&audio, &params, &cancel)
+                    FftEngine::process(&audio, &params, &cancel, Some(&progress))
                 }));
                 match result {
                     Ok(spectrogram) => {
@@ -747,13 +844,9 @@ pub fn setup_rerun_callback(
                 let mut st = state.borrow_mut();
                 st.is_processing = true;
                 st.dirty = false;
-                st.last_fft_duration = None;
-                st.last_recon_duration = None;
-                st.recon_start_time = Some(std::time::Instant::now());
-                st.current_activity = format!(
-                    "{} | Reconstructing...",
-                    st.current_filename
-                );
+                st.status.clear_timings();
+                st.status.start_timing("Reconstruction");
+                st.status.set_activity("Reconstructing...");
                 let cancel = st.new_cancel_flag();
 
                 let spec = st.spectrogram.clone().unwrap();
@@ -763,10 +856,12 @@ pub fn setup_rerun_callback(
                 let proc_time_max = params.stop_seconds();
                 (spec, params, view, proc_time_min, proc_time_max, cancel)
             };
+            (shared_cb.disable_for_processing.borrow_mut())();
+            (shared_cb.set_btn_cancel_mode.borrow_mut())();
 
             (update_info.borrow_mut())();
 
-            let recon_status = state.borrow().status_bar_text();
+            let recon_status = state.borrow().status.render();
             update_status_bar(&mut status_bar, &recon_status);
             app::awake();
 
@@ -803,6 +898,10 @@ pub fn setup_rerun_callback(
                 view.recon_freq_max_hz
             );
 
+            let progress = state.borrow().progress_counter.clone();
+            progress.store(0, std::sync::atomic::Ordering::Relaxed);
+            state.borrow_mut().progress_total = frame_end.saturating_sub(frame_start);
+
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     Reconstructor::reconstruct_range(
@@ -811,6 +910,7 @@ pub fn setup_rerun_callback(
                         &view,
                         frame_start..frame_end,
                         &cancel,
+                        Some(&progress),
                     )
                 }));
                 match result {

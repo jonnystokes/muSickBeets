@@ -106,7 +106,7 @@ fn create_shared_callbacks(
                 .sum::<usize>()
                 .max(1) as i32;
             let fft_h = (line_count * 17 + 8).max(24);
-            let base_h = 25;
+            let base_h = status_bar.h(); // respect auto-expanded status bar height
             let menu_h = 25;
             let win_h = win.h();
             let win_w = win.w();
@@ -212,12 +212,104 @@ fn create_shared_callbacks(
         })))
     };
 
+    // ── Processing lock: disable sidebar/transport during operations ──
+
+    let disable_for_processing: SharedCb = {
+        let mut btn_time_unit = widgets.btn_time_unit.clone();
+        let mut input_start = widgets.input_start.clone();
+        let mut input_stop = widgets.input_stop.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        let mut slider_overlap = widgets.slider_overlap.clone();
+        let mut input_segments_per_active = widgets.input_segments_per_active.clone();
+        let mut input_bins_per_segment = widgets.input_bins_per_segment.clone();
+        let mut window_type_choice = widgets.window_type_choice.clone();
+        let mut check_center = widgets.check_center.clone();
+        let mut zero_pad_choice = widgets.zero_pad_choice.clone();
+        let mut btn_save_fft = widgets.btn_save_fft.clone();
+        let mut btn_save_wav = widgets.btn_save_wav.clone();
+        let mut input_freq_count = widgets.input_freq_count.clone();
+        let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
+        let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn_time_unit.deactivate();
+            input_start.deactivate();
+            input_stop.deactivate();
+            input_seg_size.deactivate();
+            seg_preset_choice.deactivate();
+            slider_overlap.deactivate();
+            input_segments_per_active.deactivate();
+            input_bins_per_segment.deactivate();
+            window_type_choice.deactivate();
+            check_center.deactivate();
+            zero_pad_choice.deactivate();
+            btn_save_fft.deactivate();
+            btn_save_wav.deactivate();
+            input_freq_count.deactivate();
+            input_recon_freq_min.deactivate();
+            input_recon_freq_max.deactivate();
+            btn_snap_to_view.deactivate();
+        })))
+    };
+
+    let enable_after_processing: SharedCb = {
+        let enable_audio = enable_audio_widgets.clone();
+        let enable_spec = enable_spec_widgets.clone();
+        let enable_wav = enable_wav_export.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            (enable_audio.borrow_mut())();
+            (enable_spec.borrow_mut())();
+            (enable_wav.borrow_mut())();
+        })))
+    };
+
+    // ── Rerun button mode switching ──
+
+    let set_btn_cancel_mode: SharedCb = {
+        let mut btn = widgets.btn_rerun.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn.set_label("Cancel (Space)");
+            btn.set_color(fltk::enums::Color::from_hex(crate::ui::theme::ACCENT_RED));
+            btn.set_label_color(fltk::enums::Color::from_hex(crate::ui::theme::BG_DARK));
+            btn.activate();
+            btn.redraw();
+        })))
+    };
+
+    let set_btn_busy_mode: SharedCb = {
+        let mut btn = widgets.btn_rerun.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn.set_label("Busy...");
+            btn.set_color(fltk::enums::Color::from_hex(crate::ui::theme::BG_PANEL));
+            btn.set_label_color(fltk::enums::Color::from_hex(crate::ui::theme::TEXT_DISABLED));
+            btn.deactivate();
+            btn.redraw();
+        })))
+    };
+
+    let set_btn_normal_mode: SharedCb = {
+        let mut btn = widgets.btn_rerun.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn.set_label("Recompute + Rebuild (Space)");
+            btn.set_color(fltk::enums::Color::from_hex(crate::ui::theme::ACCENT_BLUE));
+            btn.set_label_color(fltk::enums::Color::from_hex(crate::ui::theme::BG_DARK));
+            btn.activate();
+            btn.redraw();
+        })))
+    };
+
     SharedCallbacks {
         update_info,
         update_seg_label,
         enable_audio_widgets,
         enable_spec_widgets,
         enable_wav_export,
+        disable_for_processing,
+        enable_after_processing,
+        set_btn_cancel_mode,
+        set_btn_busy_mode,
+        set_btn_normal_mode,
     }
 }
 

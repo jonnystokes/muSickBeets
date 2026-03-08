@@ -5,7 +5,7 @@ use fltk::{
     group::Flex,
     input::{FloatInput, Input},
     menu::{Choice, MenuBar},
-    output::{MultilineOutput, Output},
+    output::MultilineOutput,
     prelude::*,
     valuator::{HorNiceSlider, HorSlider},
     widget::Widget,
@@ -91,7 +91,7 @@ pub struct Widgets {
     pub lbl_time: Frame,
     pub repeat_choice: Choice,
     pub status_fft: MultilineOutput,
-    pub status_bar: Output,
+    pub status_bar: MultilineOutput,
     pub msg_bar: Frame,
 }
 
@@ -348,10 +348,10 @@ pub fn build_ui() -> (Window, Widgets) {
 
     // ─── STATUS BAR ───────────────────────────────────────────────────────────
 
-    let mut status_bar = Output::default()
+    let mut status_bar = MultilineOutput::default()
         .with_pos(0, WIN_H - STATUS_H)
         .with_size(WIN_W, STATUS_H);
-    status_bar.set_value("Ready | Load an audio file to begin");
+    status_bar.set_value("Ready  |  Load an audio file to begin");
     status_bar.set_color(theme::color(theme::BG_PANEL));
     status_bar.set_text_color(theme::color(theme::TEXT_SECONDARY));
     status_bar.set_text_size(11);
