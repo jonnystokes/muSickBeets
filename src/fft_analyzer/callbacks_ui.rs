@@ -614,19 +614,52 @@ pub fn setup_playback_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>
                     _ => false,
                 };
             }
+
+            let seek_from_widget_x = |st: &crate::app_state::AppState, mx: i32, widget_w: i32| {
+                let roi_start = st.fft_params.start_seconds();
+                let roi_stop = st.fft_params.stop_seconds();
+                let roi_vis_start = st.view.time_min_sec.max(roi_start);
+                let roi_vis_stop = st.view.time_max_sec.min(roi_stop);
+                if roi_vis_stop <= roi_vis_start || widget_w <= 0 {
+                    return None;
+                }
+
+                let x0 = (st.view.time_to_x(roi_vis_start) * widget_w as f64) as i32;
+                let x1 = (st.view.time_to_x(roi_vis_stop) * widget_w as f64) as i32;
+                let lo = x0.min(x1);
+                let hi = x0.max(x1);
+                if mx < lo || mx > hi {
+                    return None;
+                }
+
+                let t = (mx as f64 / widget_w as f64).clamp(0.0, 1.0);
+                let global_time = st.view.x_to_time(t).clamp(roi_start, roi_stop);
+                let local_time = (global_time - st.recon_start_seconds()).max(0.0);
+                let seek_sample = (local_time * st.transport.sample_rate.max(1) as f64) as usize;
+                Some(seek_sample.min(st.transport.duration_samples))
+            };
+
             match ev {
                 fltk::enums::Event::Push => {
+                    let mx = fltk::app::event_x() - s.x();
                     let st = state.borrow();
-                    st.audio_player.set_seeking(true);
-                    let seek_sample = (s.value() * st.transport.duration_samples as f64) as usize;
-                    st.audio_player.seek_to_sample(seek_sample);
-                    true
+                    if let Some(seek_sample) = seek_from_widget_x(&st, mx, s.w()) {
+                        st.audio_player.set_seeking(true);
+                        st.audio_player.seek_to_sample(seek_sample);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 fltk::enums::Event::Drag => {
+                    let mx = fltk::app::event_x() - s.x();
                     let st = state.borrow();
-                    let seek_sample = (s.value() * st.transport.duration_samples as f64) as usize;
-                    st.audio_player.seek_to_sample(seek_sample);
-                    true
+                    if let Some(seek_sample) = seek_from_widget_x(&st, mx, s.w()) {
+                        st.audio_player.seek_to_sample(seek_sample);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 fltk::enums::Event::Released => {
                     let st = state.borrow();
@@ -680,6 +713,25 @@ pub fn setup_misc_callbacks(
         });
     }
 
+    // Render full file outside ROI toggle
+    {
+        let state = state.clone();
+        let mut spec_display = widgets.spec_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
+        let mut time_axis = widgets.time_axis.clone();
+
+        let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
+        check_render_full_outside_roi.set_callback(move |c| {
+            let mut st = state.borrow_mut();
+            st.render_full_file_outside_roi = c.is_checked();
+            st.invalidate_all_spectrogram_renderers();
+            drop(st);
+            spec_display.redraw();
+            freq_axis.redraw();
+            time_axis.redraw();
+        });
+    }
+
     // Home button — snap viewport to reconstruction time + freq range
     {
         let state = state.clone();
@@ -687,6 +739,7 @@ pub fn setup_misc_callbacks(
         let mut waveform_display = widgets.waveform_display.clone();
         let mut freq_axis = widgets.freq_axis.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
 
         let mut btn_home = widgets.btn_home.clone();
         btn_home.set_callback(move |_| {
@@ -700,13 +753,14 @@ pub fn setup_misc_callbacks(
             // Snap frequency to reconstruction range
             st.view.freq_min_hz = st.view.recon_freq_min_hz.max(1.0);
             st.view.freq_max_hz = st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             freq_axis.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 

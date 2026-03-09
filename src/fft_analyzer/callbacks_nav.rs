@@ -132,6 +132,7 @@ pub fn setup_scrollbar_callbacks(
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
         let x_scroll_gen = x_scroll_gen.clone();
 
         let mut x_scroll = widgets.x_scroll.clone();
@@ -156,12 +157,13 @@ pub fn setup_scrollbar_callbacks(
             st.view.time_min_sec = start.max(st.view.data_time_min_sec);
             st.view.time_max_sec = (start + vis_range).min(st.view.data_time_max_sec);
 
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -217,6 +219,7 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
 
         let mut btn = widgets.btn_time_zoom_in.clone();
         btn.set_callback(move |_| {
@@ -231,12 +234,13 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 st.view.time_min_sec =
                     (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
             }
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -246,6 +250,7 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
 
         let mut btn = widgets.btn_time_zoom_out.clone();
         btn.set_callback(move |_| {
@@ -261,12 +266,13 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 st.view.time_min_sec =
                     (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
             }
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -502,9 +508,14 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.check_center.clone(), btn_rerun);
     block_space!(widgets.btn_tooltips.clone(), btn_rerun);
     block_space!(widgets.check_lock_active.clone(), btn_rerun);
+    block_space!(widgets.check_render_full_outside_roi.clone(), btn_rerun);
     widgets.check_center.clone().clear_visible_focus();
     widgets.btn_tooltips.clone().clear_visible_focus();
     widgets.check_lock_active.clone().clear_visible_focus();
+    widgets
+        .check_render_full_outside_roi
+        .clone()
+        .clear_visible_focus();
 
     // ── Sliders ──
     block_space!(widgets.slider_overlap.clone(), btn_rerun);

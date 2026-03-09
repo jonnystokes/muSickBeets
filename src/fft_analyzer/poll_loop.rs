@@ -5,11 +5,12 @@ use std::sync::{mpsc, Arc};
 
 use fltk::{app, prelude::*};
 
-use crate::app_state::{format_time, update_status_bar, AppState, SharedCb, WorkerMessage};
+use crate::app_state::{
+    format_time, update_status_bar, AppState, FftStage, SharedCb, WorkerMessage,
+};
 use crate::callbacks_file;
 use crate::data::TimeUnit;
 use crate::playback::audio_player::PlaybackState;
-use crate::processing::fft_engine::FftEngine;
 use crate::processing::reconstructor::Reconstructor;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -153,8 +154,9 @@ pub fn start_poll_loop(
         // ── Process worker messages ──
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                WorkerMessage::FftComplete(spectrogram) => {
+                WorkerMessage::FftStageComplete(stage, spectrogram) => {
                     handle_fft_complete(
+                        stage,
                         spectrogram,
                         &state,
                         &mut slider_ceiling,
@@ -441,6 +443,7 @@ fn sync_scrollbars(
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn handle_fft_complete(
+    stage: FftStage,
     spectrogram: crate::data::Spectrogram,
     state: &Rc<RefCell<AppState>>,
     slider_ceiling: &mut fltk::valuator::HorNiceSlider,
@@ -459,17 +462,13 @@ fn handle_fft_complete(
         spectrogram.num_frames(),
         crate::debug_flags::instant_since_start(std::time::Instant::now())
     );
-    // Store spectrogram, then auto-reconstruct
+    // Store the completed FFT stage and decide what comes next.
     let recon_data = {
         let mut st = state.borrow_mut();
 
-        // Clear FFT progress (reconstruction will set its own)
         st.progress_total = 0;
         st.status.set_progress(None);
 
-        st.view.max_freq_bins = st.fft_params.num_frequency_bins();
-
-        // Compute adaptive dB ceiling from actual data max amplitude
         let max_mag = spectrogram.max_magnitude();
         if max_mag > 0.0 {
             st.view.db_ceiling = 20.0 * max_mag.log10();
@@ -478,36 +477,73 @@ fn handle_fft_complete(
         let spec_arc = Arc::new(spectrogram);
         let (min_t, max_t, max_f) = (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
 
-        st.spectrogram = Some(spec_arc);
+        match stage {
+            FftStage::Overview => {
+                // Overview defines the full navigable bounds for zooming,
+                // scrolling, and the Home button. The later focus stage must
+                // NOT shrink these or the app will behave as if the ROI is the
+                // whole file.
+                let full_end = st
+                    .audio_data
+                    .as_ref()
+                    .map(|a| a.duration_seconds)
+                    .unwrap_or(max_t);
+                st.view.data_time_min_sec = min_t;
+                st.view.data_time_max_sec = full_end;
+                if max_f > 0.0 {
+                    st.view.data_freq_max_hz = max_f;
+                }
 
-        // Update data bounds (full file range)
-        st.view.data_time_min_sec = min_t;
-        st.view.data_time_max_sec = max_t;
-        if max_f > 0.0 {
-            st.view.data_freq_max_hz = max_f;
+                if st.view.time_max_sec <= 0.0 || st.view.time_max_sec == st.view.time_min_sec {
+                    st.view.time_min_sec = min_t;
+                    st.view.time_max_sec = full_end;
+                }
+                if max_f > 0.0 && st.view.freq_max_hz <= 1.0 {
+                    st.view.freq_max_hz = max_f;
+                }
+
+                let audio = st.audio_data.clone().unwrap();
+                st.overview_spectrogram = Some(spec_arc.clone());
+                st.overview_spec_params = Some(st.overview_params_for_audio(audio.num_samples()));
+                st.spectrogram = Some(spec_arc);
+                st.focus_spectrogram = None;
+                st.focus_spec_params = None;
+                st.invalidate_all_spectrogram_renderers();
+
+                let params = st.fft_params.clone();
+                st.status.finish_timing();
+                st.status.set_activity(FftStage::Focus.activity_text());
+                st.status.start_timing(FftStage::Focus.label());
+
+                let status = st
+                    .status
+                    .render_wrapped(((status_bar.w() - 16).max(40) / 7).max(20) as usize);
+                drop(st);
+                update_status_bar(status_bar, &status);
+
+                callbacks_file::spawn_fft_stage(state, tx, audio, params, FftStage::Focus);
+                spec_display.redraw();
+                waveform_display.redraw();
+                return;
+            }
+            FftStage::Focus => {
+                st.focus_spectrogram = Some(spec_arc.clone());
+                st.focus_spec_params = Some(st.fft_params.clone());
+                st.spectrogram = Some(spec_arc);
+                st.view.max_freq_bins = st.fft_params.num_frequency_bins();
+
+                let spec = st.focus_spectrogram.clone().unwrap();
+                let params = st.fft_params.clone();
+                let view = st.view.clone();
+                let proc_time_min = params.start_seconds();
+                let proc_time_max = params.stop_seconds();
+
+                st.recon_start_sample = params.start_sample;
+                st.invalidate_all_spectrogram_renderers();
+
+                (spec, params, view, proc_time_min, proc_time_max)
+            }
         }
-
-        // Set viewport to full file range on first load
-        if st.view.time_max_sec <= 0.0 || st.view.time_max_sec == st.view.time_min_sec {
-            st.view.time_min_sec = min_t;
-            st.view.time_max_sec = max_t;
-        }
-        if max_f > 0.0 && st.view.freq_max_hz <= 1.0 {
-            st.view.freq_max_hz = max_f;
-        }
-
-        // Prepare reconstruction: filter spectrogram to processing time range
-        let spec = st.spectrogram.clone().unwrap();
-        let params = st.fft_params.clone();
-        let view = st.view.clone();
-
-        // Get processing time range (derived from sample counts)
-        let proc_time_min = params.start_seconds();
-        let proc_time_max = params.stop_seconds();
-
-        st.recon_start_sample = params.start_sample;
-
-        (spec, params, view, proc_time_min, proc_time_max)
     };
 
     // Sync ceiling slider to auto-computed dB ceiling
@@ -662,10 +698,9 @@ fn handle_reconstruction_complete(
     }
     let recon_result = {
         let mut st = state.borrow_mut();
-        // Wrap samples in Arc for the player. Currently still
-        // clones the Vec; true zero-copy requires AudioData.samples
-        // to become Arc<Vec<f32>> (planned for Category 7).
-        let playback_samples = Arc::new(reconstructed.samples.clone());
+        // Share the reconstructed sample buffer directly with the player.
+        // AudioData now stores samples as Arc<Vec<f32>>, so this is zero-copy.
+        let playback_samples = Arc::clone(&reconstructed.samples);
         match st
             .audio_player
             .load_audio(playback_samples, reconstructed.sample_rate)
@@ -792,6 +827,10 @@ fn handle_audio_loaded(
         st.fft_params.sample_rate = sample_rate;
         st.fft_params.start_sample = 0;
         st.fft_params.stop_sample = num_smp;
+        st.overview_spectrogram = None;
+        st.focus_spectrogram = None;
+        st.overview_spec_params = None;
+        st.focus_spec_params = None;
         st.audio_data = Some(audio.clone());
         st.has_audio = true;
         st.source_norm_gain = norm_gain;
@@ -811,10 +850,10 @@ fn handle_audio_loaded(
         st.transport.sample_rate = sample_rate;
         st.transport.position_samples = 0;
 
-        st.spec_renderer.invalidate();
+        st.invalidate_all_spectrogram_renderers();
         st.wave_renderer.invalidate();
 
-        params_clone = st.fft_params.clone();
+        params_clone = st.overview_params_for_audio(num_smp);
         // is_processing stays true — FFT thread follows
 
         let fname = filename
@@ -845,82 +884,20 @@ fn handle_audio_loaded(
     (update_info.borrow_mut())();
     (update_seg_label.borrow_mut())();
 
-    // Launch background FFT (reconstruction auto-follows via FftComplete)
+    // Launch overview FFT first; focused FFT and reconstruction follow.
     app_log!(
         "Open",
-        "Spawning FFT thread (window={}, overlap={}%)",
+        "Spawning overview FFT thread (window={}, overlap={}%)",
         params_clone.window_length,
         params_clone.overlap_percent
     );
     {
         let mut st = state.borrow_mut();
         st.status.finish_timing(); // Records "Audio load" timing if start_timing was called
-        st.status.set_activity("Processing FFT...");
-        st.status.start_timing("FFT");
+        st.status.set_activity(FftStage::Overview.activity_text());
+        st.status.start_timing(FftStage::Overview.label());
     }
-    let cancel = state.borrow_mut().new_cancel_flag();
-
-    // Set up progress tracking for FFT
-    let progress = state.borrow().progress_counter.clone();
-    progress.store(0, Ordering::Relaxed);
-    {
-        let mut st = state.borrow_mut();
-        // Estimate num_frames the same way FftEngine::process does
-        let start_sample = st.fft_params.start_sample;
-        let stop_sample = st
-            .fft_params
-            .stop_sample
-            .min(st.audio_data.as_ref().map(|a| a.num_samples()).unwrap_or(0));
-        let audio_len = stop_sample.saturating_sub(start_sample);
-        let padded_len = if st.fft_params.use_center {
-            audio_len + st.fft_params.window_length
-        } else {
-            audio_len
-        };
-        let hop = st.fft_params.hop_length();
-        let wl = st.fft_params.window_length;
-        st.progress_total = if padded_len >= wl {
-            (padded_len - wl) / hop + 1
-        } else {
-            0
-        };
-    }
-
-    let tx_clone = tx.clone();
-    let audio_for_fft = audio.clone();
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            app_log!("FFT thread", "Started");
-            let spectrogram =
-                FftEngine::process(&audio_for_fft, &params_clone, &cancel, Some(&progress));
-            app_log!(
-                "FFT thread",
-                "Complete: {} frames",
-                spectrogram.num_frames()
-            );
-            spectrogram
-        }));
-        match result {
-            Ok(spectrogram) => {
-                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                    tx_clone
-                        .send(WorkerMessage::Cancelled("FFT".to_string()))
-                        .ok();
-                } else {
-                    tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
-                }
-            }
-            Err(panic_val) => {
-                let msg: String = panic_val
-                    .downcast_ref::<String>()
-                    .cloned()
-                    .or_else(|| panic_val.downcast_ref::<&str>().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "unknown panic".to_string());
-                app_log!("FFT thread", "PANIC: {}", msg);
-                tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-            }
-        }
-    });
+    callbacks_file::spawn_fft_stage(state, tx, audio.clone(), params_clone, FftStage::Overview);
 
     // Switch rerun button from "Busy..." to "Cancel" for the cancelable FFT operation
     (shared.set_btn_cancel_mode.borrow_mut())();
@@ -943,7 +920,7 @@ fn handle_audio_loaded(
 
 fn update_transport(
     state: &Rc<RefCell<AppState>>,
-    scrub_slider: &mut fltk::valuator::HorSlider,
+    scrub_slider: &mut fltk::widget::Widget,
     lbl_time: &mut fltk::frame::Frame,
     spec_display: &mut fltk::widget::Widget,
     waveform_display: &mut fltk::widget::Widget,
@@ -973,9 +950,7 @@ fn update_transport(
         }
     };
     if let Some((local_smp, dur_smp, global_smp, sr, playing, time_unit)) = transport_data {
-        if dur_smp > 0 {
-            scrub_slider.set_value(local_smp as f64 / dur_smp as f64);
-        }
+        scrub_slider.redraw();
         let label = match time_unit {
             TimeUnit::Samples => {
                 format!("L {} / {}\nG {}", local_smp, dur_smp, global_smp)

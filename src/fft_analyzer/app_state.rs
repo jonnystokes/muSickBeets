@@ -19,8 +19,30 @@ use crate::ui::tooltips::TooltipManager;
 
 // ─── Messages ──────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FftStage {
+    Overview,
+    Focus,
+}
+
+impl FftStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            FftStage::Overview => "Overview FFT",
+            FftStage::Focus => "FFT",
+        }
+    }
+
+    pub fn activity_text(self) -> &'static str {
+        match self {
+            FftStage::Overview => "Processing overview FFT...",
+            FftStage::Focus => "Processing focused FFT...",
+        }
+    }
+}
+
 pub enum WorkerMessage {
-    FftComplete(Spectrogram),
+    FftStageComplete(FftStage, Spectrogram),
     ReconstructionComplete(AudioData),
     /// Audio file loaded from disk. Contains (audio, filename, norm_gain).
     AudioLoaded(AudioData, std::path::PathBuf, f32),
@@ -260,12 +282,23 @@ impl StatusBarManager {
 pub struct AppState {
     pub audio_data: Option<Arc<AudioData>>,
     pub spectrogram: Option<Arc<Spectrogram>>,
+    #[allow(dead_code)]
+    pub overview_spectrogram: Option<Arc<Spectrogram>>,
+    #[allow(dead_code)]
+    pub focus_spectrogram: Option<Arc<Spectrogram>>,
+    pub overview_spec_params: Option<FftParams>,
+    pub focus_spec_params: Option<FftParams>,
     pub fft_params: FftParams,
+    pub overview_fft_defaults: FftParams,
     pub view: ViewState,
     pub transport: TransportState,
 
     pub audio_player: AudioPlayer,
     pub spec_renderer: SpectrogramRenderer,
+    #[allow(dead_code)]
+    pub overview_spec_renderer: SpectrogramRenderer,
+    #[allow(dead_code)]
+    pub focus_spec_renderer: SpectrogramRenderer,
     pub wave_renderer: WaveformRenderer,
 
     pub reconstructed_audio: Option<AudioData>,
@@ -277,6 +310,7 @@ pub struct AppState {
     /// Set by the Play button when it triggers a recompute due to dirty state.
     pub play_pending: bool,
     pub lock_to_active: bool,
+    pub render_full_file_outside_roi: bool,
     pub has_audio: bool,
     pub current_filename: String,
 
@@ -322,12 +356,19 @@ impl AppState {
         Self {
             audio_data: None,
             spectrogram: None,
+            overview_spectrogram: None,
+            focus_spectrogram: None,
+            overview_spec_params: None,
+            focus_spec_params: None,
             fft_params: FftParams::default(),
+            overview_fft_defaults: FftParams::default(),
             view: ViewState::default(),
             transport: TransportState::default(),
 
             audio_player: AudioPlayer::new(),
             spec_renderer: SpectrogramRenderer::new(),
+            overview_spec_renderer: SpectrogramRenderer::new(),
+            focus_spec_renderer: SpectrogramRenderer::new(),
             wave_renderer: WaveformRenderer::new(),
 
             reconstructed_audio: None,
@@ -336,6 +377,7 @@ impl AppState {
             dirty: false,
             play_pending: false,
             lock_to_active: false,
+            render_full_file_outside_roi: true,
             has_audio: false,
             current_filename: String::new(),
 
@@ -354,6 +396,34 @@ impl AppState {
             progress_counter: Arc::new(AtomicUsize::new(0)),
             progress_total: 0,
         }
+    }
+
+    /// Spectrogram currently used by legacy single-layer code paths.
+    /// Prefer `focus_spectrogram` when present, otherwise fall back to overview.
+    #[allow(dead_code)]
+    pub fn active_spectrogram(&self) -> Option<Arc<Spectrogram>> {
+        self.focus_spectrogram
+            .clone()
+            .or_else(|| self.overview_spectrogram.clone())
+            .or_else(|| self.spectrogram.clone())
+    }
+
+    /// Invalidate all spectrogram renderers.
+    /// Useful during the transition from one-layer to two-layer rendering.
+    #[allow(dead_code)]
+    pub fn invalidate_all_spectrogram_renderers(&mut self) {
+        self.spec_renderer.invalidate();
+        self.overview_spec_renderer.invalidate();
+        self.focus_spec_renderer.invalidate();
+    }
+
+    pub fn overview_params_for_audio(&self, total_samples: usize) -> FftParams {
+        let mut params = self.overview_fft_defaults.clone();
+        params.sample_rate = self.fft_params.sample_rate;
+        params.time_unit = self.fft_params.time_unit;
+        params.start_sample = 0;
+        params.stop_sample = total_samples;
+        params
     }
 
     /// Cancel any in-flight worker, then create a fresh cancellation flag

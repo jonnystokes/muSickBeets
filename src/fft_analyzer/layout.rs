@@ -7,7 +7,7 @@ use fltk::{
     menu::{Choice, MenuBar},
     output::MultilineOutput,
     prelude::*,
-    valuator::{HorNiceSlider, HorSlider},
+    valuator::HorNiceSlider,
     widget::Widget,
     window::Window,
 };
@@ -25,6 +25,8 @@ pub const STATUS_FFT_OFFSET: i32 = 0;
 const SIDEBAR_W: i32 = 215;
 const SIDEBAR_INNER_W: i32 = 200;
 const SIDEBAR_INNER_H: i32 = 1400;
+pub const SPEC_LEFT_GUTTER_W: i32 = 50;
+pub const SPEC_RIGHT_GUTTER_W: i32 = 20;
 
 // ─── Widgets struct ─────────────────────────────────────────────────────────────
 // Holds cloneable handles to every widget that callbacks need to access.
@@ -71,6 +73,7 @@ pub struct Widgets {
     pub lbl_info: MultilineOutput,
     pub btn_tooltips: fltk::button::CheckButton,
     pub check_lock_active: fltk::button::CheckButton,
+    pub check_render_full_outside_roi: fltk::button::CheckButton,
     pub btn_home: Button,
     pub btn_save_defaults: Button,
     pub spec_display: Widget,
@@ -86,7 +89,7 @@ pub struct Widgets {
     pub btn_play: Button,
     pub btn_pause: Button,
     pub btn_stop: Button,
-    pub scrub_slider: HorSlider,
+    pub scrub_slider: Widget,
     pub cursor_readout: Frame,
     pub lbl_time: Frame,
     pub repeat_choice: Choice,
@@ -166,10 +169,26 @@ pub fn build_ui() -> (Window, Widgets) {
     right.set_pad(2);
 
     // ── Waveform strip ──
+    // Keep waveform width locked to the spectrogram's drawable width by
+    // bracketing it with the same left/right gutters used by spec_row.
+    let mut waveform_row = Flex::default().row();
+    right.fixed(&waveform_row, 100);
+
+    let mut waveform_left_spacer = Frame::default();
+    waveform_left_spacer.set_frame(FrameType::FlatBox);
+    waveform_left_spacer.set_color(theme::color(theme::BG_DARK));
+    waveform_row.fixed(&waveform_left_spacer, SPEC_LEFT_GUTTER_W);
+
     let mut waveform_display = Widget::default();
     waveform_display.set_frame(FrameType::FlatBox);
     waveform_display.set_color(theme::color(theme::BG_DARK));
-    right.fixed(&waveform_display, 100);
+
+    let mut waveform_right_spacer = Frame::default();
+    waveform_right_spacer.set_frame(FrameType::FlatBox);
+    waveform_right_spacer.set_color(theme::color(theme::BG_DARK));
+    waveform_row.fixed(&waveform_right_spacer, SPEC_RIGHT_GUTTER_W);
+
+    waveform_row.end();
 
     // ── Spectrogram area (with Y scrollbar) ──
     let mut spec_row = Flex::default().row();
@@ -178,7 +197,7 @@ pub fn build_ui() -> (Window, Widgets) {
     let mut freq_axis = Widget::default();
     freq_axis.set_frame(FrameType::FlatBox);
     freq_axis.set_color(theme::color(theme::BG_DARK));
-    spec_row.fixed(&freq_axis, 50);
+    spec_row.fixed(&freq_axis, SPEC_LEFT_GUTTER_W);
 
     // Main spectrogram display
     let mut spec_display = Widget::default();
@@ -213,11 +232,14 @@ pub fn build_ui() -> (Window, Widgets) {
     freq_zoom_col.fixed(&btn_freq_zoom_out, 20);
 
     freq_zoom_col.end();
-    spec_row.fixed(&freq_zoom_col, 20);
+    spec_row.fixed(&freq_zoom_col, SPEC_RIGHT_GUTTER_W);
 
     spec_row.end();
 
     // ── Time axis label area ──
+    // Keep this full-width; the draw code applies the shared left/right
+    // spectrogram gutters internally so labels align with the spectrogram
+    // drawable region without double-counting offsets.
     let mut time_axis = Widget::default();
     time_axis.set_frame(FrameType::FlatBox);
     time_axis.set_color(theme::color(theme::BG_DARK));
@@ -253,22 +275,31 @@ pub fn build_ui() -> (Window, Widgets) {
     time_zoom_row.end();
     right.fixed(&time_zoom_row, 20);
 
-    // ── Scrubber row (full-width playback position slider) ──
+    // ── Scrubber row ──
+    // Match scrubber width to the spectrogram drawable area so the playback
+    // position geometry lines up with the spectrogram, waveform, and time axis.
     let mut scrub_row = Flex::default().row();
     scrub_row.set_color(theme::color(theme::BG_PANEL));
     right.fixed(&scrub_row, 18);
 
-    let mut scrub_slider = HorSlider::default();
-    scrub_slider.set_minimum(0.0);
-    scrub_slider.set_maximum(1.0);
-    scrub_slider.set_value(0.0);
+    let mut scrub_left_spacer = Frame::default();
+    scrub_left_spacer.set_frame(FrameType::FlatBox);
+    scrub_left_spacer.set_color(theme::color(theme::BG_PANEL));
+    scrub_row.fixed(&scrub_left_spacer, SPEC_LEFT_GUTTER_W);
+
+    let mut scrub_slider = Widget::default();
+    scrub_slider.set_frame(FrameType::FlatBox);
     scrub_slider.set_color(theme::color(theme::BG_WIDGET));
-    scrub_slider.set_selection_color(theme::color(theme::ACCENT_RED));
     scrub_slider.deactivate();
     set_tooltip(
         &mut scrub_slider,
         "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.",
     );
+
+    let mut scrub_right_spacer = Frame::default();
+    scrub_right_spacer.set_frame(FrameType::FlatBox);
+    scrub_right_spacer.set_color(theme::color(theme::BG_PANEL));
+    scrub_row.fixed(&scrub_right_spacer, SPEC_RIGHT_GUTTER_W);
 
     scrub_row.end();
 
@@ -403,6 +434,7 @@ pub fn build_ui() -> (Window, Widgets) {
         lbl_info: sb.lbl_info,
         btn_tooltips: sb.btn_tooltips,
         check_lock_active: sb.check_lock_active,
+        check_render_full_outside_roi: sb.check_render_full_outside_roi,
         btn_home: sb.btn_home,
         btn_save_defaults: sb.btn_save_defaults,
         spec_display,

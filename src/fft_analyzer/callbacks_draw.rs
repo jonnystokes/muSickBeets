@@ -7,8 +7,8 @@ use fltk::{
     prelude::*,
 };
 
-use crate::app_state::AppState;
 use crate::app_state::format_time;
+use crate::app_state::AppState;
 use crate::data;
 use crate::debug_flags;
 use crate::layout::Widgets;
@@ -24,6 +24,7 @@ pub fn setup_draw_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
     setup_waveform_draw(widgets, state);
     setup_freq_axis_draw(widgets, state);
     setup_time_axis_draw(widgets, state);
+    setup_scrubber_draw(widgets, state);
 }
 
 // ── Spectrogram display ──
@@ -48,20 +49,139 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 );
                 return;
             };
-            if let Some(spec) = st.spectrogram.clone() {
+            let overview_spec = st.overview_spectrogram.clone();
+            let focus_spec = st.focus_spectrogram.clone();
+            let legacy_spec = st.spectrogram.clone();
+            if overview_spec.is_some() || focus_spec.is_some() || legacy_spec.is_some() {
                 let view = st.view.clone();
+                let focus_params = st
+                    .focus_spec_params
+                    .clone()
+                    .unwrap_or_else(|| st.fft_params.clone());
+                let overview_params = st
+                    .overview_spec_params
+                    .clone()
+                    .or_else(|| {
+                        st.audio_data
+                            .as_ref()
+                            .map(|a| st.overview_params_for_audio(a.num_samples()))
+                    })
+                    .unwrap_or_else(|| st.overview_fft_defaults.clone());
                 let proc_time_min = st.fft_params.start_seconds();
                 let proc_time_max = st.fft_params.stop_seconds();
-                st.spec_renderer.draw(
-                    &spec,
-                    &view,
-                    proc_time_min,
-                    proc_time_max,
-                    w.x(),
-                    w.y(),
-                    w.w(),
-                    w.h(),
-                );
+                let render_full_file_outside_roi = st.render_full_file_outside_roi;
+                let ww = w.w().max(1);
+                let wh = w.h().max(1);
+
+                let first_px = (0..ww).find(|&px| {
+                    let t = px as f64 / ww as f64;
+                    let time = view.x_to_time(t);
+                    time >= proc_time_min && time <= proc_time_max
+                });
+                let last_px = (0..ww).rfind(|&px| {
+                    let t = px as f64 / ww as f64;
+                    let time = view.x_to_time(t);
+                    time >= proc_time_min && time <= proc_time_max
+                });
+
+                let first_py = (0..wh).find(|&py| {
+                    let flipped_py = wh - 1 - py;
+                    let t = flipped_py as f32 / wh as f32;
+                    let freq = view.y_to_freq(t);
+                    freq >= view.recon_freq_min_hz && freq <= view.recon_freq_max_hz
+                });
+                let last_py = (0..wh).rfind(|&py| {
+                    let flipped_py = wh - 1 - py;
+                    let t = flipped_py as f32 / wh as f32;
+                    let freq = view.y_to_freq(t);
+                    freq >= view.recon_freq_min_hz && freq <= view.recon_freq_max_hz
+                });
+
+                let roi_clip = match (first_px, last_px, first_py, last_py) {
+                    (Some(px0), Some(px1), Some(py0), Some(py1)) if px1 >= px0 && py1 >= py0 => {
+                        Some((w.x() + px0, w.y() + py0, px1 - px0 + 1, py1 - py0 + 1))
+                    }
+                    _ => None,
+                };
+
+                if let Some(spec) = overview_spec.or_else(|| legacy_spec.clone()) {
+                    if focus_spec.is_some() {
+                        if let Some((clip_x, clip_y, clip_w, clip_h)) = roi_clip {
+                            let right_x = clip_x + clip_w;
+                            let bottom_y = clip_y + clip_h;
+                            let outside_regions = [
+                                (w.x(), w.y(), w.w(), (clip_y - w.y()).max(0)),
+                                (w.x(), bottom_y, w.w(), (w.y() + w.h() - bottom_y).max(0)),
+                                (w.x(), clip_y, (clip_x - w.x()).max(0), clip_h),
+                                (right_x, clip_y, (w.x() + w.w() - right_x).max(0), clip_h),
+                            ];
+
+                            for (cx, cy, cw, ch) in outside_regions {
+                                if cw > 0 && ch > 0 {
+                                    fltk::draw::push_clip(cx, cy, cw, ch);
+                                    st.overview_spec_renderer.draw(
+                                        &spec,
+                                        &view,
+                                        &overview_params,
+                                        proc_time_min,
+                                        proc_time_max,
+                                        render_full_file_outside_roi,
+                                        w.x(),
+                                        w.y(),
+                                        w.w(),
+                                        w.h(),
+                                    );
+                                    fltk::draw::pop_clip();
+                                }
+                            }
+                        } else {
+                            st.overview_spec_renderer.draw(
+                                &spec,
+                                &view,
+                                &overview_params,
+                                proc_time_min,
+                                proc_time_max,
+                                render_full_file_outside_roi,
+                                w.x(),
+                                w.y(),
+                                w.w(),
+                                w.h(),
+                            );
+                        }
+                    } else {
+                        st.overview_spec_renderer.draw(
+                            &spec,
+                            &view,
+                            &overview_params,
+                            proc_time_min,
+                            proc_time_max,
+                            render_full_file_outside_roi,
+                            w.x(),
+                            w.y(),
+                            w.w(),
+                            w.h(),
+                        );
+                    }
+                }
+
+                if let Some(spec) = focus_spec.or(legacy_spec) {
+                    if let Some((clip_x, clip_y, clip_w, clip_h)) = roi_clip {
+                        fltk::draw::push_clip(clip_x, clip_y, clip_w, clip_h);
+                        st.focus_spec_renderer.draw(
+                            &spec,
+                            &view,
+                            &focus_params,
+                            proc_time_min,
+                            proc_time_max,
+                            false,
+                            w.x(),
+                            w.y(),
+                            w.w(),
+                            w.h(),
+                        );
+                        fltk::draw::pop_clip();
+                    }
+                }
 
                 let cursor_cx = if st.transport.duration_samples > 0 {
                     let playback_time =
@@ -85,6 +205,159 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
         match draw_data {
             Some(cursor_cx) => {
+                let st = match state.try_borrow() {
+                    Ok(st) => st,
+                    Err(_) => return,
+                };
+
+                let time_to_x_unclamped = |time_sec: f64| {
+                    let range = st.view.time_max_sec - st.view.time_min_sec;
+                    if range <= 0.0 {
+                        0.0
+                    } else {
+                        (time_sec - st.view.time_min_sec) / range
+                    }
+                };
+
+                let freq_to_y_unclamped = |freq_hz: f32| {
+                    let min = st.view.freq_min_hz.max(1.0);
+                    let max = st.view.freq_max_hz.max(min + 1.0);
+                    match st.view.freq_scale {
+                        crate::data::FreqScale::Linear => (freq_hz - min) / (max - min),
+                        crate::data::FreqScale::Log => (freq_hz / min).ln() / (max / min).ln(),
+                        crate::data::FreqScale::Power(power) => {
+                            let p = power.clamp(0.0, 1.0);
+                            if p <= 0.001 {
+                                (freq_hz - min) / (max - min)
+                            } else if p >= 0.999 {
+                                (freq_hz / min).ln() / (max / min).ln()
+                            } else {
+                                let eval_freq = |t: f32| {
+                                    let linear_freq = min + (max - min) * t;
+                                    let log_freq = min * (max / min).powf(t);
+                                    linear_freq.powf(1.0 - p) * log_freq.powf(p)
+                                };
+
+                                let (mut lo, mut hi) = if freq_hz < min {
+                                    let mut lo = -1.0_f32;
+                                    let hi = 0.0_f32;
+                                    while eval_freq(lo) > freq_hz {
+                                        lo *= 2.0;
+                                    }
+                                    (lo, hi)
+                                } else if freq_hz > max {
+                                    let lo = 1.0_f32;
+                                    let mut hi = 2.0_f32;
+                                    while eval_freq(hi) < freq_hz {
+                                        hi *= 2.0;
+                                    }
+                                    (lo, hi)
+                                } else {
+                                    (0.0_f32, 1.0_f32)
+                                };
+
+                                for _ in 0..40 {
+                                    let mid = (lo + hi) / 2.0;
+                                    let f = eval_freq(mid);
+                                    if f < freq_hz {
+                                        lo = mid;
+                                    } else {
+                                        hi = mid;
+                                    }
+                                }
+                                (lo + hi) / 2.0
+                            }
+                        }
+                    }
+                };
+
+                let roi_t0 = time_to_x_unclamped(st.fft_params.start_seconds());
+                let roi_t1 = time_to_x_unclamped(st.fft_params.stop_seconds());
+                let roi_f0 = freq_to_y_unclamped(st.view.recon_freq_min_hz);
+                let roi_f1 = freq_to_y_unclamped(st.view.recon_freq_max_hz);
+
+                if roi_t1 > roi_t0 && roi_f1 > roi_f0 {
+                    let stroke_px = 3;
+
+                    let roi_left = w.x() + (roi_t0 * w.w() as f64) as i32;
+                    let roi_right = w.x() + (roi_t1 * w.w() as f64) as i32;
+                    let roi_top = w.y() + ((1.0 - roi_f1) * w.h() as f32) as i32;
+                    let roi_bottom = w.y() + ((1.0 - roi_f0) * w.h() as f32) as i32;
+
+                    let vis_left = w.x();
+                    let vis_right = w.x() + w.w();
+                    let vis_top = w.y();
+                    let vis_bottom = w.y() + w.h();
+
+                    let horiz_x0 = roi_left.max(vis_left);
+                    let horiz_x1 = roi_right.min(vis_right);
+                    let vert_y0 = roi_top.max(vis_top);
+                    let vert_y1 = roi_bottom.min(vis_bottom);
+                    let left_edge_visible =
+                        roi_left > vis_left + stroke_px && roi_left <= vis_right;
+                    let right_edge_visible =
+                        roi_right >= vis_left && roi_right < vis_right - stroke_px;
+                    let has_visible_vertical_edge = left_edge_visible || right_edge_visible;
+
+                    fltk::draw::set_draw_color(theme::color(theme::ACCENT_BLUE));
+
+                    // Top edge: entirely outside the ROI, clipped to visible horizontal span.
+                    if roi_top > vis_top + stroke_px
+                        && roi_top <= vis_bottom
+                        && horiz_x1 > horiz_x0
+                        && has_visible_vertical_edge
+                    {
+                        fltk::draw::draw_rectf(
+                            (horiz_x0 - stroke_px).max(vis_left),
+                            roi_top - stroke_px,
+                            ((horiz_x1 + stroke_px).min(vis_right)
+                                - (horiz_x0 - stroke_px).max(vis_left))
+                            .max(1),
+                            stroke_px,
+                        );
+                    }
+
+                    // Bottom edge: entirely outside the ROI.
+                    if roi_bottom >= vis_top
+                        && roi_bottom < vis_bottom - stroke_px
+                        && horiz_x1 > horiz_x0
+                        && has_visible_vertical_edge
+                    {
+                        fltk::draw::draw_rectf(
+                            (horiz_x0 - stroke_px).max(vis_left),
+                            roi_bottom,
+                            ((horiz_x1 + stroke_px).min(vis_right)
+                                - (horiz_x0 - stroke_px).max(vis_left))
+                            .max(1),
+                            stroke_px,
+                        );
+                    }
+
+                    // Left edge: only draw if the actual left ROI boundary is visible.
+                    if left_edge_visible && vert_y1 > vert_y0 {
+                        fltk::draw::draw_rectf(
+                            roi_left - stroke_px,
+                            (vert_y0 - stroke_px).max(vis_top),
+                            stroke_px,
+                            ((vert_y1 + stroke_px).min(vis_bottom)
+                                - (vert_y0 - stroke_px).max(vis_top))
+                            .max(1),
+                        );
+                    }
+
+                    // Right edge: only draw if the actual right ROI boundary is visible.
+                    if right_edge_visible && vert_y1 > vert_y0 {
+                        fltk::draw::draw_rectf(
+                            roi_right,
+                            (vert_y0 - stroke_px).max(vis_top),
+                            stroke_px,
+                            ((vert_y1 + stroke_px).min(vis_bottom)
+                                - (vert_y0 - stroke_px).max(vis_top))
+                            .max(1),
+                        );
+                    }
+                }
+
                 if let Some(cx) = cursor_cx {
                     fltk::draw::set_draw_color(theme::color(theme::ACCENT_RED));
                     fltk::draw::draw_line(cx, w.y(), cx, w.y() + w.h());
@@ -140,11 +413,28 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 let time = st.view.x_to_time(tx_norm);
                 let freq = st.view.y_to_freq(ty_norm);
 
-                if st.spectrogram.is_none() {
+                let in_time_roi =
+                    time >= st.fft_params.start_seconds() && time <= st.fft_params.stop_seconds();
+                let in_freq_roi =
+                    freq >= st.view.recon_freq_min_hz && freq <= st.view.recon_freq_max_hz;
+                let in_roi = in_time_roi && in_freq_roi;
+
+                let hover_spec = if in_roi {
+                    st.focus_spectrogram
+                        .as_ref()
+                        .or(st.spectrogram.as_ref())
+                        .or(st.overview_spectrogram.as_ref())
+                } else if st.render_full_file_outside_roi {
+                    st.overview_spectrogram.as_ref().or(st.spectrogram.as_ref())
+                } else {
+                    None
+                };
+
+                if hover_spec.is_none() {
                     dbg_log!(debug_flags::CURSOR_DBG, "Cursor", "No spectrogram loaded");
                 }
 
-                if let Some(ref spec) = st.spectrogram {
+                if let Some(spec) = hover_spec {
                     let frame_idx_opt = spec.frame_at_time(time);
                     if frame_idx_opt.is_none() {
                         dbg_log!(
@@ -422,7 +712,7 @@ fn setup_freq_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             );
             return;
         };
-        if st.spectrogram.is_none() {
+        if st.active_spectrogram().is_none() {
             return;
         }
 
@@ -488,16 +778,20 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             );
             return;
         };
-        if st.spectrogram.is_none() {
+        if st.active_spectrogram().is_none() {
             return;
         }
 
         fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
         fltk::draw::set_font(Font::Helvetica, 9);
 
+        let left_gutter = crate::layout::SPEC_LEFT_GUTTER_W;
+        let right_gutter = crate::layout::SPEC_RIGHT_GUTTER_W;
+        let drawable_w = (w.w() - left_gutter - right_gutter).max(1);
+
         // Smart adaptive time labels: target ~1 label per 80px, find a nice step
         let range = st.view.visible_time_range();
-        let target_labels = ((w.w() - 50) as f64 / 80.0).max(2.0);
+        let target_labels = (drawable_w as f64 / 80.0).max(2.0);
         let raw_step = range / target_labels;
         // Snap to nice step values
         let nice_steps = [
@@ -513,7 +807,7 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let mut t = (st.view.time_min_sec / step).ceil() * step;
         while t <= st.view.time_max_sec {
             let x_norm = st.view.time_to_x(t);
-            let px = w.x() + 50 + ((x_norm * (w.w() - 50) as f64) as i32); // offset for freq axis
+            let px = w.x() + left_gutter + ((x_norm * drawable_w as f64) as i32);
             let label = if step < 0.01 {
                 format!("{:.3}s", t)
             } else if step < 0.1 {
@@ -539,17 +833,70 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         fltk::draw::set_draw_color(fltk::enums::Color::from_hex(0xf9e2af)); // accent yellow
         let t_start = st.view.time_to_x(proc_start);
         if t_start > 0.01 && t_start < 0.99 {
-            let px = w.x() + 50 + ((t_start * (w.w() - 50) as f64) as i32);
+            let px = w.x() + left_gutter + ((t_start * drawable_w as f64) as i32);
             fltk::draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
             fltk::draw::draw_line(px, w.y(), px, w.y() + w.h());
             fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
         }
         let t_stop = st.view.time_to_x(proc_stop);
         if t_stop > 0.01 && t_stop < 0.99 {
-            let px = w.x() + 50 + ((t_stop * (w.w() - 50) as f64) as i32);
+            let px = w.x() + left_gutter + ((t_stop * drawable_w as f64) as i32);
             fltk::draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
             fltk::draw::draw_line(px, w.y(), px, w.y() + w.h());
             fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
+        }
+    });
+}
+
+// ── ROI-aware scrubber draw ──
+fn setup_scrubber_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+    let state = state.clone();
+
+    let mut scrub_slider = widgets.scrub_slider.clone();
+    scrub_slider.draw(move |w| {
+        fltk::draw::set_draw_color(theme::color(theme::BG_WIDGET));
+        fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
+
+        let Ok(st) = state.try_borrow() else {
+            return;
+        };
+
+        let track_y = w.y() + w.h() / 2 - 2;
+        let track_h = 4;
+
+        // Base full-width track
+        fltk::draw::set_draw_color(theme::color(theme::BG_PANEL));
+        fltk::draw::draw_rectf(w.x(), track_y, w.w(), track_h);
+
+        let roi_start = st.fft_params.start_seconds();
+        let roi_stop = st.fft_params.stop_seconds();
+        let roi_vis_start = st.view.time_min_sec.max(roi_start);
+        let roi_vis_stop = st.view.time_max_sec.min(roi_stop);
+
+        if roi_vis_stop > roi_vis_start {
+            let x0 = w.x() + (st.view.time_to_x(roi_vis_start) * w.w() as f64) as i32;
+            let x1 = w.x() + (st.view.time_to_x(roi_vis_stop) * w.w() as f64) as i32;
+            let active_w = (x1 - x0).max(1);
+
+            fltk::draw::set_draw_color(theme::color(theme::ACCENT_BLUE));
+            fltk::draw::draw_rectf(x0, track_y, active_w, track_h);
+
+            // Thumb only appears when the playback position is both inside the ROI
+            // and inside the current viewport.
+            if st.audio_player.has_audio() {
+                let local_seconds = st.audio_player.get_position_samples() as f64
+                    / st.transport.sample_rate.max(1) as f64;
+                let global_seconds = st.recon_start_seconds() + local_seconds;
+                if global_seconds >= roi_start
+                    && global_seconds <= roi_stop
+                    && global_seconds >= st.view.time_min_sec
+                    && global_seconds <= st.view.time_max_sec
+                {
+                    let cx = w.x() + (st.view.time_to_x(global_seconds) * w.w() as f64) as i32;
+                    fltk::draw::set_draw_color(theme::color(theme::ACCENT_RED));
+                    fltk::draw::draw_rectf(cx - 2, w.y(), 4, w.h());
+                }
+            }
         }
     });
 }

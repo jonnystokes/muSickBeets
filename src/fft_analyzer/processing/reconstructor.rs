@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use realfft::RealFftPlanner;
@@ -60,7 +61,7 @@ impl Reconstructor {
 
         if num_frames == 0 {
             return AudioData {
-                samples: vec![],
+                samples: Arc::new(vec![]),
                 sample_rate: params.sample_rate,
                 duration_seconds: 0.0,
             };
@@ -193,7 +194,7 @@ impl Reconstructor {
         let duration_seconds = output.len() as f64 / params.sample_rate as f64;
 
         AudioData {
-            samples: output,
+            samples: Arc::new(output),
             sample_rate: params.sample_rate,
             duration_seconds,
         }

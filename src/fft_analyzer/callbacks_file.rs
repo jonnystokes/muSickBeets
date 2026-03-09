@@ -4,7 +4,7 @@ use std::sync::{mpsc, Arc};
 
 use fltk::{app, dialog, prelude::*};
 
-use crate::app_state::{update_status_bar, AppState, SharedCallbacks, WorkerMessage};
+use crate::app_state::{update_status_bar, AppState, FftStage, SharedCallbacks, WorkerMessage};
 use crate::csv_export;
 use crate::data::{AudioData, TimeUnit, WindowType};
 use crate::debug_flags;
@@ -28,6 +28,52 @@ pub fn setup_file_callbacks(
     setup_save_fft_callback(widgets, state, tx, shared);
     setup_load_fft_callback(widgets, state, tx, shared, win);
     setup_save_wav_callback(widgets, state, tx, shared);
+}
+
+pub fn spawn_fft_stage(
+    state: &Rc<RefCell<AppState>>,
+    tx: &mpsc::Sender<WorkerMessage>,
+    audio: Arc<AudioData>,
+    params: crate::data::FftParams,
+    stage: FftStage,
+) {
+    let cancel = state.borrow_mut().new_cancel_flag();
+
+    let progress = state.borrow().progress_counter.clone();
+    progress.store(0, std::sync::atomic::Ordering::Relaxed);
+    {
+        let total_active = params.stop_sample.saturating_sub(params.start_sample);
+        state.borrow_mut().progress_total = params.num_segments(total_active);
+    }
+
+    let tx_clone = tx.clone();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            FftEngine::process(&audio, &params, &cancel, Some(&progress))
+        }));
+        match result {
+            Ok(spectrogram) => {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    tx_clone
+                        .send(WorkerMessage::Cancelled(stage.label().to_string()))
+                        .ok();
+                } else {
+                    tx_clone
+                        .send(WorkerMessage::FftStageComplete(stage, spectrogram))
+                        .ok();
+                }
+            }
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                app_log!("FFT thread", "PANIC: {}", msg);
+                tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
+            }
+        }
+    });
 }
 
 // ── Open Audio File ──
@@ -177,12 +223,12 @@ fn setup_save_fft_callback(
         // The export function filters by time range internally.
         let export_data = {
             let st = state.borrow();
-            if st.spectrogram.is_none() {
+            if st.active_spectrogram().is_none() {
                 dialog::alert_default("No FFT data to save!");
                 return;
             }
 
-            let spec = st.spectrogram.clone().unwrap();
+            let spec = st.active_spectrogram().unwrap();
             let proc_time_min = st.fft_params.start_seconds();
             let proc_time_max = st.fft_params.stop_seconds();
             let num_frames = spec
@@ -429,8 +475,13 @@ pub fn handle_csv_load_result(
             st.view.recon_freq_max_hz = fmax;
         }
 
-        st.spectrogram = Some(Arc::new(imported_spec));
-        st.spec_renderer.invalidate();
+        let imported_spec = Arc::new(imported_spec);
+        st.spectrogram = Some(imported_spec.clone());
+        st.overview_spectrogram = None;
+        st.overview_spec_params = None;
+        st.focus_spectrogram = Some(imported_spec);
+        st.focus_spec_params = Some(imported_params.clone());
+        st.invalidate_all_spectrogram_renderers();
         st.wave_renderer.invalidate();
         st.recon_start_sample = imported_params.start_sample;
         st.is_processing = true;
@@ -438,7 +489,7 @@ pub fn handle_csv_load_result(
         let cancel = st.new_cancel_flag();
 
         // Prepare reconstruction data
-        let spec = st.spectrogram.clone().unwrap();
+        let spec = st.active_spectrogram().unwrap();
         let params = st.fft_params.clone();
         let view = st.view.clone();
         (spec, params, view, spec_min_time, spec_max_time, cancel)
@@ -647,7 +698,7 @@ pub fn setup_rerun_callback(
         {
             let mut st = state.borrow_mut();
             has_audio = st.audio_data.is_some();
-            has_spectrogram = st.spectrogram.is_some();
+            has_spectrogram = st.active_spectrogram().is_some();
             if !has_audio && !has_spectrogram {
                 return; // Nothing to process
             }
@@ -750,20 +801,16 @@ pub fn setup_rerun_callback(
             update_status_bar(&mut status_bar, &prep_status);
             app::awake();
 
-            // FFT processes the FULL file; sidebar time range is for reconstruction only
-            let (audio, params, cancel) = {
-                let mut st = state.borrow_mut();
-                let cancel = st.new_cancel_flag();
-                let mut fft_params = st.fft_params.clone();
-                // Override start/stop to process full file (sample-based)
-                fft_params.start_sample = 0;
-                fft_params.stop_sample = st.audio_data.as_ref().unwrap().num_samples();
-                (st.audio_data.clone().unwrap(), fft_params, cancel)
+            let (audio, overview_params) = {
+                let st = state.borrow();
+                let total_samples = st.audio_data.as_ref().unwrap().num_samples();
+                let overview_params = st.overview_params_for_audio(total_samples);
+                (st.audio_data.clone().unwrap(), overview_params)
             };
 
             // Warn if zero-padded FFT size is very large (memory estimate).
             // Each rayon thread allocates ~2 buffers of n_fft f32s.
-            let n_fft = params.n_fft_padded();
+            let n_fft = overview_params.n_fft_padded();
             let per_thread_bytes = n_fft * 4 * 2; // input + output buffers
             let est_cores = rayon::current_num_threads();
             let est_peak_mb = (per_thread_bytes * est_cores) / (1024 * 1024);
@@ -772,7 +819,7 @@ pub fn setup_rerun_callback(
                     "FFT",
                     "Warning: large zero-padded FFT (n_fft={}, {}x pad). Estimated peak memory: ~{} MB across {} threads.",
                     n_fft,
-                    params.zero_pad_factor,
+                    overview_params.zero_pad_factor,
                     est_peak_mb,
                     est_cores
                 );
@@ -785,58 +832,20 @@ pub fn setup_rerun_callback(
             // sees immediate feedback even if the spawn itself is delayed.
             let processing_status = {
                 let mut st = state.borrow_mut();
-                st.status.set_activity("Processing FFT (full file)...");
-                st.status.start_timing("FFT");
+                st.status.set_activity(FftStage::Overview.activity_text());
+                st.status.start_timing(FftStage::Overview.label());
                 dbg_log!(
                     debug_flags::FFT_DBG,
                     "FFT",
                     "Launching FFT worker (n_fft={}, threads={} ) @ {}",
-                    params.n_fft_padded(),
+                    overview_params.n_fft_padded(),
                     rayon::current_num_threads(),
                     crate::debug_flags::instant_since_start(std::time::Instant::now())
                 );
                 st.status.render()
             };
             update_status_bar(&mut status_bar, &processing_status);
-
-            let tx_clone = tx.clone();
-            let progress = state.borrow().progress_counter.clone();
-            progress.store(0, std::sync::atomic::Ordering::Relaxed);
-            {
-                let total_active = params.stop_sample.saturating_sub(params.start_sample);
-                state.borrow_mut().progress_total = params.num_segments(total_active);
-            }
-            std::thread::spawn(move || {
-                dbg_log!(
-                    debug_flags::FFT_DBG,
-                    "FFT",
-                    "Worker thread started @ {}",
-                    crate::debug_flags::instant_since_start(std::time::Instant::now())
-                );
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    FftEngine::process(&audio, &params, &cancel, Some(&progress))
-                }));
-                match result {
-                    Ok(spectrogram) => {
-                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            tx_clone
-                                .send(WorkerMessage::Cancelled("FFT".to_string()))
-                                .ok();
-                        } else {
-                            tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
-                        }
-                    }
-                    Err(panic) => {
-                        let msg = panic
-                            .downcast_ref::<String>()
-                            .cloned()
-                            .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                            .unwrap_or_else(|| "unknown panic".to_string());
-                        app_log!("FFT thread", "PANIC: {}", msg);
-                        tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-                    }
-                }
-            });
+            spawn_fft_stage(&state, &tx, audio, overview_params, FftStage::Overview);
         } else {
             // ── Reconstruction-only path: spectrogram loaded from CSV, no source audio ──
             // Skip FFT, go straight to reconstruction with updated recon params.
@@ -849,7 +858,7 @@ pub fn setup_rerun_callback(
                 st.status.set_activity("Reconstructing...");
                 let cancel = st.new_cancel_flag();
 
-                let spec = st.spectrogram.clone().unwrap();
+                let spec = st.active_spectrogram().unwrap();
                 let params = st.fft_params.clone();
                 let view = st.view.clone();
                 let proc_time_min = params.start_seconds();

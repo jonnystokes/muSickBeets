@@ -34,7 +34,7 @@ https://rustup.rs
 ### FFT Analyzer
 - Dark-themed cockpit UI built with FLTK
 - Real-time spectrogram visualization with multiple colormaps
-- Configurable FFT parameters (window size, hop length, window type)
+- Configurable FFT parameters (window size, overlap, window type, zero padding)
 - Frequency range and bin count filtering on the spectrogram display
 - Audio reconstruction from selected frequency ranges
 - CSV export/import of FFT data for external analysis

@@ -17,6 +17,14 @@ pub struct Settings {
     pub target_bins_per_segment: usize,
     pub last_edited_field: String, // "Overlap", "SegmentsPerActive", "BinsPerSegment"
 
+    // ── Overview FFT (whole-file coarse/default layer) ──
+    pub overview_window_length: usize,
+    pub overview_overlap_percent: f32,
+    pub overview_window_type: String, // "Hann", "Hamming", "Blackman", "Kaiser"
+    pub overview_kaiser_beta: f32,
+    pub overview_center_pad: bool,
+    pub overview_zero_pad_factor: usize,
+
     // ── View: Frequency ──
     pub view_freq_min_hz: f32,
     pub view_freq_max_hz: f32,
@@ -60,6 +68,7 @@ pub struct Settings {
     // ── Tooltips ──
     pub show_tooltips: bool,
     pub lock_to_active: bool,
+    pub render_full_file_outside_roi: bool,
 
     // ── Playback ──
     pub repeat_playback: bool,
@@ -93,6 +102,14 @@ impl Default for Settings {
             target_segments_per_active: 0,
             target_bins_per_segment: 0,
             last_edited_field: "Overlap".to_string(),
+
+            // Overview FFT
+            overview_window_length: 8192,
+            overview_overlap_percent: 75.0,
+            overview_window_type: "Hann".to_string(),
+            overview_kaiser_beta: 8.6,
+            overview_center_pad: false,
+            overview_zero_pad_factor: 1,
 
             // View: Frequency
             view_freq_min_hz: 100.0,
@@ -137,6 +154,7 @@ impl Default for Settings {
             // Tooltips
             show_tooltips: true,
             lock_to_active: false,
+            render_full_file_outside_roi: true,
 
             // Playback
             repeat_playback: false,
@@ -225,6 +243,19 @@ impl Settings {
             crate::data::LastEditedField::SegmentsPerActive => "SegmentsPerActive".to_string(),
             crate::data::LastEditedField::BinsPerSegment => "BinsPerSegment".to_string(),
         };
+        cfg.overview_window_length = st.overview_fft_defaults.window_length;
+        cfg.overview_overlap_percent = st.overview_fft_defaults.overlap_percent;
+        cfg.overview_window_type = match st.overview_fft_defaults.window_type {
+            crate::data::WindowType::Hann => "Hann".to_string(),
+            crate::data::WindowType::Hamming => "Hamming".to_string(),
+            crate::data::WindowType::Blackman => "Blackman".to_string(),
+            crate::data::WindowType::Kaiser(b) => {
+                cfg.overview_kaiser_beta = b;
+                "Kaiser".to_string()
+            }
+        };
+        cfg.overview_center_pad = st.overview_fft_defaults.use_center;
+        cfg.overview_zero_pad_factor = st.overview_fft_defaults.zero_pad_factor;
 
         // View
         cfg.view_freq_min_hz = st.view.freq_min_hz;
@@ -259,6 +290,7 @@ impl Settings {
 
         // UI
         cfg.lock_to_active = st.lock_to_active;
+        cfg.render_full_file_outside_roi = st.render_full_file_outside_roi;
 
         // Custom Gradient
         cfg.custom_gradient = serialize_gradient(&st.view.custom_gradient);
@@ -300,6 +332,32 @@ impl Settings {
             self.target_bins_per_segment
         ));
         s.push_str(&format!("last_edited_field = {}\n", self.last_edited_field));
+        s.push('\n');
+
+        s.push_str("[OverviewFFT]\n");
+        s.push_str("# Whole-file background layer defaults used for the fast overview spectrogram.\n");
+        s.push_str("# These are moderate/faster settings used outside the focused ROI.\n");
+        s.push_str("# overview_window_length: even integer >= 4\n");
+        s.push_str(&format!("overview_window_length = {}\n", self.overview_window_length));
+        s.push_str("# overview_overlap_percent: 0..99 (75 is a good fast default)\n");
+        s.push_str(&format!(
+            "overview_overlap_percent = {}\n",
+            self.overview_overlap_percent
+        ));
+        s.push_str("# overview_window_type: Hann, Hamming, Blackman, Kaiser\n");
+        s.push_str(&format!("overview_window_type = {}\n", self.overview_window_type));
+        s.push_str("# overview_kaiser_beta: only used when overview_window_type = Kaiser\n");
+        s.push_str(&format!(
+            "overview_kaiser_beta = {}\n",
+            self.overview_kaiser_beta
+        ));
+        s.push_str("# overview_center_pad: true/false\n");
+        s.push_str(&format!("overview_center_pad = {}\n", self.overview_center_pad));
+        s.push_str("# overview_zero_pad_factor: 1, 2, 4, or 8\n");
+        s.push_str(&format!(
+            "overview_zero_pad_factor = {}\n",
+            self.overview_zero_pad_factor
+        ));
         s.push('\n');
 
         s.push_str("[View]\n");
@@ -362,6 +420,13 @@ impl Settings {
         s.push_str("[UI]\n");
         s.push_str(&format!("show_tooltips = {}\n", self.show_tooltips));
         s.push_str(&format!("lock_to_active = {}\n", self.lock_to_active));
+        s.push_str(
+            "# render_full_file_outside_roi: when true, show dimmed full-file content outside the ROI\n",
+        );
+        s.push_str(&format!(
+            "render_full_file_outside_roi = {}\n",
+            self.render_full_file_outside_roi
+        ));
         s.push_str(&format!("repeat_playback = {}\n", self.repeat_playback));
         s.push('\n');
 
@@ -441,6 +506,32 @@ impl Settings {
         }
         if let Some(v) = map.get("last_edited_field") {
             self.last_edited_field = v.clone();
+        }
+        if let Some(v) = map.get("overview_window_length")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_window_length = n;
+        }
+        if let Some(v) = map.get("overview_overlap_percent")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_overlap_percent = n;
+        }
+        if let Some(v) = map.get("overview_window_type") {
+            self.overview_window_type = v.clone();
+        }
+        if let Some(v) = map.get("overview_kaiser_beta")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_kaiser_beta = n;
+        }
+        if let Some(v) = map.get("overview_center_pad") {
+            self.overview_center_pad = v == "true";
+        }
+        if let Some(v) = map.get("overview_zero_pad_factor")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_zero_pad_factor = n;
         }
 
         // View
@@ -579,6 +670,9 @@ impl Settings {
         }
         if let Some(v) = map.get("lock_to_active") {
             self.lock_to_active = v == "true";
+        }
+        if let Some(v) = map.get("render_full_file_outside_roi") {
+            self.render_full_file_outside_roi = v == "true";
         }
         if let Some(v) = map.get("repeat_playback") {
             self.repeat_playback = v == "true";

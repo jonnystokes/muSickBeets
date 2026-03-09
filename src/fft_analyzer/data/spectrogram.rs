@@ -108,15 +108,27 @@ impl Spectrogram {
         if self.frames.is_empty() || time_seconds.is_nan() {
             return None;
         }
-        let idx = self
-            .frames
-            .binary_search_by(|f| {
-                f.time_seconds
-                    .partial_cmp(&time_seconds)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .unwrap_or_else(|i| i.min(self.frames.len() - 1));
-        Some(idx)
+
+        match self.frames.binary_search_by(|f| {
+            f.time_seconds
+                .partial_cmp(&time_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            Ok(idx) => Some(idx),
+            Err(0) => Some(0),
+            Err(i) if i >= self.frames.len() => Some(self.frames.len() - 1),
+            Err(i) => {
+                let prev = i - 1;
+                let next = i;
+                let d_prev = (self.frames[prev].time_seconds - time_seconds).abs();
+                let d_next = (self.frames[next].time_seconds - time_seconds).abs();
+                if d_prev <= d_next {
+                    Some(prev)
+                } else {
+                    Some(next)
+                }
+            }
+        }
     }
 }
 

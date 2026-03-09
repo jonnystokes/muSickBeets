@@ -191,6 +191,7 @@ fn create_shared_callbacks(
         let mut scrub_slider = widgets.scrub_slider.clone();
         let mut repeat_choice = widgets.repeat_choice.clone();
         let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
+        let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
         Rc::new(RefCell::new(Box::new(move || {
             btn_save_fft.activate();
             input_freq_count.activate();
@@ -202,6 +203,7 @@ fn create_shared_callbacks(
             scrub_slider.activate();
             repeat_choice.activate();
             btn_snap_to_view.activate();
+            check_render_full_outside_roi.activate();
         })))
     };
 
@@ -232,6 +234,7 @@ fn create_shared_callbacks(
         let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
         let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
         let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
+        let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
         Rc::new(RefCell::new(Box::new(move || {
             btn_time_unit.deactivate();
             input_start.deactivate();
@@ -250,6 +253,7 @@ fn create_shared_callbacks(
             input_recon_freq_min.deactivate();
             input_recon_freq_max.deactivate();
             btn_snap_to_view.deactivate();
+            check_render_full_outside_roi.deactivate();
         })))
     };
 
@@ -374,6 +378,7 @@ fn main() {
         st.view.recon_freq_max_hz = cfg.recon_freq_max_hz;
         st.view.recon_freq_count = cfg.recon_freq_count;
         st.lock_to_active = cfg.lock_to_active;
+        st.render_full_file_outside_roi = cfg.render_full_file_outside_roi;
         st.time_zoom_factor = cfg.time_zoom_factor;
         st.freq_zoom_factor = cfg.freq_zoom_factor;
         st.mouse_zoom_factor = cfg.mouse_zoom_factor;
@@ -397,6 +402,17 @@ fn main() {
             "BinsPerSegment" => data::LastEditedField::BinsPerSegment,
             _ => data::LastEditedField::Overlap,
         };
+        st.overview_fft_defaults.window_length = cfg.overview_window_length;
+        st.overview_fft_defaults.overlap_percent = cfg.overview_overlap_percent;
+        st.overview_fft_defaults.window_type = match cfg.overview_window_type.as_str() {
+            "Hamming" => data::WindowType::Hamming,
+            "Blackman" => data::WindowType::Blackman,
+            "Kaiser" => data::WindowType::Kaiser(cfg.overview_kaiser_beta),
+            _ => data::WindowType::Hann,
+        };
+        st.overview_fft_defaults.use_center = cfg.overview_center_pad;
+        st.overview_fft_defaults.zero_pad_factor = cfg.overview_zero_pad_factor;
+        st.overview_fft_defaults.sample_rate = st.fft_params.sample_rate;
         Rc::new(RefCell::new(st))
     };
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
@@ -445,6 +461,10 @@ fn main() {
             _ => 9,
         };
         widgets.seg_preset_choice.clone().set_value(preset_idx);
+        widgets
+            .check_render_full_outside_roi
+            .clone()
+            .set_checked(st.render_full_file_outside_roi);
         widgets
             .slider_overlap
             .clone()

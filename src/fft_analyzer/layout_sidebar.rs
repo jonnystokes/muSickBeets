@@ -60,6 +60,7 @@ pub struct SidebarWidgets {
     pub lbl_info: MultilineOutput,
     pub btn_tooltips: fltk::button::CheckButton,
     pub check_lock_active: fltk::button::CheckButton,
+    pub check_render_full_outside_roi: fltk::button::CheckButton,
     pub btn_home: Button,
     pub btn_save_defaults: Button,
 }
@@ -620,6 +621,17 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     );
     left.fixed(&check_lock_active, 22);
 
+    let mut check_render_full_outside_roi =
+        fltk::button::CheckButton::default().with_label(" Render Full File Outside ROI");
+    check_render_full_outside_roi.set_checked(true);
+    check_render_full_outside_roi.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    check_render_full_outside_roi.set_label_size(10);
+    set_tooltip(
+        &mut check_render_full_outside_roi,
+        "When checked, content outside the ROI is shown dimmed using the whole-file overview.\nWhen unchecked, the overview is still built and cached, but hidden outside the ROI until re-enabled.",
+    );
+    left.fixed(&check_render_full_outside_roi, 22);
+
     // Home button
     let mut btn_home = Button::default().with_label("Home");
     btn_home.set_color(theme::color(theme::BG_WIDGET));
@@ -638,7 +650,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     btn_save_defaults.set_label_size(11);
     set_tooltip(
         &mut btn_save_defaults,
-        "Save current settings to muSickBeets.ini.\nThese become the defaults on next launch.",
+        "Save current settings to settings.ini.\nThese become the defaults on next launch.",
     );
     left.fixed(&btn_save_defaults, 25);
 
@@ -685,6 +697,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         lbl_info,
         btn_tooltips,
         check_lock_active,
+        check_render_full_outside_roi,
         btn_home,
         btn_save_defaults,
     }

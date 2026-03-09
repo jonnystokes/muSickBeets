@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct AudioData {
-    pub samples: Vec<f32>,
+    pub samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
     pub duration_seconds: f64,
 }
@@ -62,7 +63,7 @@ impl AudioData {
         let duration_seconds = mono_samples.len() as f64 / sample_rate as f64;
 
         Ok(AudioData {
-            samples: mono_samples,
+            samples: Arc::new(mono_samples),
             sample_rate,
             duration_seconds,
         })
@@ -78,7 +79,7 @@ impl AudioData {
         let mut writer = WavWriter::create(&path, spec)
             .with_context(|| format!("Failed to create WAV file: {:?}", path.as_ref()))?;
 
-        for &sample in &self.samples {
+        for &sample in self.samples.iter() {
             let s = (sample * i16::MAX as f32).clamp(i16::MIN as f32, i16::MAX as f32) as i16;
             writer.write_sample(s)?;
         }
@@ -112,7 +113,7 @@ impl AudioData {
         }
 
         let gain = target_peak / peak;
-        for s in &mut self.samples {
+        for s in Arc::make_mut(&mut self.samples).iter_mut() {
             *s *= gain;
         }
         gain

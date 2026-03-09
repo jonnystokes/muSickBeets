@@ -14,35 +14,40 @@ This file is for the **main agent**. Historical reference material is tracked se
 
 ## Sub-Agent Launch Policy
 
-**Before launching ANY sub-agent (Task tool), ask the user for confirmation.**
+Use sub-agents proactively when they reduce context bloat or improve quality.
+
+If the user has already given standing permission in the current conversation, repeated confirmation is not needed.
 
 For small, local changes affecting only a few files, the main agent may work directly.
 
-For tasks that require broad reading across many files or exploring unfamiliar areas, the main agent should ask for confirmation and then use a sub-agent instead of reading the whole codebase itself.
+For tasks that require broad reading across many files, exploring unfamiliar areas, comparing design options, auditing tests, reviewing performance/risk, or reconstituting scoped context, prefer sub-agents over pulling everything into the main context.
 
-**Required flow:**
-1. Ask the user whether to launch a sub-agent for the task.
-2. If the user says no, do the work yourself instead.
-3. If the user says yes, begin the sub-agent prompt with the preamble from AGENTS.md.
-4. Never batch-launch multiple sub-agents without asking first.
-5. Sub-agents must follow the reading and prompt rules in AGENTS.md.
+**Working rules:**
+1. Begin every sub-agent prompt with the preamble from `AGENTS.md`.
+2. Research/review sub-agents may run in parallel when they are not editing files.
+3. If any sub-agent is writing code, keep one writer per file set.
+4. Use sub-agents well for: architecture tracing, data model mapping, test audits, dead-code/duplication hunts, build/deployment impact review, alternative-solution generation, migration slicing, debugging by competing hypotheses, risk checking, performance review.
+5. A strong default pattern is: architect/research -> optional parallel reviewers -> one implementer -> one reviewer/test pass.
+6. Sub-agents must follow the reading and prompt rules in `AGENTS.md`.
 
 ---
 
 ## Active Work
 
-- Idle -- awaiting the next user request.
+- In progress: single-frame FFT / reconstruction correctness research and bug-fix prep.
 
----
+### Current Worklist
 
-## Backburner
-
-- Re-run timing validation only if a future regression is reported (instrumentation is in place for quick checks).
-- Monitor resident memory during large FFT sessions; consider an optional "discard spectrogram" control if RAM pressure becomes a recurring issue.
+1. Write a consolidated research/roadmap note for single-frame FFT behavior and the future instrument workflow.
+2. Instrument one-frame reconstruction math (`num_frames`, output length, `window_sum`, zeroed spans).
+3. Audit center pad on/off semantics end-to-end and verify they match intended STFT behavior.
+4. Fix centered one-frame reconstruction length/cropping correctness.
+5. Replace or redesign the aggressive `window_sum` edge-zeroing rule.
+6. Measure blank-edge size per window type and document which settings actually control it.
+7. Design a future dedicated single-frame export mode for the later instrument binary.
 
 ---
 
 ## Key Architecture Notes
 
 - Refer to `map.md` for architecture summaries. This section stays empty so the map remains the single source of truth.
-

@@ -18,7 +18,9 @@ The window is split into two regions:
 
 - **Left sidebar** -- All parameter controls, grouped into sections (File, Analysis, Display, Reconstruction, Info)
 - **Right area** -- Waveform display (top), spectrogram with frequency axis (center), time axis (bottom), transport bar (bottom)
-- **Status bars** -- Top bar for messages/warnings, bottom bar for timing and memory info
+- **Status bars** -- Top bar for messages/warnings, bottom bar for activity, progress, recent timings, and memory info
+
+The bottom status bar auto-expands if its text wraps onto multiple lines.
 
 ---
 
@@ -26,7 +28,7 @@ The window is split into two regions:
 
 | Shortcut | Action |
 |----------|--------|
-| `Spacebar` | Recompute FFT + reconstruction with current parameters |
+| `Spacebar` | Recompute FFT + reconstruction, or cancel the current cancelable operation |
 | `Ctrl+O` | Open WAV file |
 | `Ctrl+S` | Save FFT data to CSV |
 | `Ctrl+L` | Load FFT data from CSV |
@@ -34,6 +36,8 @@ The window is split into two regions:
 | `Ctrl+Q` | Quit |
 
 The **Spacebar** is the primary trigger for recomputation. It is intercepted globally -- pressing it on any widget (buttons, sliders, dropdowns) will trigger a recompute instead of activating that widget. Text input fields are the one exception: spacebar is blocked there too (spaces are not valid in numeric fields).
+
+When the analyzer is in a cancelable phase (FFT or reconstruction), the rerun button changes to **Cancel (Space)** and pressing Spacebar cancels the in-flight operation instead of starting a second one.
 
 ---
 
@@ -50,7 +54,7 @@ The **Spacebar** is the primary trigger for recomputation. It is intercepted glo
 | **Click / Drag** | Seek playback position |
 | **Hover** | Shows frequency, dB, and time readout below the spectrogram |
 
-The `Swap Zoom Axes` setting in `muSickBeets.ini` swaps which axis Alt vs Alt+Ctrl zooms.
+The `Swap Zoom Axes` setting in `settings.ini` swaps which axis Alt vs Alt+Ctrl zooms.
 
 Pan and zoom step sizes are 15% of the visible range per scroll tick. Zoom factors are configurable in settings (default: 1.2x per scroll tick for mouse, 1.5x per click for buttons).
 
@@ -165,9 +169,16 @@ The analyzer can reconstruct audio from the spectrogram using inverse FFT with o
 
 ### Active Region
 
-The spectrogram always processes the **full file** for FFT, but reconstruction uses the start/stop time range you set in the Analysis section. The spectrogram dims bins outside the reconstruction's frequency range to visually indicate which content will be included.
+The spectrogram now uses two analysis layers:
+
+- a **whole-file overview** rendered with moderate default FFT settings
+- a **focused ROI layer** rendered with the current user FFT settings
+
+The ROI is defined by the Analysis Start/Stop range and the Reconstruction Freq Min/Max range. Outside the ROI, the full-file overview can be shown dimmed; inside the ROI, the focused layer is overlaid at higher quality.
 
 Yellow dashed lines on the frequency and time axes mark the reconstruction boundaries.
+
+During FFT and reconstruction, the status bar shows live per-frame progress and percentage updates.
 
 ### Lock to Active
 
@@ -195,23 +206,31 @@ Playback cursor is shown as a vertical line on both the spectrogram and waveform
 
 Loads a WAV file (8/16/24/32-bit PCM or 32-bit float, any sample rate, mono or stereo). Stereo files are automatically downmixed to mono. If normalization is enabled (default), the audio is normalized to 97% peak.
 
+Audio loading runs on a background thread. The analyzer builds the whole-file overview first, then computes the focused ROI layer. The rerun button switches to **Busy...** during the non-cancelable load phase, then to **Cancel (Space)** once FFT processing begins.
+
 ### Save FFT Data (`Ctrl+S`)
 
 Exports the current spectrogram to CSV format with metadata headers (#sample_rate, #window_length, #overlap_percent, etc.) followed by one row per FFT frame. Can be loaded later to skip recomputation.
+
+The status bar keeps the most recent FFT save time as a named timing entry.
 
 ### Load FFT Data (`Ctrl+L`)
 
 Imports a previously saved FFT CSV. Restores the spectrogram, parameters, and viewport state, then runs reconstruction automatically.
 
+CSV import runs on a background thread so the UI stays responsive during file parsing.
+
 ### Export WAV (`Ctrl+E`)
 
 Saves the reconstructed audio as a 16-bit PCM WAV file.
 
+The status bar keeps the most recent WAV save time as a named timing entry.
+
 ---
 
-## Settings (muSickBeets.ini)
+## Settings (`settings.ini`)
 
-All UI state is persisted to `muSickBeets.ini` via the **Save as Default** button. Settings include:
+All UI state is persisted to `settings.ini` via the **Save as Default** button. Settings include:
 
 - Analysis parameters (window size, overlap, window type, zero-pad, solver targets)
 - Display parameters (colormap, threshold, ceiling, brightness, gamma, freq scale)
@@ -224,6 +243,33 @@ All UI state is persisted to `muSickBeets.ini` via the **Save as Default** butto
 - Tooltip visibility, lock-to-active state, repeat playback
 
 Settings are loaded automatically on startup. If the INI file is missing or corrupt, sensible defaults are used.
+
+---
+
+## Status Bar Behavior
+
+The bottom status bar has three conceptual regions:
+
+- **First slot** -- what the program is doing right now (`Ready`, `Loading FFT data...`, `Processing FFT...`, `Reconstructing...`, etc.)
+- **Middle slots** -- recent timed operations, newest first (`FFT`, `Reconstruction`, `Audio load`, `FFT load`, `FFT save`, `WAV save`)
+- **Last slot** -- current memory usage
+
+Examples:
+
+- `Ready | FFT: 2.45s | Reconstruction: 5.52s | Memory: 499 MB`
+- `Reconstructing... (565/2176 frames, 25%) | FFT: 51.33s | Memory: 972 MB`
+
+If the text becomes too wide, the status bar wraps and grows taller automatically.
+
+---
+
+## Processing Lock / Button States
+
+During long-running operations, relevant controls are temporarily disabled so the UI state stays consistent.
+
+- **Cancelable work** (FFT, reconstruction): rerun button becomes **Cancel (Space)**
+- **Non-cancelable work** (audio load, FFT CSV load, file export): rerun button becomes **Busy...** and is disabled
+- When the operation finishes, the controls are restored automatically
 
 ---
 
@@ -271,4 +317,5 @@ apt-get update && apt-get install -y \
 
 - Press **Spacebar** anywhere in the window to recompute
 - The "Reconstruct / Rerun FFT" button also works
-- If the status shows "Processing...", wait for it to finish -- re-entry is blocked during computation
+- If the analyzer is currently doing cancelable work, pressing the rerun button or Spacebar cancels it
+- If the analyzer is currently doing non-cancelable work, the rerun button switches to **Busy...** until that phase finishes

@@ -15,10 +15,10 @@
 
 > COMPACTION RULE: This block MUST be included verbatim in every compaction summary.
 > When launching a sub-agent (Task tool), the main agent MUST:
-> 1. Ask the user for confirmation before launching a sub-agent.
+> 1. Ask the user for confirmation before launching a sub-agent, unless the user has already given standing permission in this conversation to use sub-agents proactively.
 > 2. Begin every sub-agent prompt with: "CONTEXT: You are a sub-agent working on the
 >    muSickBeets project. Read AGENTS.md in the project root before doing anything."
-> 3. Never batch-launch multiple sub-agents without asking the user first.
+> 3. Never batch-launch multiple sub-agents without asking the user first, unless the user has already explicitly approved proactive sub-agent use in this conversation.
 > 4. For small, local changes affecting only a few files, the main agent may work directly.
 > 5. For tasks that require broad reading across many files, the main agent should ask
 >    permission to use a sub-agent instead of reading the whole codebase itself.
@@ -32,11 +32,14 @@
 - Sub-agents only know they are sub-agents because the main agent tells them. If you were told you are a sub-agent, follow the provided prompt (which must include the sentence from the compaction block that points back here) and stay within that scope.
 - Main agents are responsible for relaying these expectations whenever they launch a sub-agent.
 - For small, local changes affecting only a few files, the main agent may work directly.
-- For tasks that require reading many files or exploring unfamiliar areas, the main agent should ask permission and then use a sub-agent instead of reading the whole codebase itself.
+- For tasks that require reading many files, exploring unfamiliar areas, generating alternatives, auditing risks, or reviewing broader impact, the main agent should usually use sub-agents rather than loading everything into one context.
 - Main agents and sub-agents should not read the whole codebase by default. Use `map.md` and `skeleton_map.md` first to decide which files actually matter.
 - Sub-agents start by reading `AGENTS.md` only.
 - If a sub-agent is doing research only, it should use `map.md` and `skeleton_map.md` to choose which source files to inspect and read only what it needs.
 - If a sub-agent will make code changes, it must also read `CODING_RULES.md`, `ai_memory.md`, `map.md`, and `skeleton_map.md` before editing.
+- Sub-agents are especially useful for: architecture exploration, competing solution generation, migration slicing, test audits, dead-code/duplication hunts, risk reviews, performance reviews, and scoped memory refresh.
+- Multiple research/review sub-agents may run in parallel when they are not editing files. If any sub-agent is writing code, only one agent should write a given file set at a time. Avoid overlapping writers.
+- A good default workflow is: architect/research -> optional parallel reviewers -> one implementer -> one reviewer/test pass.
 - **Never commit changes** unless the user explicitly asks you to. The user manages their own git workflow.
 
 ---
@@ -57,6 +60,47 @@ echo $CODEX_CI
 | both empty | both empty | Unknown -- use whatever tools are available |
 
 Regardless of harness, the rules in this file apply.
+
+### Prompt / Harness Hierarchy
+
+This project may be worked on by models from different providers while still
+running inside the same local tool harness. Keep the layers straight:
+
+- **Local harness / downstream consumer:** OpenCode (`opencode.ai`)
+- **Model endpoint:** the actual AI model in use for this session (for example,
+  Claude Opus from Anthropic or a GPT model from OpenAI)
+- **API / upstream prompt layer:** the provider that injects the model-facing
+  system prompt before control reaches the local harness
+
+Example hierarchy when using Claude Opus through this setup:
+
+- **Your Local Harness = OpenCode**
+- **Claude Opus = the actual AI model / endpoint**
+- **Anthropic = the upstream API / service / prompt provider layer**
+
+Example hierarchy when using a GPT model through this setup:
+
+- **Your Local Harness = OpenCode**
+- **GPT model = the actual AI model / endpoint**
+- **OpenAI = the upstream API / service / prompt provider layer**
+
+Important implications:
+
+- Do **not** assume you are using Claude Code just because an upstream prompt
+  contains Claude-specific language.
+- Do **not** assume you are in a native OpenAI harness just because the model is
+  from OpenAI.
+- The local tools available here (LSP, Task/sub-agents, experimental tools,
+  and related workflow features) come from **OpenCode**, not from Anthropic or
+  OpenAI.
+- If repo docs, live tool behavior, and injected prompt text disagree, prefer:
+  **(1) observed tool behavior, (2) repo instructions, (3) upstream prompt
+  assumptions**.
+
+If wording in this project speaks directly to Claude-family models, GPT-family
+models should treat it as applying to them too. If wording speaks directly to
+GPT-family models, Claude-family models should do the same. Both are welcome
+here; correct behavior matters more than vendor branding.
 
 ---
 
@@ -142,4 +186,3 @@ apt-get update && apt-get install -y \
 | **README.md** | Public project overview with setup instructions and screenshots. |
 | **ai_memory.md** | Long-term technical memory and gotchas that supplement the coding rules. |
 | **THIRD_PARTY_LICENSES.md** | License attributions for Sebastian Lague resources and other third-party references. |
-

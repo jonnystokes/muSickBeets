@@ -64,13 +64,20 @@ All completion/error handlers call shared.enable_after_processing() + shared.set
 ```
 struct AppState
   audio_data: Option<Arc<AudioData>>        -- source audio (full file, mono, normalized)
-  spectrogram: Option<Arc<Spectrogram>>     -- current FFT result (full file)
+  spectrogram: Option<Arc<Spectrogram>>     -- active/compat spectrogram reference
+  overview_spectrogram: Option<Arc<Spectrogram>> -- whole-file overview layer
+  focus_spectrogram: Option<Arc<Spectrogram>>    -- ROI high-quality layer
+  overview_spec_params: Option<FftParams>   -- analysis params that produced overview layer
+  focus_spec_params: Option<FftParams>      -- analysis params that produced focus layer
   fft_params: FftParams                     -- analysis parameters
+  overview_fft_defaults: FftParams          -- separate defaults for whole-file overview layer
   view: ViewState                           -- viewport + display + recon params
   transport: TransportState                 -- playback position/state
 
   audio_player: AudioPlayer                 -- miniaudio playback device
   spec_renderer: SpectrogramRenderer        -- cached spectrogram RGB image
+  overview_spec_renderer: SpectrogramRenderer -- cached whole-file overview image
+  focus_spec_renderer: SpectrogramRenderer  -- cached focused ROI image
   wave_renderer: WaveformRenderer           -- cached waveform RGB image
 
   reconstructed_audio: Option<AudioData>    -- inverse-FFT result (time range only)
@@ -98,6 +105,9 @@ struct AppState
 fn new_cancel_flag() -> Arc<AtomicBool>     -- cancels old, creates fresh flag
 fn recon_start_seconds() -> f64             -- recon_start_sample / sample_rate
 fn derived_info() -> DerivedInfo            -- computes segments, bins, hop, freq_res from current params
+fn active_spectrogram() -> Option<Arc<Spectrogram>> -- focus first, then overview, then compat fallback
+fn invalidate_all_spectrogram_renderers()   -- invalidates overview/focus/compat render caches
+fn overview_params_for_audio(total_samples) -> FftParams -- whole-file params from overview defaults
 
 struct TimedEntry                           -- (private) single recorded timing
   key: String                               -- label (e.g. "FFT", "Recon")
@@ -235,12 +245,12 @@ fn compute_active_bins(magnitudes, frequencies, freq_min, freq_max, top_n) -> Ve
 
 ### `audio_data.rs`
 ```
-struct AudioData { samples: Vec<f32>, sample_rate: u32, duration_seconds: f64 }
+struct AudioData { samples: Arc<Vec<f32>>, sample_rate: u32, duration_seconds: f64 }
 
 fn from_wav_file(path) -> Result<Self>      -- supports 8/16/24/32 PCM + float, downmixes to mono
 fn save_wav(path)                           -- 16-bit PCM output
 fn num_samples(), get_slice(start, end), nyquist_freq()
-fn normalize(target_peak) -> f32            -- returns gain applied
+fn normalize(target_peak) -> f32            -- returns gain applied; uses Arc::make_mut if needed
 ```
 
 ### `segmentation_solver.rs`
@@ -370,7 +380,8 @@ Colormaps (all fn(t:f32) -> (u8,u8,u8)):
 ## Layout: `src/fft_analyzer/layout.rs` + `layout_sidebar.rs`
 
 ```
-Constants: WIN_W=1200, WIN_H=1555, MENU_H=25, STATUS_H=25, SIDEBAR_W=215
+Constants: WIN_W=1200, WIN_H=1555, MENU_H=25, STATUS_H=25, SIDEBAR_W=215,
+  SPEC_LEFT_GUTTER_W=50, SPEC_RIGHT_GUTTER_W=20
 Note: status_bar widget is MultilineOutput (supports wrapped status text)
 
 struct Widgets -- 70+ cloneable handles to every UI widget
@@ -378,8 +389,13 @@ struct Widgets -- 70+ cloneable handles to every UI widget
 fn build_ui() -> (Window, Widgets)
   Layout: menu_row (MenuBar + msg_bar) | root Flex row:
     Left: scrollable sidebar column -> delegates to layout_sidebar::build_sidebar()
-    Right: column (waveform 100px | spec_row [freq_axis 50px | spectrogram | freq_zoom+scrollbar 20px]
-           | time_axis 20px | time_zoom_row 20px | scrub_row 18px | transport_row 28px)
+    Right: column (waveform_row [left spacer 50px | waveform | right spacer 20px]
+           | spec_row [freq_axis 50px | spectrogram | freq_zoom+scrollbar 20px]
+           | time_axis_row [left spacer 50px | time_axis | right spacer 20px]
+           | time_zoom_row 20px | scrub_row [left spacer 50px | scrubber | right spacer 20px]
+           | transport_row 28px)
+  Shared spectrogram gutter constants keep waveform/scrubber/time-axis width aligned
+  to the drawable spectrogram width as the window resizes.
   Below root: status_fft (absolute pos) | status_bar (absolute pos)
 
 --- layout_sidebar.rs ---
@@ -559,7 +575,7 @@ fn import_from_csv(path) -> Result<(Spectrogram, FftParams, Option<recon_params>
 ### `src/fft_analyzer/settings.rs`
 ```
 struct Settings -- mirrors AppState fields for INI persistence
-fn load() -> Self                           -- reads muSickBeets.ini or defaults
+fn load() -> Self                           -- reads settings.ini or defaults
 fn save()
 fn from_app_state(state)
 fn apply_to_state(state, widgets)           -- restores all UI state from INI
@@ -601,8 +617,6 @@ fn instant_since_start(Instant) -> String   -- elapsed since program start
 ## Known Issues / Gaps (from full code review)
 
 1. ~~**Duplicate active-bin logic**~~: FIXED -- extracted to shared `compute_active_bins()` in `spectrogram.rs`.
-2. **Sample buffer clone**: `main_fft.rs` clones reconstructed samples into `Arc<Vec<f32>>` for AudioPlayer. Could share allocation if AudioData used Arc internally. (Low impact ~1MB, skipped.)
+2. ~~**Sample buffer clone**~~: FIXED -- `AudioData.samples` is `Arc<Vec<f32>>`, so reconstructed audio and `AudioPlayer` now share the same allocation without cloning.
 3. ~~**Absolute-positioned status bars**~~: FIXED -- `Event::Resize` handler in `setup_spacebar_handler()` repositions them on window resize.
-4. **No source audio playback**: Only reconstructed audio plays. No A/B comparison.
 5. ~~**No progress indication**~~: FIXED -- `progress_counter: Arc<AtomicUsize>` in AppState is shared with FFT/reconstruction workers, which increment it per frame. Poll loop reads the counter and updates status bar with percentage.
-6. **CSV doesn't preserve custom gradient**: Gradient stops aren't serialized in CSV export.

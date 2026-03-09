@@ -12,10 +12,13 @@
 - Worker pattern: `mpsc::channel` for background FFT/reconstruction -> UI
 - SharedCb pattern: `Rc<RefCell<Box<dyn FnMut()>>>` for shared mutable closures
 
-## Viewport vs Processing (Option C)
-- FFT processes FULL file; sidebar Start/Stop = reconstruction time range
-- Viewport zoom/scroll = visual only; "Snap to View" copies bounds to sidebar
-- Time outside processing: grayed out on spectrogram. Freq cutoffs: no graying
+## Viewport vs Processing
+- FFT analysis now uses two layers:
+  - whole-file overview layer with moderate default settings
+  - ROI focus layer using the user's current analysis settings
+- ROI is defined by sidebar Start/Stop and recon min/max frequency
+- Viewport zoom/scroll remains visual; "Snap to View" copies bounds to sidebar
+- Time and frequency outside the ROI can be shown dimmed while the focused ROI is overlaid at higher quality
 - Waveform uses recon_start_time offset for correct viewport alignment
 - Playback position = recon_start_time + audio_player.get_position_seconds()
 - Dirty flag tracks settings changes; Play auto-recomputes if dirty
@@ -38,43 +41,17 @@
 - **CSV load**: Must trigger reconstruction after loading FFT from CSV, otherwise no audio/waveform. Set proc_time to match spectrogram's time range to avoid graying.
 - Build deps: needs libxft-dev, libpango1.0-dev, libxinerama-dev, libxcursor-dev, libxfixes-dev on Linux
 
-## Session Context (2026-03-06, opencode branch)
+### Memory note
+- Reconstructed audio samples are now stored in `AudioData` as `Arc<Vec<f32>>` so the
+  `AudioPlayer` can share the same allocation without cloning the full sample buffer.
 
-### What was done
-- Pulled latest from `origin/opencode` (reset --hard to match remote)
-- Full code read of all FFT analyzer source files (18+ files)
-- Created `skeleton_map.md` -- low-level code map of every struct/fn/field/enum
-- Project builds clean, all 39 tests pass
-- User wants to add features to FFT analyzer (tracker is being ignored)
-
-### Bugs & Issues Found (Full Code Review)
-
-1. **Duplicate active-bin logic** (medium priority)
-   - `spectrogram_renderer.rs:180-216` and `reconstructor.rs:92-113` compute identical bin filtering
-   - Same freq range + top-N magnitude filter, duplicated code
-   - Should be extracted to a shared function in `data/` module
-
-2. **Sample buffer clone for AudioPlayer** (low priority)
-   - `main_fft.rs` does `Arc::new(audio.samples.clone())` to feed AudioPlayer
-   - Full sample buffer is cloned every time reconstruction completes
-   - Could be avoided if AudioData stored samples as `Arc<Vec<f32>>`
-
-3. **Absolute-positioned status bars** (bug)
-   - `status_fft` and `status_bar` use `with_pos()` instead of being in Flex layout
-   - Window resize leaves them misaligned
-
-4. **Status bar text during FFT doesn't indicate full-file processing** (UX)
-   - FFT always processes full file (by design), but user may have narrow time range
-   - Status bar doesn't clarify this; could confuse users who set start/stop
-
-5. **No progress indication during FFT/reconstruction** (feature gap, backburner)
-   - Status bar just says "Processing FFT..." or "Reconstructing..."
-   - No percentage, frame count, or ETA. Long operations feel frozen.
-
-### Files created this session
-- `skeleton_map.md` -- low-level code map for AI agents (every struct, fn, field, enum)
-
-### What to do next
-- Reference `skeleton_map.md` in AGENTS.md and CODING_RULES.md
-- User wants to improve the program and do cleanup
-- Prioritize: features and cleanup that benefit from the full context already loaded
+### Current behavioral model worth remembering
+- Whole-file overview FFT and focused ROI FFT are rendered as layered spectrograms
+- Focused FFT uses the current user settings; overview FFT uses separate configurable defaults
+- Reconstruction uses the focused/high-quality layer / ROI settings
+- Status bar is centralized through `StatusBarManager`
+- Status bar first slot = current activity, middle = recent timings, last = memory
+- Status bar can wrap and auto-expand vertically
+- Rerun button becomes **Cancel** during cancelable work and **Busy...** during non-cancelable work
+- CSV FFT load is asynchronous; reconstruction is triggered after import completes
+- Progress currently exists for FFT and reconstruction; save/load operations have timings but not detailed live percentages
