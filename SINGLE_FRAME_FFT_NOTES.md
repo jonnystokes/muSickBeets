@@ -191,6 +191,81 @@ These need instrumentation, not guessing:
 
 ---
 
+## Instrumented Findings (Step 2)
+
+Direct instrumentation was added to the FFT engine and reconstructor to log:
+
+- active sample count / seconds
+- actual `num_frames`
+- output length
+- `window_sum` max / threshold
+- first/last kept sample
+- left/right zeroed span
+
+### Confirmed behavior from logs
+
+#### Non-centered true one-frame case
+
+Example measured case:
+
+- active range: `132300` samples (`3.000000s`)
+- `window_len = 132300`
+- `center = false`
+- `num_frames = 1`
+- output length = `132300`
+- `left_zeroed = 25150` samples (`0.570295s`)
+- `right_zeroed = 25150` samples (`0.570295s`)
+- kept middle = `82000` samples (`1.859410s`)
+- window type = `Hann`
+
+Interpretation:
+
+- the broad hard cutoffs are real
+- they are symmetric in the one-frame non-centered case
+- they are strongly explained by the current `window_sum < 0.1 * max(window_sum)`
+  rule rather than by unavoidable FFT theory
+
+#### Centered mode does not currently behave like true one-frame analysis
+
+Measured centered examples for the same `3.0s` active range with
+`window_len = 132300`:
+
+- `center = true`, `hop = 33075` -> `num_frames = 5`
+- `center = true`, `hop = 132300` -> `num_frames = 2`
+
+Interpretation:
+
+- enabling center pad expands the effective analyzed support enough that the
+  current engine no longer yields a true single-frame result in normal use
+- this matches the observed UI behavior where center pad prevents the expected
+  one-frame case
+
+#### Centered reconstruction support/cropping looks inconsistent
+
+Measured centered reconstruction example:
+
+- `num_frames = 5`
+- `left_zeroed = 28288`
+- `right_zeroed = 0`
+
+Interpretation:
+
+- centered reconstruction currently shows asymmetric support / cropping behavior
+- this should be treated as a correctness bug before redesigning the edge-zeroing
+  rule
+
+### Step-2 conclusion
+
+The new measurements strongly support this order:
+
+1. Audit/fix centered semantics first.
+2. Redesign the aggressive edge-zeroing rule second.
+
+The main reason is that non-centered one-frame behavior is now well quantified,
+while centered one-frame behavior is still not internally consistent.
+
+---
+
 ## Immediate Bug-Fix Order
 
 The current recommended order is:

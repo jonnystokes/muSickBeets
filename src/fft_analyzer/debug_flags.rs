@@ -26,6 +26,12 @@ pub const RENDER_DBG: bool = false;
 #[allow(dead_code)]
 pub const FILE_IO_DBG: bool = true;
 
+/// Single-frame FFT / reconstruction diagnostics: frame counts, support,
+/// overlap-add normalization, and zeroed edge spans.
+/// Default: true while single-frame behavior is being audited.
+#[allow(dead_code)]
+pub const SINGLE_FRAME_DBG: bool = true;
+
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 fn elapsed_since_start() -> f64 {

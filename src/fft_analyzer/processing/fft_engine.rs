@@ -6,6 +6,7 @@ use rayon::prelude::*;
 use realfft::RealFftPlanner;
 
 use crate::data::{AudioData, FftFrame, FftParams, Spectrogram};
+use crate::debug_flags;
 
 thread_local! {
     /// Per-thread FFT planner cache. `RealFftPlanner` caches FFT plans internally,
@@ -53,6 +54,23 @@ impl FftEngine {
         } else {
             0
         };
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "FFT process: active_samples={} ({:.5}s) start={} stop={} window_len={} hop={} n_fft={} zero_pad={} center={} padded_len={} num_frames={}",
+            stop_sample.saturating_sub(start_sample),
+            stop_sample.saturating_sub(start_sample) as f64 / audio.sample_rate as f64,
+            start_sample,
+            stop_sample,
+            window_len,
+            hop,
+            n_fft,
+            params.zero_pad_factor,
+            params.use_center,
+            padded_audio.len(),
+            num_frames
+        );
 
         if num_frames == 0 {
             return Spectrogram::default();
@@ -125,6 +143,18 @@ impl FftEngine {
                 })
             })
             .collect();
+
+        if let (Some(first), Some(last)) = (frames.first(), frames.last()) {
+            dbg_log!(
+                debug_flags::SINGLE_FRAME_DBG,
+                "SingleFrame",
+                "FFT frames: first_time={:.6}s last_time={:.6}s frame_count={} sample_rate={}",
+                first.time_seconds,
+                last.time_seconds,
+                frames.len(),
+                audio.sample_rate
+            );
+        }
 
         Spectrogram::from_frames_with_frequencies(frames, frequencies)
     }

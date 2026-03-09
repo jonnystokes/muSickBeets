@@ -8,6 +8,7 @@ use realfft::RealFftPlanner;
 use rustfft::num_complex::Complex;
 
 use crate::data::{compute_active_bins, AudioData, FftParams, Spectrogram, ViewState};
+use crate::debug_flags;
 
 thread_local! {
     /// Per-thread IFFT planner cache. Reusing one planner per rayon thread
@@ -74,6 +75,21 @@ impl Reconstructor {
         } else {
             (num_frames - 1) * hop + window_len
         };
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "Reconstruct start: frame_range={}..{} num_frames={} window_len={} hop={} n_fft={} zero_pad={} center={} output_len={}",
+            frame_range.start,
+            frame_range.end,
+            num_frames,
+            window_len,
+            hop,
+            n_fft,
+            params.zero_pad_factor,
+            params.use_center,
+            output_length
+        );
 
         // Phase 1: Parallel IFFT for each frame in the range.
         // Cancelled frames return None and are filtered out.
@@ -182,6 +198,8 @@ impl Reconstructor {
         // Fix: use 10% of peak window_sum as minimum; silence below that.
         let max_wsum = window_sum.iter().copied().fold(0.0f32, f32::max);
         let threshold = (max_wsum * 0.1).max(1e-8);
+        let first_above_threshold = window_sum.iter().position(|&v| v >= threshold);
+        let last_above_threshold = window_sum.iter().rposition(|&v| v >= threshold);
         for i in 0..output.len() {
             if window_sum[i] >= threshold {
                 output[i] /= window_sum[i];
@@ -189,6 +207,44 @@ impl Reconstructor {
                 // Insufficient overlap — fade to zero rather than amplify artifacts
                 output[i] = 0.0;
             }
+        }
+
+        let left_zeroed = first_above_threshold.unwrap_or(output.len());
+        let right_zeroed = last_above_threshold
+            .map(|idx| output.len().saturating_sub(idx + 1))
+            .unwrap_or(output.len());
+        let kept_len = match (first_above_threshold, last_above_threshold) {
+            (Some(a), Some(b)) if b >= a => b - a + 1,
+            _ => 0,
+        };
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "Reconstruct window_sum: max={:.6} threshold={:.6} first_keep={:?} last_keep={:?} left_zeroed={} right_zeroed={} kept_len={} duration={:.6}s",
+            max_wsum,
+            threshold,
+            first_above_threshold,
+            last_above_threshold,
+            left_zeroed,
+            right_zeroed,
+            kept_len,
+            output.len() as f64 / params.sample_rate as f64
+        );
+
+        if num_frames == 1 {
+            let left_sec = left_zeroed as f64 / params.sample_rate as f64;
+            let right_sec = right_zeroed as f64 / params.sample_rate as f64;
+            dbg_log!(
+                debug_flags::SINGLE_FRAME_DBG,
+                "SingleFrame",
+                "One-frame recon summary: left_zeroed={:.6}s right_zeroed={:.6}s kept={:.6}s of total={:.6}s window_type={:?}",
+                left_sec,
+                right_sec,
+                kept_len as f64 / params.sample_rate as f64,
+                output.len() as f64 / params.sample_rate as f64,
+                params.window_type
+            );
         }
 
         let duration_seconds = output.len() as f64 / params.sample_rate as f64;
