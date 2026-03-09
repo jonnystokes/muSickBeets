@@ -266,6 +266,86 @@ while centered one-frame behavior is still not internally consistent.
 
 ---
 
+## Center Pad Audit (Step 3)
+
+Step 3 audited what `use_center = false` and `use_center = true` actually mean
+in the current code, and compared that to standard STFT semantics.
+
+### What `center = false` means in the current code
+
+- analysis uses only full windows fully inside `start_sample..stop_sample`
+- no extra left/right padding is added
+- stored `time_seconds` is the frame start time
+- reconstruction output length is `(num_frames - 1) * hop + window_len`
+- playback alignment uses the first selected frame start time
+
+This is broadly consistent with standard non-centered STFT behavior.
+
+### What `center = true` means in the current code
+
+- the active slice is padded by `window_len / 2` on both sides before FFT
+- stored `time_seconds` acts like a frame center, not a frame start
+- frame count increases because the padded region admits additional valid windows
+- reconstruction output length is currently `(num_frames - 1) * hop`
+- playback alignment uses the first selected frame center time
+
+This is partly consistent with centered STFT semantics, but there are important
+problems in the one-frame / low-frame-count path.
+
+### What the recent logs confirm
+
+Using the user's `3.0s` active range example:
+
+- `center = false`, `window_len = 33074`, `hop = 33074` -> `num_frames = 4`
+- `center = true`, `window_len = 33074`, `hop = 33074` -> `num_frames = 5`
+
+This is mathematically expected under centered padding because adding
+`window_len / 2` pad on both sides increases the valid framed support.
+
+The logs also showed that zero flatline between chunks appears in both modes.
+That is not primarily caused by center padding itself. It is dominated by the
+current reconstruction behavior:
+
+- sparse / low-overlap window support in the selected setup
+- hard zeroing from the `window_sum < 0.1 * max(window_sum)` rule
+
+### What is mathematically expected vs what looks wrong
+
+Expected:
+
+- `center = false` uses left-aligned windows on the real signal support
+- `center = true` pads the signal and increases frame count near boundaries
+- low-frame-count / no-overlap setups can produce isolated windowed chunks with
+  silence between them if support does not overlap enough
+
+Suspicious / implementation-specific:
+
+- the solver/UI can imply a one-frame centered case while the actual FFT engine
+  produces multiple frames
+- the centered one-frame path is still not trustworthy
+- the current centered reconstruction support/cropping is not yet proven correct
+- the `window_sum` threshold rule can create wider hard-zero regions than the
+  underlying DSP math requires
+
+### Step-3 conclusion
+
+The order of work still makes sense, but the centered problem is now sharper:
+
+1. Centered semantics are not fundamentally wrong as a concept.
+2. The current implementation is not cleanly aligned between solver/UI,
+   frame-count expectations, and one-frame reconstruction behavior.
+3. Step 4 should target centered one-frame reconstruction length/cropping
+   correctness first.
+4. Step 5 should then redesign the aggressive hard zeroing rule.
+
+One useful refinement from this audit:
+
+- part of step 4 should include checking the solver/UI count semantics so that
+  the app's "one frame" expectation matches what the actual FFT engine will do
+  when center padding is enabled.
+
+---
+
 ## Immediate Bug-Fix Order
 
 The current recommended order is:

@@ -38,10 +38,10 @@ For tasks that require broad reading across many files, exploring unfamiliar are
 
 ### Current Worklist
 
-1. Write a consolidated research/roadmap note for single-frame FFT behavior and the future instrument workflow.
-2. Instrument one-frame reconstruction math (`num_frames`, output length, `window_sum`, zeroed spans).
-3. Audit center pad on/off semantics end-to-end and verify they match intended STFT behavior.
-4. Fix centered one-frame reconstruction length/cropping correctness.
+1. Done -- wrote a consolidated research/roadmap note for single-frame FFT behavior and the future instrument workflow.
+2. Done -- instrumented one-frame reconstruction math (`num_frames`, output length, `window_sum`, zeroed spans).
+3. Done -- audited center pad on/off semantics end-to-end and recorded the findings in `SINGLE_FRAME_FFT_NOTES.md`.
+4. Next -- fix centered one-frame reconstruction length/cropping correctness.
 5. Replace or redesign the aggressive `window_sum` edge-zeroing rule.
 6. Measure blank-edge size per window type and document which settings actually control it.
 7. Design a future dedicated single-frame export mode for the later instrument binary.
