@@ -344,6 +344,38 @@ One useful refinement from this audit:
   the app's "one frame" expectation matches what the actual FFT engine will do
   when center padding is enabled.
 
+### Centered solver/UI mismatch bug fix
+
+After the audit, a small bug-fix slice was completed before step 4.
+
+What was wrong:
+
+- the segmentation solver always used non-centered counting
+- the FFT engine used centered padded counting when `use_center = true`
+- `FftParams::num_segments()` was only partly aligned with the engine behavior
+
+What that caused:
+
+- the UI could imply a centered one-frame case that the FFT engine would not
+  actually produce
+- derived info text and FFT progress totals could disagree with real centered
+  frame counts
+
+What was fixed:
+
+- `segmentation_solver.rs` now accepts `use_center` and uses centered counting
+  when needed
+- `callbacks_ui.rs` now passes `use_center` into the solver
+- `fft_params.rs::num_segments()` now matches centered counting even for short
+  active ranges
+
+Result:
+
+- the centered/non-centered segment count shown in the UI now matches the actual
+  FFT engine behavior much more closely
+- this bug-fix did not change FFT generation or reconstruction math; it only
+  fixed the solver/UI side
+
 ---
 
 ## Immediate Bug-Fix Order

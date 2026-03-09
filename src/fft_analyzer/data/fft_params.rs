@@ -88,12 +88,15 @@ impl FftParams {
     }
 
     pub fn num_segments(&self, total_samples: usize) -> usize {
-        if total_samples < self.window_length {
+        if total_samples == 0 {
             return 0;
         }
         let padded = if self.use_center {
             total_samples + self.window_length
         } else {
+            if total_samples < self.window_length {
+                return 0;
+            }
             total_samples
         };
         (padded.saturating_sub(self.window_length)) / self.hop_length() + 1

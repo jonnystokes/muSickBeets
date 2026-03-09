@@ -379,6 +379,7 @@ fn apply_segmentation_solver(st: &mut AppState) {
             active_samples,
             window_length: st.fft_params.window_length,
             overlap_percent: st.fft_params.overlap_percent,
+            use_center: st.fft_params.use_center,
             zero_pad_factor: st.fft_params.zero_pad_factor,
             target_segments_per_active: st.fft_params.target_segments_per_active,
             target_bins_per_segment: st.fft_params.target_bins_per_segment,
