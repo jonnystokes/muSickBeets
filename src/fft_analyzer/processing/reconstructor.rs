@@ -137,6 +137,8 @@ impl Reconstructor {
             None
         };
 
+        let active_samples = params.stop_sample.saturating_sub(params.start_sample);
+
         // Build the full raw overlap-add support first. For centered mode we
         // crop back to the actually covered unpadded support after OLA.
         let output_length = centered_crop
@@ -144,6 +146,34 @@ impl Reconstructor {
             .map(|p| p.raw_len)
             .unwrap_or_else(|| (num_frames - 1) * hop + window_len);
 
+        if debug_flags::SINGLE_FRAME_DBG {
+            eprintln!();
+        }
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "------------------------------------------------------------"
+        );
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "Case: active={} ({:.6}s) roi={}..{} smp center={} win={} hop={} overlap={:.4}% n_fft={} zpad={} window={:?} freq={}..{}Hz count={}",
+            active_samples,
+            active_samples as f64 / params.sample_rate.max(1) as f64,
+            params.start_sample,
+            params.stop_sample,
+            params.use_center,
+            window_len,
+            hop,
+            params.overlap_percent,
+            n_fft,
+            params.zero_pad_factor,
+            params.window_type,
+            view.recon_freq_min_hz,
+            view.recon_freq_max_hz,
+            view.recon_freq_count
+        );
         dbg_log!(
             debug_flags::SINGLE_FRAME_DBG,
             "SingleFrame",
@@ -162,7 +192,7 @@ impl Reconstructor {
         // Phase 1: Parallel IFFT for each frame in the range.
         // Cancelled frames return None and are filtered out.
         let frame_indices: Vec<usize> = frame_range.collect();
-        let frame_results: Vec<(usize, Vec<f32>)> = frame_indices
+        let frame_results: Vec<(usize, Vec<f32>, usize)> = frame_indices
             .par_iter()
             .enumerate()
             .filter_map(|(local_idx, &global_idx)| {
@@ -185,6 +215,7 @@ impl Reconstructor {
                     view.recon_freq_max_hz,
                     view.recon_freq_count,
                 );
+                let active_count = active.iter().filter(|&&b| b).count();
 
                 // Zero the spectrum, then fill in active bins
                 for s in spectrum.iter_mut() {
@@ -241,15 +272,36 @@ impl Reconstructor {
                 // Use local index for overlap-add positioning
                 let start_pos = local_idx * hop;
 
-                Some((start_pos, windowed))
+                Some((start_pos, windowed, active_count))
             })
             .collect();
+
+        let active_min = frame_results.iter().map(|(_, _, c)| *c).min().unwrap_or(0);
+        let active_max = frame_results.iter().map(|(_, _, c)| *c).max().unwrap_or(0);
+        let active_avg = if frame_results.is_empty() {
+            0.0
+        } else {
+            frame_results.iter().map(|(_, _, c)| *c as f64).sum::<f64>()
+                / frame_results.len() as f64
+        };
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "Active bins: min={} max={} avg={:.2} requested_freq_count={} freq_range={:.2}-{:.2}Hz",
+            active_min,
+            active_max,
+            active_avg,
+            view.recon_freq_count,
+            view.recon_freq_min_hz,
+            view.recon_freq_max_hz
+        );
 
         // Phase 2: Sequential overlap-add
         let mut output = vec![0.0f32; output_length];
         let mut window_sum = vec![0.0f32; output_length];
 
-        for (start_pos, windowed) in &frame_results {
+        for (start_pos, windowed, _) in &frame_results {
             for (i, &sample) in windowed.iter().enumerate() {
                 let pos = start_pos + i;
                 if pos < output.len() {
@@ -259,13 +311,14 @@ impl Reconstructor {
             }
         }
 
-        // Normalize by window sum, with adaptive threshold to prevent
-        // edge amplification artifacts when few frames overlap.
-        // With proper overlap (Hann 75%), window_sum is ~1.5 everywhere.
-        // With few frames, edges have tiny window_sum → division amplifies noise.
-        // Fix: use 10% of peak window_sum as minimum; silence below that.
+        // Normalize by window sum using a tiny numerical epsilon only.
+        // Standard weighted overlap-add / ISTFT practice is to divide wherever
+        // the squared-window sum is nonzero, leaving only truly unsupported
+        // samples at zero. Broad percentage-of-peak gating is not standard and
+        // creates artificial cliff-drop blank edges in one-frame / low-overlap
+        // cases.
         let max_wsum = window_sum.iter().copied().fold(0.0f32, f32::max);
-        let threshold = (max_wsum * 0.1).max(1e-8);
+        let threshold = (max_wsum * 1e-6).max(1e-8);
         let first_above_threshold = window_sum.iter().position(|&v| v >= threshold);
         let last_above_threshold = window_sum.iter().rposition(|&v| v >= threshold);
         for i in 0..output.len() {
@@ -337,6 +390,95 @@ impl Reconstructor {
         } else {
             output
         };
+
+        let boundary_positions: Vec<usize> = if frame_results.len() <= 1 {
+            Vec::new()
+        } else if let Some(plan) = centered_crop {
+            frame_results
+                .iter()
+                .skip(1)
+                .map(|(start_pos, _, _)| start_pos.saturating_sub(plan.crop_left))
+                .filter(|&pos| pos > 0 && pos < output.len())
+                .collect()
+        } else {
+            frame_results
+                .iter()
+                .skip(1)
+                .map(|(start_pos, _, _)| *start_pos)
+                .filter(|&pos| pos > 0 && pos < output.len())
+                .collect()
+        };
+
+        let mut max_boundary_jump = 0.0f32;
+        let mut avg_boundary_jump = 0.0f64;
+        for &pos in &boundary_positions {
+            let jump = (output[pos] - output[pos - 1]).abs();
+            max_boundary_jump = max_boundary_jump.max(jump);
+            avg_boundary_jump += jump as f64;
+        }
+        if !boundary_positions.is_empty() {
+            avg_boundary_jump /= boundary_positions.len() as f64;
+        }
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "Boundary jumps: count={} max_jump={:.6} avg_jump={:.6}",
+            boundary_positions.len(),
+            max_boundary_jump,
+            avg_boundary_jump
+        );
+
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        let mut run_start: Option<usize> = None;
+        for (i, &sample) in output.iter().enumerate() {
+            if sample == 0.0 {
+                if run_start.is_none() {
+                    run_start = Some(i);
+                }
+            } else if let Some(start) = run_start.take() {
+                runs.push((start, i));
+            }
+        }
+        if let Some(start) = run_start {
+            runs.push((start, output.len()));
+        }
+
+        let left_gap = runs
+            .first()
+            .filter(|&&(s, _)| s == 0)
+            .map(|&(s, e)| e - s)
+            .unwrap_or(0);
+        let right_gap = runs
+            .last()
+            .filter(|&&(_, e)| e == output.len())
+            .map(|&(s, e)| e - s)
+            .unwrap_or(0);
+        let interior_runs: Vec<(usize, usize)> = runs
+            .iter()
+            .copied()
+            .filter(|&(s, e)| s > 0 && e < output.len())
+            .collect();
+        let max_interior_gap = interior_runs.iter().map(|&(s, e)| e - s).max().unwrap_or(0);
+
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "Gap runs: left={} right={} interior_count={} max_interior={} duration={:.6}s",
+            left_gap,
+            right_gap,
+            interior_runs.len(),
+            max_interior_gap,
+            output.len() as f64 / params.sample_rate as f64
+        );
+        dbg_log!(
+            debug_flags::SINGLE_FRAME_DBG,
+            "SingleFrame",
+            "------------------------------------------------------------"
+        );
+        if debug_flags::SINGLE_FRAME_DBG {
+            eprintln!();
+        }
 
         let duration_seconds = output.len() as f64 / params.sample_rate as f64;
 

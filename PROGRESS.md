@@ -34,23 +34,45 @@ For tasks that require broad reading across many files, exploring unfamiliar are
 
 ## Active Work
 
-- In progress: single-frame FFT / reconstruction correctness research and bug-fix prep.
+- In progress: single-frame FFT / reconstruction correctness stabilization.
 
-### Current Worklist
+### Current Step System
 
+0. Ongoing rule -- keep tracking/docs current, remove stale items, and keep the active worklist synchronized with reality.
 1. Done -- wrote a consolidated research/roadmap note for single-frame FFT behavior and the future instrument workflow.
+1.5. Partial / available -- added focused debugging instrumentation (`SINGLE_FRAME_DBG`) and can expand debug categories further if needed.
 2. Done -- instrumented one-frame reconstruction math (`num_frames`, output length, `window_sum`, zeroed spans).
 3. Done -- audited center pad on/off semantics end-to-end and recorded the findings in `SINGLE_FRAME_FFT_NOTES.md`.
+3.5. Done -- fixed the centered solver/UI frame-count mismatch so displayed counts and progress totals match the FFT engine better.
 4. Done -- fixed centered reconstruction length/cropping to use actual frame support before cropping.
-5. Next -- replace or redesign the aggressive `window_sum` edge-zeroing rule.
-6. Measure blank-edge size per window type and document which settings actually control it.
-7. Design a future dedicated single-frame export mode for the later instrument binary.
+5. Done -- replaced the old aggressive `window_sum` threshold with tiny-epsilon normalization and verified that broad cliff-drop regions shrank to small support-limited gaps.
+6. In progress -- measure residual blank-edge / gap behavior by window type / overlap / frame count and document exactly which settings still control it.
+7. Deferred -- future instrument/export work remains explicitly blocked until the user says the FFT analyzer foundation is solid and it is time to move on.
 
-### Bug Fixes Completed Between Steps
+### Bug Fixes Completed Between Numbered Steps
 
-- Fixed the centered solver/UI frame-count mismatch so the displayed segment count,
-  derived info, and FFT progress totals align much better with the actual FFT
-  engine behavior when center padding is enabled.
+- Step 3.5 fixed the centered solver/UI frame-count mismatch so the displayed
+  segment count, derived info, and FFT progress totals align much better with
+  the actual FFT engine behavior when center padding is enabled.
+
+### Strict Project Boundary
+
+- Do not move into instrument-project planning or implementation until the user
+  explicitly says the current FFT analyzer bug-fix/stability work is complete.
+- Future instrument ideas may be remembered in notes, but they are not active
+  work and should not shape implementation beyond protecting current metadata
+  correctness.
+
+### Testing Guidance Rule
+
+- When user testing is needed, provide instructions that are specific enough to
+  reproduce the intended case and observe the expected result.
+- Include exact settings only when they matter (for example: ROI duration,
+  overlap, center on/off, frame count target, zero padding).
+- Tell the user what to look/listen for and what measurements or logs would be
+  useful.
+- Keep testing instructions detailed when the case is subtle, and short when the
+  case is simple.
 
 ---
 

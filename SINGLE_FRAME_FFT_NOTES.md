@@ -18,8 +18,14 @@ Related goals:
 - make single-frame analysis/reconstruction mathematically correct
 - understand center pad on/off behavior exactly
 - understand why blank or quiet edges appear
-- preserve the information needed for a future instrument-oriented single-frame
-  export workflow
+- preserve enough metadata so future work remains possible later without shaping
+  current bug-fix decisions around the instrument workflow
+
+Strict boundary for this note:
+
+- Future instrument/export ideas are reference material only.
+- Do not treat them as active implementation work until the user explicitly says
+  the current FFT analyzer foundation is stable and it is time to move on.
 
 ---
 
@@ -147,7 +153,11 @@ Expected effects:
 
 ---
 
-## What the Future Instrument Workflow Needs
+## Future Instrument Workflow Notes (Deferred)
+
+This section is intentionally deferred reference material. It should not drive
+active implementation until the user explicitly starts the later instrument
+project.
 
 For a future binary that turns one frame into a sustained instrument, a single
 frame export should preserve:
@@ -445,6 +455,135 @@ This step appears to have fixed the structural centered-support bug:
   the aggressive `window_sum` threshold rule
 
 That means step 5 remains the next real bug-fix target.
+
+---
+
+## Edge Normalization Update (Step 5)
+
+Step 5 replaced the old broad relative threshold rule with a tiny-epsilon
+denominator check that is much closer to standard ISTFT / weighted overlap-add
+ behavior.
+
+### What changed
+
+- old behavior: samples were zeroed whenever `window_sum < 0.1 * max(window_sum)`
+- new behavior: samples are normalized wherever `window_sum` is greater than a
+  tiny epsilon, and only truly unsupported samples remain zero
+
+### What the user logs now show
+
+Examples after the change:
+
+- one-frame Hann, `1.0s`, center off:
+  - `left_zeroed = 444` samples (`0.010068s`)
+  - `right_zeroed = 444` samples (`0.010068s`)
+  - kept support = `0.979864s`
+
+- one-frame Hann, `3.0s`, center off:
+  - `left_zeroed = 1332` samples (`0.030204s`)
+  - `right_zeroed = 1332` samples (`0.030204s`)
+  - kept support = `2.939592s`
+
+Interpretation:
+
+- the previous broad cliff-drop blank regions are gone
+- the remaining silent spans are now small and consistent with support-limited
+  gaps from tapered windows in one-frame / low-overlap cases
+- this means step 5 appears to have succeeded structurally
+
+### What remains after step 5
+
+- quantify the remaining gaps by window type / overlap / frame count
+- distinguish expected support-limited gaps from any still-suspicious behavior
+
+That work is step 6.
+
+---
+
+## Residual Gap Measurements (Step 6, in progress)
+
+Recent log-driven tests used a rising-tone source so audible gaps and spikes were
+easy to hear and line up with frame boundaries.
+
+### Non-centered Hann, 1 second ROI, 0% overlap
+
+#### One frame
+
+- active range: `44100` samples (`1.0s`)
+- `window_len = 44100`
+- `hop = 44100`
+- `center = false`
+- `num_frames = 1`
+- `Gap runs: left=444 right=444 interior_count=0 max_interior=0`
+
+Interpretation:
+
+- the old broad cliff regions are gone
+- residual silent edge spans are now about `444 / 44100 = 0.010068s` per side
+- this is small enough to treat as support/window behavior rather than the old
+  broken thresholding behavior
+
+#### Two frames
+
+- `window_len = 22050`
+- `hop = 22050`
+- `center = false`
+- `num_frames = 2`
+- `Gap runs: left=222 right=222 interior_count=1 max_interior=444`
+
+Interpretation:
+
+- edge gap shrinks with frame/window length
+- there is one interior zero run centered on the frame transition
+- its size is about the sum of the two adjacent edge gaps
+
+#### Three frames
+
+- `window_len = 14700`
+- `hop = 14700`
+- `center = false`
+- `num_frames = 3`
+- `Gap runs: left=148 right=148 interior_count=2 max_interior=296`
+
+Interpretation:
+
+- the pattern continues cleanly
+- more frames create more interior seam gaps when overlap is zero
+- each seam gap remains tied to the window support taper, not to a broad
+  thresholding artifact
+
+### Centered Hann, 1 second ROI, one-frame target
+
+With:
+
+- `window_len = 44100`
+- `hop = 44100`
+- `center = true`
+
+The logs show:
+
+- `num_frames = 2`
+- `Centered crop: keep_start=176400 keep_end=220500 crop_left=22050 crop_right=22050 final_len=44100`
+- `Gap runs: left=0 right=0 interior_count=1 max_interior=888`
+
+Interpretation:
+
+- under the current centered STFT definition, this is expected behavior:
+  enabling center pad expands the valid support and produces two centered frames
+  for this configuration
+- the previous dead half-frame at the end is fixed
+- a single interior seam gap remains, which is now the more important thing to
+  characterize under step 6
+
+### Current step-6 reading
+
+- `center = true` producing two frames in the one-frame-target case is expected
+  under the current centered framing scheme, not by itself a bug
+- the large threshold-driven edge silences are gone
+- what remains now looks like real support-limited seam/gap behavior for low or
+  zero overlap with tapered windows
+- the next job is to decide which of those remaining gaps are mathematically
+  expected and which, if any, still point to a bug
 
 ---
 
