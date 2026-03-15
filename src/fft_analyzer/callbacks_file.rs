@@ -537,9 +537,11 @@ pub fn handle_csv_load_result(
         .unwrap_or(0);
 
     if frame_start < frame_end {
-        let frame_sr = params.sample_rate as f64;
-        state.borrow_mut().recon_start_sample =
-            (spec.frames[frame_start].time_seconds * frame_sr).round() as usize;
+        if let Some(start_sample) =
+            Reconstructor::reconstruction_start_sample(&spec, &params, frame_start..frame_end)
+        {
+            state.borrow_mut().recon_start_sample = start_sample;
+        }
     }
 
     let progress = state.borrow().progress_counter.clone();
@@ -891,9 +893,13 @@ pub fn setup_rerun_callback(
                 .unwrap_or(0);
 
             if frame_start < frame_end {
-                let sr = params.sample_rate as f64;
-                state.borrow_mut().recon_start_sample =
-                    (spec.frames[frame_start].time_seconds * sr).round() as usize;
+                if let Some(start_sample) = Reconstructor::reconstruction_start_sample(
+                    &spec,
+                    &params,
+                    frame_start..frame_end,
+                ) {
+                    state.borrow_mut().recon_start_sample = start_sample;
+                }
             }
 
             dbg_log!(

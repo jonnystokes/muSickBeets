@@ -41,16 +41,16 @@ For tasks that require broad reading across many files, exploring unfamiliar are
 1. Done -- wrote a consolidated research/roadmap note for single-frame FFT behavior and the future instrument workflow.
 2. Done -- instrumented one-frame reconstruction math (`num_frames`, output length, `window_sum`, zeroed spans).
 3. Done -- audited center pad on/off semantics end-to-end and recorded the findings in `SINGLE_FRAME_FFT_NOTES.md`.
-4. Next -- fix centered one-frame reconstruction length/cropping correctness.
+4. Done -- fixed centered reconstruction length/cropping to use actual frame support before cropping.
+5. Next -- replace or redesign the aggressive `window_sum` edge-zeroing rule.
+6. Measure blank-edge size per window type and document which settings actually control it.
+7. Design a future dedicated single-frame export mode for the later instrument binary.
 
 ### Bug Fixes Completed Between Steps
 
 - Fixed the centered solver/UI frame-count mismatch so the displayed segment count,
   derived info, and FFT progress totals align much better with the actual FFT
   engine behavior when center padding is enabled.
-5. Replace or redesign the aggressive `window_sum` edge-zeroing rule.
-6. Measure blank-edge size per window type and document which settings actually control it.
-7. Design a future dedicated single-frame export mode for the later instrument binary.
 
 ---
 

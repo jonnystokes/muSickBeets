@@ -594,8 +594,11 @@ fn handle_fft_complete(
     let cancel = {
         let mut st = state.borrow_mut();
         if frame_start < frame_end {
-            let sr = params.sample_rate as f64;
-            st.recon_start_sample = (spec.frames[frame_start].time_seconds * sr).round() as usize;
+            if let Some(start_sample) =
+                Reconstructor::reconstruction_start_sample(&spec, &params, frame_start..frame_end)
+            {
+                st.recon_start_sample = start_sample;
+            }
         }
         st.new_cancel_flag()
     };

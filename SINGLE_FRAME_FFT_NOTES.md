@@ -378,6 +378,76 @@ Result:
 
 ---
 
+## Centered Reconstruction Support Fix (Step 4)
+
+Step 4 changed centered reconstruction to use actual frame support before
+cropping, instead of collapsing the output length from `num_frames` alone.
+
+### What changed
+
+- centered reconstruction now builds the full raw overlap-add support
+- then crops back to the actually covered unpadded support
+- `recon_start_sample` is aligned to the kept support start rather than blindly
+  using the first frame center
+
+### What the logs now show
+
+#### Centered one-window / one-second case
+
+With:
+
+- active range: `44100` samples (`1.0s`)
+- `window_len = 44100`
+- `hop = 44100`
+- `center = true`
+
+The logs show:
+
+- `num_frames = 2`
+- `raw_output_len = 88200`
+- `Centered crop: keep_start=176400 keep_end=220500 crop_left=22050 crop_right=22050 final_len=44100`
+
+Interpretation:
+
+- centered analysis legitimately creates two supported centered frames in this
+  configuration
+- reconstruction now builds the full support and crops cleanly back to the
+  requested 1-second ROI
+
+#### Low-frame-count centered case with incomplete coverage
+
+With:
+
+- active range: `44100` samples (`1.0s`)
+- `window_len = 8822`
+- `hop = 8822`
+- `center = true`
+
+The logs show:
+
+- `num_frames = 5`
+- `raw_output_len = 44110`
+- `Centered crop: keep_start=176400 keep_end=216099 crop_left=4411 crop_right=0 final_len=39699`
+
+Interpretation:
+
+- the selected centered frame supports do not fully cover the requested ROI end
+- the reconstruction now returns the mathematically honest covered support
+  rather than pretending it covers the full requested second
+
+### Step-4 conclusion
+
+This step appears to have fixed the structural centered-support bug:
+
+- centered reconstruction is now support-based rather than `num_frames`-only
+- asymmetric centered output support no longer appears to be the main issue
+- the remaining visible/audio edge harshness is now more clearly attributable to
+  the aggressive `window_sum` threshold rule
+
+That means step 5 remains the next real bug-fix target.
+
+---
+
 ## Immediate Bug-Fix Order
 
 The current recommended order is:

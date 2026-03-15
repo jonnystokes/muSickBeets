@@ -19,7 +19,70 @@ thread_local! {
 /// Reconstructs audio from spectrogram data with configurable frequency filtering.
 pub struct Reconstructor;
 
+#[derive(Debug, Clone, Copy)]
+struct CenteredCropPlan {
+    raw_len: usize,
+    keep_start: usize,
+    keep_end: usize,
+    crop_left: usize,
+    crop_right: usize,
+}
+
 impl Reconstructor {
+    fn centered_crop_plan(
+        spectrogram: &Spectrogram,
+        params: &FftParams,
+        frame_range: Range<usize>,
+    ) -> Option<CenteredCropPlan> {
+        if frame_range.start >= frame_range.end || frame_range.end > spectrogram.frames.len() {
+            return None;
+        }
+
+        let pad_left = (params.window_length / 2) as isize;
+        let pad_right = (params.window_length - params.window_length / 2) as isize;
+        let sr = params.sample_rate.max(1) as f64;
+
+        let first_center =
+            (spectrogram.frames[frame_range.start].time_seconds * sr).round() as isize;
+        let last_center =
+            (spectrogram.frames[frame_range.end - 1].time_seconds * sr).round() as isize;
+
+        let raw_start = first_center - pad_left;
+        let raw_end = last_center + pad_right;
+        let raw_len = raw_end.saturating_sub(raw_start).max(0) as usize;
+
+        let keep_start = raw_start.max(params.start_sample as isize) as usize;
+        let keep_end = raw_end.min(params.stop_sample as isize).max(raw_start) as usize;
+
+        let crop_left = (keep_start as isize - raw_start).max(0) as usize;
+        let crop_right = (raw_end - keep_end as isize).max(0) as usize;
+
+        Some(CenteredCropPlan {
+            raw_len,
+            keep_start,
+            keep_end,
+            crop_left,
+            crop_right,
+        })
+    }
+
+    pub fn reconstruction_start_sample(
+        spectrogram: &Spectrogram,
+        params: &FftParams,
+        frame_range: Range<usize>,
+    ) -> Option<usize> {
+        if frame_range.start >= frame_range.end || frame_range.end > spectrogram.frames.len() {
+            return None;
+        }
+
+        if params.use_center {
+            Self::centered_crop_plan(spectrogram, params, frame_range).map(|p| p.keep_start)
+        } else {
+            let sr = params.sample_rate.max(1) as f64;
+            Some((spectrogram.frames[frame_range.start].time_seconds * sr).round() as usize)
+        }
+    }
+
     /// Reconstruct audio from all frames in a spectrogram.
     #[allow(dead_code)]
     pub fn reconstruct(
@@ -68,18 +131,23 @@ impl Reconstructor {
             };
         }
 
-        // Calculate output length (based on window_len, not n_fft)
-        let output_length = if params.use_center {
-            let padded_length = (num_frames - 1) * hop + window_len;
-            padded_length.saturating_sub(window_len)
+        let centered_crop = if params.use_center {
+            Self::centered_crop_plan(spectrogram, params, frame_range.clone())
         } else {
-            (num_frames - 1) * hop + window_len
+            None
         };
+
+        // Build the full raw overlap-add support first. For centered mode we
+        // crop back to the actually covered unpadded support after OLA.
+        let output_length = centered_crop
+            .as_ref()
+            .map(|p| p.raw_len)
+            .unwrap_or_else(|| (num_frames - 1) * hop + window_len);
 
         dbg_log!(
             debug_flags::SINGLE_FRAME_DBG,
             "SingleFrame",
-            "Reconstruct start: frame_range={}..{} num_frames={} window_len={} hop={} n_fft={} zero_pad={} center={} output_len={}",
+            "Reconstruct start: frame_range={}..{} num_frames={} window_len={} hop={} n_fft={} zero_pad={} center={} raw_output_len={}",
             frame_range.start,
             frame_range.end,
             num_frames,
@@ -246,6 +314,29 @@ impl Reconstructor {
                 params.window_type
             );
         }
+
+        let output = if let Some(plan) = centered_crop {
+            let crop_end = output.len().saturating_sub(plan.crop_right);
+            let cropped = if plan.crop_left < crop_end {
+                output[plan.crop_left..crop_end].to_vec()
+            } else {
+                vec![]
+            };
+
+            dbg_log!(
+                debug_flags::SINGLE_FRAME_DBG,
+                "SingleFrame",
+                "Centered crop: keep_start={} keep_end={} crop_left={} crop_right={} final_len={}",
+                plan.keep_start,
+                plan.keep_end,
+                plan.crop_left,
+                plan.crop_right,
+                cropped.len()
+            );
+            cropped
+        } else {
+            output
+        };
 
         let duration_seconds = output.len() as f64 / params.sample_rate as f64;
 
