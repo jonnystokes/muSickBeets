@@ -49,6 +49,8 @@
 - Whole-file overview FFT and focused ROI FFT are rendered as layered spectrograms
 - Focused FFT uses the current user settings; overview FFT uses separate configurable defaults
 - Reconstruction uses the focused/high-quality layer / ROI settings
+- Single-frame debugging is active: `SINGLE_FRAME_DBG` now logs case settings,
+  frame counts, support/crop info, gap runs, active-bin counts, and boundary jumps
 - Status bar is centralized through `StatusBarManager`
 - Status bar first slot = current activity, middle = recent timings, last = memory
 - Status bar can wrap and auto-expand vertically

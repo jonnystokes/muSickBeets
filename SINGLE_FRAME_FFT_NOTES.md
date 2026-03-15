@@ -78,13 +78,13 @@ In a one-frame case, before any thresholding, the raw envelope is `w[n]^2`.
 That means the mathematically expected edge behavior is a **smooth taper** that
 follows the chosen window, not a broad hard-zero plateau.
 
-### 2. The current cliff drop mostly comes from an implementation rule
+### 2. The original cliff drop came from an implementation rule
 
-The reconstructor currently zeros samples when:
+The reconstructor originally zeroed samples when:
 
 `window_sum[i] < 0.1 * max(window_sum)`
 
-In the one-frame case, `window_sum[n] = w[n]^2`, so this rule becomes:
+In the one-frame case, `window_sum[n] = w[n]^2`, so this rule became:
 
 `w[n]^2 < 0.1`
 
@@ -92,11 +92,13 @@ or equivalently:
 
 `|w[n]| < sqrt(0.1) ≈ 0.316`
 
-That is much more aggressive than the actual mathematical singularity at exact
+That was much more aggressive than the actual mathematical singularity at exact
 window zeros.
 
-For tapered windows like Hann and Blackman, this creates broad hard-zero edge
+For tapered windows like Hann and Blackman, it created broad hard-zero edge
 regions instead of a smooth fade.
+
+This old rule has now been replaced by tiny-epsilon normalization (see Step 5).
 
 ### 3. Centered one-frame reconstruction is currently suspicious / inconsistent
 
@@ -194,8 +196,8 @@ These need instrumentation, not guessing:
    frame, or does it always produce at least two?
 2. Exactly how many samples are being hard-zeroed by the current
    `window_sum` threshold rule for each window type?
-3. Is the current one-frame blank-edge width mostly determined by the threshold
-   rule or by something else in centered mode?
+3. How much residual blank-edge width remains after the epsilon-normalization
+   fix, and what settings control it?
 4. Does a one-frame centered reconstruction currently produce the correct output
    length and support, or is it mathematically inconsistent in code?
 
@@ -214,7 +216,7 @@ Direct instrumentation was added to the FFT engine and reconstructor to log:
 
 ### Confirmed behavior from logs
 
-#### Non-centered true one-frame case
+#### Non-centered true one-frame case before the normalization fix
 
 Example measured case:
 
@@ -302,7 +304,7 @@ This is broadly consistent with standard non-centered STFT behavior.
 This is partly consistent with centered STFT semantics, but there are important
 problems in the one-frame / low-frame-count path.
 
-### What the recent logs confirm
+### What the step-3 logs confirmed at the time
 
 Using the user's `3.0s` active range example:
 
@@ -317,7 +319,7 @@ That is not primarily caused by center padding itself. It is dominated by the
 current reconstruction behavior:
 
 - sparse / low-overlap window support in the selected setup
-- hard zeroing from the `window_sum < 0.1 * max(window_sum)` rule
+- broad hard-zeroing from the old `window_sum < 0.1 * max(window_sum)` rule
 
 ### What is mathematically expected vs what looks wrong
 
@@ -334,8 +336,8 @@ Suspicious / implementation-specific:
   produces multiple frames
 - the centered one-frame path is still not trustworthy
 - the current centered reconstruction support/cropping is not yet proven correct
-- the `window_sum` threshold rule can create wider hard-zero regions than the
-  underlying DSP math requires
+- the old broad `window_sum` threshold rule could create wider hard-zero
+  regions than the underlying DSP math requires
 
 ### Step-3 conclusion
 
@@ -454,7 +456,7 @@ This step appears to have fixed the structural centered-support bug:
 - the remaining visible/audio edge harshness is now more clearly attributable to
   the aggressive `window_sum` threshold rule
 
-That means step 5 remains the next real bug-fix target.
+That was the state before step 5. Step 5 has now been completed.
 
 ---
 
@@ -495,6 +497,7 @@ Interpretation:
 
 - quantify the remaining gaps by window type / overlap / frame count
 - distinguish expected support-limited gaps from any still-suspicious behavior
+- explain the remaining frame-boundary spikes separately from the silent gaps
 
 That work is step 6.
 
