@@ -35,10 +35,10 @@ Poll loop message handlers (progress refresh: 500ms / 30 ticks):
     -> Stores Arc<AudioData>, sets fft_params (start=0, stop=num_samples, sample_rate)
     -> Updates view bounds, enables widgets, triggers recompute via btn_rerun.do_callback()
     -> handle_audio_loaded takes shared: &SharedCallbacks parameter
-  WorkerMessage::FftComplete(spectrogram)
-    -> Stores Arc<Spectrogram>, computes db_ceiling from max_magnitude
-    -> Spawns reconstruction worker thread (filters frames by processing time range)
-    -> Records fft_duration timing
+  WorkerMessage::FftStageComplete(stage, spectrogram)
+    -> Overview stage stores whole-file layer, then spawns focused FFT stage
+    -> Focus stage stores focused layer, computes db_ceiling, then spawns reconstruction
+    -> Records stage timing before advancing to the next phase
   WorkerMessage::ReconstructionComplete(audio)
     -> Stores reconstructed_audio, loads into AudioPlayer (Arc<Vec<f32>>)
     -> Updates transport state, enables WAV export, auto-plays if play_pending
@@ -86,6 +86,7 @@ struct AppState
   dirty: bool                               -- params changed since last recompute
   play_pending: bool                        -- auto-play after next reconstruction
   lock_to_active: bool                      -- auto-snap viewport after recompute
+  render_full_file_outside_roi: bool        -- show/hide dimmed overview outside ROI
   has_audio: bool                           -- any audio loaded
   current_filename: String
 
@@ -258,7 +259,7 @@ fn normalize(target_peak) -> f32            -- returns gain applied; uses Arc::m
 enum LastEditedField { Overlap, SegmentsPerActive, BinsPerSegment }
 
 struct SolverConstraints { min_window(4), max_window, min_overlap_percent(0), max_overlap_percent(99) }
-struct SolverInput { active_samples, window_length, overlap_percent, zero_pad_factor, target_segments, target_bins, last_edited, constraints }
+struct SolverInput { active_samples, window_length, overlap_percent, use_center, zero_pad_factor, target_segments, target_bins, last_edited, constraints }
 struct SolverOutput { window_length, overlap_percent, segments_per_active, bins_per_segment }
 
 fn solve(input) -> SolverOutput
@@ -266,12 +267,12 @@ fn solve(input) -> SolverOutput
   -- Overlap: if target_segments locked, solves window to match
   -- BinsPerSegment: if target_segments locked, uses that; else derives window from bins
 
-fn solve_window_for_segments(active, overlap, target, constraints) -> usize
+fn solve_window_for_segments(active, overlap, use_center, target, constraints) -> usize
   -- Analytical approximation + local search (256 steps) for closest segment count
 
 fn clamp_even(value, min, max) -> usize     -- forces even, minimum 4
 fn hop_length(window, overlap) -> usize
-fn num_segments(active, window, hop) -> usize
+fn num_segments(active, window, hop, use_center) -> usize
 ```
 
 ---
@@ -293,6 +294,7 @@ fn process(audio, params, cancel, progress: Option<&AtomicUsize>) -> Spectrogram
      - Forward realfft
      - Extract magnitude (normalized: |X|/N * amplitude_scale) and phase
   5. Builds Spectrogram from frames + frequencies
+  Logs under SINGLE_FRAME_DBG: active_samples, padded_len, num_frames, first/last frame times
 ```
 
 ### `reconstructor.rs`
@@ -300,17 +302,24 @@ fn process(audio, params, cancel, progress: Option<&AtomicUsize>) -> Spectrogram
 thread_local IFFT_PLANNER: RefCell<RealFftPlanner<f32>>
 
 struct Reconstructor (stateless)
+struct CenteredCropPlan { raw_len, keep_start, keep_end, crop_left, crop_right }
 fn reconstruct(spec, params, view, cancel, progress: Option<&AtomicUsize>) -> AudioData       -- full spectrogram
 fn reconstruct_range(spec, params, view, frame_range, cancel, progress: Option<&AtomicUsize>) -> AudioData
+fn centered_crop_plan(spec, params, frame_range) -> Option<CenteredCropPlan>
+fn reconstruction_start_sample(spec, params, frame_range) -> Option<usize>
   Phase 1 (parallel): For each frame in range:
     - Filter bins by [recon_freq_min, recon_freq_max]
     - Sort by magnitude, keep top recon_freq_count
     - Undo forward scaling (DC/Nyquist: mag*N, others: mag*N/2)
     - Inverse realfft, normalize by 1/N
     - Apply synthesis window (first window_len samples)
+    - Count active bins per frame for diagnostics
   Phase 2 (sequential): Overlap-add
     - Accumulate windowed frames + window_sum (w[i]^2)
-    - Normalize: output[i] /= window_sum[i], with 10%-of-peak threshold to avoid edge artifacts
+    - Normalize wherever window_sum > tiny epsilon (replaced old broad 10%-of-peak gate)
+    - If centered: crop raw support back to actually covered unpadded support
+    - Logs under SINGLE_FRAME_DBG: support/crop summary, active-bin min/max/avg,
+      gap runs, and frame-boundary jump sizes
 ```
 
 ---
@@ -609,6 +618,7 @@ const FFT_DBG: bool         -- FFT processing pipeline, worker lifecycle, timing
 const PLAYBACK_DBG: bool    -- audio playback state transitions, seek, loop
 const RENDER_DBG: bool      -- spectrogram/waveform draw calls, cache hits/misses
 const FILE_IO_DBG: bool     -- file open/save/load operations with counts (default: true)
+const SINGLE_FRAME_DBG: bool -- single-frame/support/gap diagnostics (default: true)
 fn instant_since_start(Instant) -> String   -- elapsed since program start
 ```
 
