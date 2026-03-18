@@ -1,5 +1,8 @@
+use std::hash::{Hash, Hasher};
+
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
+use rayon::prelude::*;
 
 use crate::data::ViewState;
 
@@ -9,6 +12,7 @@ const WAVE_COLOR: (u8, u8, u8) = (0x89, 0xb4, 0xfa); // accent blue
 const DOT_COLOR: (u8, u8, u8) = (0xf9, 0xe2, 0xaf); // warm yellow for sample dots
 const CENTER_LINE_COLOR: (u8, u8, u8) = (0x45, 0x47, 0x5a);
 const CURSOR_COLOR: (u8, u8, u8) = (0xf3, 0x8b, 0xa8); // red-pink
+const CURSOR_WIDTH: i32 = 3;
 
 pub struct WaveformRenderer {
     cached_image: Option<RgbImage>,
@@ -39,27 +43,20 @@ impl WaveformRenderer {
         audio_time_start: f64,
         audio_time_end: f64,
     ) -> u64 {
-        let mut h: u64 = 0;
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add((view.time_min_sec * 10000.0) as u64);
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add((view.time_max_sec * 10000.0) as u64);
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add((audio_time_start * 10000.0) as u64);
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add((audio_time_end * 10000.0) as u64);
-        h = h.wrapping_mul(31).wrapping_add(sample_count as u64);
-        h
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        view.time_min_sec.to_bits().hash(&mut hasher);
+        view.time_max_sec.to_bits().hash(&mut hasher);
+        audio_time_start.to_bits().hash(&mut hasher);
+        audio_time_end.to_bits().hash(&mut hasher);
+        sample_count.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Draw waveform from raw samples.
     /// `samples`: raw audio sample data
     /// `sample_rate`: audio sample rate
     /// `audio_time_start`: time offset of first sample in the full file timeline
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         samples: &[f32],
@@ -106,16 +103,17 @@ impl WaveformRenderer {
         }
 
         // Draw playback cursor on top
-        if let Some(cx) = cursor_x {
-            if cx >= 0 && cx < w {
-                use fltk::draw;
-                draw::set_draw_color(fltk::enums::Color::from_rgb(
-                    CURSOR_COLOR.0,
-                    CURSOR_COLOR.1,
-                    CURSOR_COLOR.2,
-                ));
-                draw::draw_line(x + cx, y, x + cx, y + h);
-            }
+        if let Some(cx) = cursor_x
+            && cx >= 0
+            && cx < w
+        {
+            use fltk::draw;
+            draw::set_draw_color(fltk::enums::Color::from_rgb(
+                CURSOR_COLOR.0,
+                CURSOR_COLOR.1,
+                CURSOR_COLOR.2,
+            ));
+            draw::draw_rectf(x + cx - CURSOR_WIDTH / 2, y, CURSOR_WIDTH, h);
         }
     }
 
@@ -129,6 +127,7 @@ impl WaveformRenderer {
         draw::draw_text("Waveform", x + 10, y + h / 2 + 4);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rebuild_cache(
         &mut self,
         samples: &[f32],
@@ -210,7 +209,9 @@ impl WaveformRenderer {
         self.finalize_image(width, height);
     }
 
-    /// Zoomed-out mode: compute min/max for each pixel column from raw samples
+    /// Zoomed-out mode: compute min/max for each pixel column from raw samples.
+    /// Peak computation is parallelized with rayon for large waveforms.
+    #[allow(clippy::too_many_arguments)]
     fn draw_peaks(
         &mut self,
         samples: &[f32],
@@ -224,51 +225,60 @@ impl WaveformRenderer {
     ) {
         let total_samples = samples.len();
 
-        for px in 0..width {
-            // Time range for this pixel column
-            let t0 = px as f64 / width as f64;
-            let t1 = (px + 1) as f64 / width as f64;
-            let time0 = view.x_to_time(t0);
-            let time1 = view.x_to_time(t1);
+        // Phase 1: Compute peak y-ranges per column in parallel.
+        // Each entry is Option<(y_top, y_bot)> — None if column has no audio data.
+        let peaks: Vec<Option<(usize, usize)>> = (0..width)
+            .into_par_iter()
+            .map(|px| {
+                let t0 = px as f64 / width as f64;
+                let t1 = (px + 1) as f64 / width as f64;
+                let time0 = view.x_to_time(t0);
+                let time1 = view.x_to_time(t1);
 
-            // Check overlap with audio range
-            if time1 < audio_time_start || time0 > audio_time_end {
-                continue;
-            }
-
-            // Map to sample indices
-            let s0 = ((time0 - audio_time_start) * sr).max(0.0) as usize;
-            let s1 = (((time1 - audio_time_start) * sr).ceil() as usize).min(total_samples);
-
-            if s0 >= s1 || s0 >= total_samples {
-                continue;
-            }
-
-            let mut min_val = f32::MAX;
-            let mut max_val = f32::MIN;
-            for &s in &samples[s0..s1] {
-                if s < min_val {
-                    min_val = s;
+                if time1 < audio_time_start || time0 > audio_time_end {
+                    return None;
                 }
-                if s > max_val {
-                    max_val = s;
+
+                let s0 = ((time0 - audio_time_start) * sr).max(0.0) as usize;
+                let s1 = (((time1 - audio_time_start) * sr).ceil() as usize).min(total_samples);
+
+                if s0 >= s1 || s0 >= total_samples {
+                    return None;
                 }
-            }
 
-            // Map -1..1 to pixel Y (inverted: top = positive)
-            let y_max = (center_y as f32 - max_val * center_y as f32) as usize;
-            let y_min = (center_y as f32 - min_val * center_y as f32) as usize;
+                let mut min_val = f32::MAX;
+                let mut max_val = f32::MIN;
+                for &s in &samples[s0..s1] {
+                    if s < min_val {
+                        min_val = s;
+                    }
+                    if s > max_val {
+                        max_val = s;
+                    }
+                }
 
-            let y_top = y_max.min(y_min).min(height - 1);
-            let y_bot = y_max.max(y_min).min(height - 1);
+                let y_max = (center_y as f32 - max_val * center_y as f32) as usize;
+                let y_min = (center_y as f32 - min_val * center_y as f32) as usize;
 
-            for py in y_top..=y_bot {
-                self.set_pixel(px, py, width, WAVE_COLOR);
+                let y_top = y_max.min(y_min).min(height - 1);
+                let y_bot = y_max.max(y_min).min(height - 1);
+
+                Some((y_top, y_bot))
+            })
+            .collect();
+
+        // Phase 2: Write pixel data from computed peaks (sequential — writes to shared buffer)
+        for (px, peak) in peaks.iter().enumerate() {
+            if let Some((y_top, y_bot)) = peak {
+                for py in *y_top..=*y_bot {
+                    self.set_pixel(px, py, width, WAVE_COLOR);
+                }
             }
         }
     }
 
     /// Zoomed-in mode: draw lines between individual samples, optionally with dots
+    #[allow(clippy::too_many_arguments)]
     fn draw_samples(
         &mut self,
         samples: &[f32],
@@ -330,9 +340,14 @@ impl WaveformRenderer {
 
         // Draw dots at sample positions when very zoomed in
         if show_dots {
-            for i in first_sample..=last_sample {
+            for (i, &sample) in samples
+                .iter()
+                .enumerate()
+                .take(last_sample + 1)
+                .skip(first_sample)
+            {
                 let px = sample_to_px(i);
-                let py = val_to_py(samples[i]);
+                let py = val_to_py(sample);
                 let ipx = px.round() as i32;
                 let ipy = py;
 
@@ -355,6 +370,7 @@ impl WaveformRenderer {
     }
 
     /// Bresenham's line algorithm for pixel buffer
+    #[allow(clippy::too_many_arguments)]
     fn draw_line(
         &mut self,
         x0: i32,
@@ -419,7 +435,11 @@ impl WaveformRenderer {
                 self.cached_image = Some(img);
             }
             Err(e) => {
-                eprintln!("Failed to create waveform image: {:?}", e);
+                app_log!(
+                    "WaveformRenderer",
+                    "Failed to create waveform image: {:?}",
+                    e
+                );
                 self.cached_image = None;
             }
         }

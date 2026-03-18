@@ -1,9 +1,11 @@
+use std::hash::{Hash, Hasher};
+
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 use rayon::prelude::*;
 
 use super::color_lut::ColorLUT;
-use crate::data::{Spectrogram, ViewState};
+use crate::data::{compute_active_bins, FftParams, Spectrogram, ViewState};
 
 pub struct SpectrogramRenderer {
     color_lut: ColorLUT,
@@ -45,91 +47,92 @@ impl SpectrogramRenderer {
         }
     }
 
-    fn view_hash(view: &ViewState, proc_time_min: f64, proc_time_max: f64, w: i32, h: i32) -> u64 {
-        let mut hash: u64 = 0;
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.freq_min_hz * 100.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.freq_max_hz * 100.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.time_min_sec * 10000.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.time_max_sec * 10000.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(match view.freq_scale {
-            crate::data::FreqScale::Linear => 0,
-            crate::data::FreqScale::Log => 1,
-            crate::data::FreqScale::Power(p) => (p * 10000.0) as u64 + 2,
-        });
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.threshold_db * 100.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.db_ceiling * 100.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.brightness * 100.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.gamma * 100.0) as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(view.colormap as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(w as u64);
-        hash = hash.wrapping_mul(31).wrapping_add(h as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((proc_time_min * 10000.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((proc_time_max * 10000.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add(view.recon_freq_count as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.recon_freq_min_hz * 100.0) as u64);
-        hash = hash
-            .wrapping_mul(31)
-            .wrapping_add((view.recon_freq_max_hz * 100.0) as u64);
+    fn view_hash(
+        view: &ViewState,
+        params: &FftParams,
+        proc_time_min: f64,
+        proc_time_max: f64,
+        render_full_file_outside_roi: bool,
+        w: i32,
+        h: i32,
+    ) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        view.freq_min_hz.to_bits().hash(&mut hasher);
+        view.freq_max_hz.to_bits().hash(&mut hasher);
+        view.time_min_sec.to_bits().hash(&mut hasher);
+        view.time_max_sec.to_bits().hash(&mut hasher);
+        match view.freq_scale {
+            crate::data::FreqScale::Linear => 0u8.hash(&mut hasher),
+            crate::data::FreqScale::Log => 1u8.hash(&mut hasher),
+            crate::data::FreqScale::Power(p) => {
+                2u8.hash(&mut hasher);
+                p.to_bits().hash(&mut hasher);
+            }
+        }
+        view.threshold_db.to_bits().hash(&mut hasher);
+        view.db_ceiling.to_bits().hash(&mut hasher);
+        view.brightness.to_bits().hash(&mut hasher);
+        view.gamma.to_bits().hash(&mut hasher);
+        (view.colormap as u8).hash(&mut hasher);
+        w.hash(&mut hasher);
+        h.hash(&mut hasher);
+        proc_time_min.to_bits().hash(&mut hasher);
+        proc_time_max.to_bits().hash(&mut hasher);
+        params.use_center.hash(&mut hasher);
+        params.window_length.hash(&mut hasher);
+        params.hop_length().hash(&mut hasher);
+        params.sample_rate.hash(&mut hasher);
+        render_full_file_outside_roi.hash(&mut hasher);
+        view.recon_freq_count.hash(&mut hasher);
+        view.recon_freq_min_hz.to_bits().hash(&mut hasher);
+        view.recon_freq_max_hz.to_bits().hash(&mut hasher);
         // Include custom gradient in hash
         for stop in &view.custom_gradient {
-            hash = hash
-                .wrapping_mul(31)
-                .wrapping_add((stop.position * 10000.0) as u64);
-            hash = hash.wrapping_mul(31).wrapping_add((stop.r * 255.0) as u64);
-            hash = hash.wrapping_mul(31).wrapping_add((stop.g * 255.0) as u64);
-            hash = hash.wrapping_mul(31).wrapping_add((stop.b * 255.0) as u64);
+            stop.position.to_bits().hash(&mut hasher);
+            stop.r.to_bits().hash(&mut hasher);
+            stop.g.to_bits().hash(&mut hasher);
+            stop.b.to_bits().hash(&mut hasher);
         }
-        hash
+        hasher.finish()
     }
 
     fn needs_rebuild(
         &self,
         view: &ViewState,
+        params: &FftParams,
         proc_time_min: f64,
         proc_time_max: f64,
+        render_full_file_outside_roi: bool,
         width: i32,
         height: i32,
     ) -> bool {
         if !self.cache_valid {
             return true;
         }
-        let hash = Self::view_hash(view, proc_time_min, proc_time_max, width, height);
+        let hash = Self::view_hash(
+            view,
+            params,
+            proc_time_min,
+            proc_time_max,
+            render_full_file_outside_roi,
+            width,
+            height,
+        );
         hash != self.last_view_hash
     }
 
     /// Main draw method - call from widget's draw callback.
     /// proc_time_min/max: the processing time range (sidebar Start/Stop).
     /// Areas outside this time range are rendered grayed out.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         spec: &Spectrogram,
         view: &ViewState,
+        params: &FftParams,
         proc_time_min: f64,
         proc_time_max: f64,
+        render_full_file_outside_roi: bool,
         x: i32,
         y: i32,
         w: i32,
@@ -144,18 +147,36 @@ impl SpectrogramRenderer {
             return;
         }
 
-        if self.needs_rebuild(view, proc_time_min, proc_time_max, w, h) {
+        if self.needs_rebuild(
+            view,
+            params,
+            proc_time_min,
+            proc_time_max,
+            render_full_file_outside_roi,
+            w,
+            h,
+        ) {
             self.update_lut(view);
             self.rebuild_cache(
                 spec,
                 view,
+                params,
                 proc_time_min,
                 proc_time_max,
+                render_full_file_outside_roi,
                 w as usize,
                 h as usize,
             );
             self.last_widget_size = (w, h);
-            self.last_view_hash = Self::view_hash(view, proc_time_min, proc_time_max, w, h);
+            self.last_view_hash = Self::view_hash(
+                view,
+                params,
+                proc_time_min,
+                proc_time_max,
+                render_full_file_outside_roi,
+                w,
+                h,
+            );
             self.cache_valid = true;
         }
 
@@ -178,8 +199,10 @@ impl SpectrogramRenderer {
         &mut self,
         spec: &Spectrogram,
         view: &ViewState,
+        params: &FftParams,
         proc_time_min: f64,
         proc_time_max: f64,
+        render_full_file_outside_roi: bool,
         width: usize,
         height: usize,
     ) {
@@ -190,71 +213,130 @@ impl SpectrogramRenderer {
 
         let num_bins = spec.num_bins();
 
-        // Pre-compute active bins per frame based on freq range + freq count filtering
-        // This mirrors what the Reconstructor does, so the spectrogram shows
-        // exactly which bins will be used for reconstruction.
+        // Pre-compute active bins per frame based on freq range + freq count filtering.
+        // Uses shared compute_active_bins() so renderer and reconstructor always agree.
         let freq_min = view.recon_freq_min_hz;
         let freq_max = view.recon_freq_max_hz;
         let freq_count = view.recon_freq_count;
+
+        let spec_freqs = &spec.frequencies;
 
         let active_bins: Vec<Vec<bool>> = spec
             .frames
             .par_iter()
             .map(|frame| {
-                let mut bin_mags: Vec<(usize, f32)> = frame
-                    .magnitudes
-                    .iter()
-                    .zip(frame.frequencies.iter())
-                    .enumerate()
-                    .filter_map(|(i, (&mag, &freq))| {
-                        if freq >= freq_min && freq <= freq_max {
-                            Some((i, mag))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                bin_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-                let keep = freq_count.min(bin_mags.len());
-                let mut active = vec![false; frame.magnitudes.len()];
-                for &(idx, _) in &bin_mags[..keep] {
-                    active[idx] = true;
-                }
-                active
+                compute_active_bins(
+                    &frame.magnitudes,
+                    spec_freqs,
+                    freq_min,
+                    freq_max,
+                    freq_count,
+                )
             })
             .collect();
 
-        // Pre-compute frequency bin for each pixel row (exact single bin, no blending)
-        let row_bins: Vec<usize> = (0..height)
+        let first_in_range = spec_freqs.iter().position(|&f| f >= freq_min);
+        let last_in_range = spec_freqs.iter().rposition(|&f| f <= freq_max);
+
+        // Pre-compute frequency bin and frequency ROI flag for each pixel row.
+        let row_data: Vec<(usize, bool)> = (0..height)
             .map(|py| {
                 let flipped_py = height - 1 - py;
                 let t = flipped_py as f32 / height as f32;
                 let freq = view.y_to_freq(t);
+                let in_freq_roi = freq >= freq_min && freq <= freq_max;
 
-                if let Some(first_frame) = spec.frames.first() {
-                    // Find nearest bin by frequency
-                    let mut best_bin = 0;
-                    let mut best_dist = f32::MAX;
-                    for (i, &f) in first_frame.frequencies.iter().enumerate() {
-                        let dist = (f - freq).abs();
-                        if dist < best_dist {
-                            best_dist = dist;
-                            best_bin = i;
+                if !spec_freqs.is_empty() {
+                    let (search_start, search_end) = if in_freq_roi {
+                        match (first_in_range, last_in_range) {
+                            (Some(start), Some(end)) if start <= end => (start, end),
+                            _ => (0, spec_freqs.len() - 1),
                         }
-                    }
-                    best_bin.min(num_bins - 1)
+                    } else {
+                        (0, spec_freqs.len() - 1)
+                    };
+
+                    // Binary search for nearest bin by frequency, clamped to the
+                    // active ROI bin range when the row is geometrically inside
+                    // the ROI. This keeps boundary rows from snapping to an
+                    // out-of-band bin and turning into flat lowest-color stripes.
+                    let idx = spec_freqs.partition_point(|&f| f < freq);
+                    let idx = idx.clamp(search_start, search_end + 1);
+                    let best_bin = if idx <= search_start {
+                        search_start
+                    } else if idx > search_end {
+                        search_end
+                    } else {
+                        let lo = idx - 1;
+                        let hi = idx;
+                        let d_lo = (spec_freqs[lo] - freq).abs();
+                        let d_hi = (spec_freqs[hi] - freq).abs();
+                        if d_lo <= d_hi {
+                            lo
+                        } else {
+                            hi
+                        }
+                    };
+
+                    (best_bin.min(num_bins - 1), in_freq_roi)
                 } else {
-                    0
+                    (0, in_freq_roi)
                 }
             })
             .collect();
 
-        // Pre-compute frame index and time for each pixel column (exact single frame)
-        let col_data: Vec<(usize, f64)> = (0..width)
+        let window_seconds = params.window_length as f64 / params.sample_rate.max(1) as f64;
+        let frame_times: Vec<f64> = spec.frames.iter().map(|f| f.time_seconds).collect();
+        let frame_centers: Vec<f64> = if params.use_center {
+            frame_times.clone()
+        } else {
+            frame_times
+                .iter()
+                .map(|&t| t + window_seconds * 0.5)
+                .collect()
+        };
+
+        let support_start = if params.use_center {
+            (frame_times[0] - window_seconds * 0.5).max(params.start_seconds())
+        } else {
+            frame_times[0]
+        };
+        let support_end = if params.use_center {
+            (frame_times[frame_times.len() - 1] + window_seconds * 0.5).min(params.stop_seconds())
+        } else {
+            (frame_times[frame_times.len() - 1] + window_seconds).min(params.stop_seconds())
+        };
+        let frame_edges: Vec<f64> = {
+            let mut edges = Vec::with_capacity(frame_centers.len() + 1);
+            edges.push(support_start);
+            for i in 1..frame_centers.len() {
+                edges.push((frame_centers[i - 1] + frame_centers[i]) * 0.5);
+            }
+            edges.push(support_end);
+            edges
+        };
+
+        let bg = crate::ui::theme::BG_DARK;
+        let bg_r = ((bg >> 16) & 0xFF) as u8;
+        let bg_g = ((bg >> 8) & 0xFF) as u8;
+        let bg_b = (bg & 0xFF) as u8;
+
+        // Pre-compute frame index and time ownership for each pixel column.
+        let col_data: Vec<(Option<usize>, f64)> = (0..width)
             .map(|px| {
                 let t = px as f64 / width.max(1) as f64;
                 let time = view.x_to_time(t);
-                let frame_idx = spec.frame_at_time(time).unwrap_or(0);
+
+                let frame_idx = if frame_edges.len() >= 2
+                    && time >= frame_edges[0]
+                    && time < *frame_edges.last().unwrap()
+                {
+                    let idx = frame_edges.partition_point(|&edge| edge <= time);
+                    Some(idx.saturating_sub(1).min(spec.frames.len() - 1))
+                } else {
+                    None
+                };
+
                 (frame_idx, time)
             })
             .collect();
@@ -267,17 +349,32 @@ impl SpectrogramRenderer {
             .par_chunks_mut(row_size)
             .enumerate()
             .for_each(|(py, row)| {
-                let bin = row_bins[py];
+                let (bin, in_freq_roi) = row_data[py];
 
-                for px in 0..width {
-                    let (frame_idx, time) = col_data[px];
+                for (px, &(frame_idx_opt, time)) in col_data.iter().enumerate() {
+                    let idx = px * 3;
 
-                    // Get exact magnitude for this single bin/frame
+                    let Some(frame_idx) = frame_idx_opt else {
+                        row[idx] = bg_r;
+                        row[idx + 1] = bg_g;
+                        row[idx + 2] = bg_b;
+                        continue;
+                    };
+
+                    // Get exact magnitude for this single bin/frame.
+                    // Inside the ROI frequency band we preserve the current
+                    // active-bin behavior. Outside the ROI frequency band we
+                    // use the raw spectrogram magnitude so the content can be
+                    // dimmed instead of going blank.
                     let max_mag = if let Some(frame) = spec.frames.get(frame_idx) {
-                        if active_bins[frame_idx].get(bin).copied().unwrap_or(false) {
-                            frame.magnitudes.get(bin).copied().unwrap_or(0.0)
+                        if in_freq_roi {
+                            if active_bins[frame_idx].get(bin).copied().unwrap_or(false) {
+                                frame.magnitudes.get(bin).copied().unwrap_or(0.0)
+                            } else {
+                                0.0
+                            }
                         } else {
-                            0.0
+                            frame.magnitudes.get(bin).copied().unwrap_or(0.0)
                         }
                     } else {
                         0.0
@@ -285,21 +382,25 @@ impl SpectrogramRenderer {
 
                     let (r, g, b) = lut.lookup(max_mag);
 
-                    // Check if this pixel's time is within the processing range
+                    // Check if this pixel is inside the ROI rectangle.
                     let in_proc_range = time >= proc_time_min && time <= proc_time_max;
+                    let in_roi = in_proc_range && in_freq_roi;
 
-                    let idx = px * 3;
-                    if in_proc_range {
+                    if in_roi {
                         row[idx] = r;
                         row[idx + 1] = g;
                         row[idx + 2] = b;
-                    } else {
-                        // Grayed out: desaturate and dim to ~35%
+                    } else if render_full_file_outside_roi {
+                        // Outside ROI: desaturate and dim to ~35% so context stays visible.
                         let gray =
                             ((r as f32 * 0.3 + g as f32 * 0.59 + b as f32 * 0.11) * 0.35) as u8;
                         row[idx] = gray;
                         row[idx + 1] = gray;
                         row[idx + 2] = gray;
+                    } else {
+                        row[idx] = 0;
+                        row[idx + 1] = 0;
+                        row[idx + 2] = 0;
                     }
                 }
             });
@@ -314,7 +415,11 @@ impl SpectrogramRenderer {
                 self.cached_image = Some(img);
             }
             Err(e) => {
-                eprintln!("Failed to create spectrogram image: {:?}", e);
+                app_log!(
+                    "SpectrogramRenderer",
+                    "Failed to create spectrogram image: {:?}",
+                    e
+                );
                 self.cached_image = None;
             }
         }

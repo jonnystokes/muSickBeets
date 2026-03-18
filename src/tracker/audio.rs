@@ -19,7 +19,7 @@
 // ============================================================================
 
 use std::fs::File;
-use std::io::{Write, BufWriter};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 // ============================================================================
@@ -39,8 +39,8 @@ use std::path::Path;
 // ============================================================================
 
 /// WAV format constants
-const WAV_FORMAT_PCM: u16 = 1;          // Standard PCM
-const WAV_FORMAT_IEEE_FLOAT: u16 = 3;   // 32-bit float
+const WAV_FORMAT_PCM: u16 = 1; // Standard PCM
+const WAV_FORMAT_IEEE_FLOAT: u16 = 3; // 32-bit float
 
 /// Writes audio data to a WAV file
 ///
@@ -62,13 +62,12 @@ pub fn write_wav_file(
         return Err("No samples to write".to_string());
     }
 
-    if samples.len() % 2 != 0 {
+    if !samples.len().is_multiple_of(2) {
         return Err("Sample count must be even (stereo)".to_string());
     }
 
     // Create the file
-    let file = File::create(path)
-        .map_err(|e| format!("Failed to create file: {}", e))?;
+    let file = File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
     let mut writer = BufWriter::new(file);
 
     // Calculate sizes
@@ -77,7 +76,11 @@ pub fn write_wav_file(
     let bytes_per_sample = bits_per_sample / 8;
     let block_align = num_channels * bytes_per_sample;
     let byte_rate = sample_rate * block_align as u32;
-    let format_tag = if use_float { WAV_FORMAT_IEEE_FLOAT } else { WAV_FORMAT_PCM };
+    let format_tag = if use_float {
+        WAV_FORMAT_IEEE_FLOAT
+    } else {
+        WAV_FORMAT_PCM
+    };
 
     // For float format, we need the 'fact' chunk
     let has_fact_chunk = use_float;
@@ -98,53 +101,70 @@ pub fn write_wav_file(
         audio_data_bytes;
 
     // ---- Write RIFF Header ----
-    writer.write_all(b"RIFF")
+    writer
+        .write_all(b"RIFF")
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&riff_chunk_size.to_le_bytes())
+    writer
+        .write_all(&riff_chunk_size.to_le_bytes())
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(b"WAVE")
+    writer
+        .write_all(b"WAVE")
         .map_err(|e| format!("Write error: {}", e))?;
 
     // ---- Write Format Chunk ----
-    writer.write_all(b"fmt ")
+    writer
+        .write_all(b"fmt ")
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&16u32.to_le_bytes()) // Chunk size (16 for PCM)
+    writer
+        .write_all(&16u32.to_le_bytes()) // Chunk size (16 for PCM)
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&format_tag.to_le_bytes()) // Format tag
+    writer
+        .write_all(&format_tag.to_le_bytes()) // Format tag
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&num_channels.to_le_bytes()) // Channels
+    writer
+        .write_all(&num_channels.to_le_bytes()) // Channels
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&sample_rate.to_le_bytes()) // Sample rate
+    writer
+        .write_all(&sample_rate.to_le_bytes()) // Sample rate
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&byte_rate.to_le_bytes()) // Byte rate
+    writer
+        .write_all(&byte_rate.to_le_bytes()) // Byte rate
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&block_align.to_le_bytes()) // Block align
+    writer
+        .write_all(&block_align.to_le_bytes()) // Block align
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&bits_per_sample.to_le_bytes()) // Bits per sample
+    writer
+        .write_all(&bits_per_sample.to_le_bytes()) // Bits per sample
         .map_err(|e| format!("Write error: {}", e))?;
 
     // ---- Write Fact Chunk (for float format) ----
     if has_fact_chunk {
         let sample_count = samples.len() as u32 / num_channels as u32;
-        writer.write_all(b"fact")
+        writer
+            .write_all(b"fact")
             .map_err(|e| format!("Write error: {}", e))?;
-        writer.write_all(&4u32.to_le_bytes()) // Chunk size
+        writer
+            .write_all(&4u32.to_le_bytes()) // Chunk size
             .map_err(|e| format!("Write error: {}", e))?;
-        writer.write_all(&sample_count.to_le_bytes()) // Sample count per channel
+        writer
+            .write_all(&sample_count.to_le_bytes()) // Sample count per channel
             .map_err(|e| format!("Write error: {}", e))?;
     }
 
     // ---- Write Data Chunk Header ----
-    writer.write_all(b"data")
+    writer
+        .write_all(b"data")
         .map_err(|e| format!("Write error: {}", e))?;
-    writer.write_all(&audio_data_bytes.to_le_bytes())
+    writer
+        .write_all(&audio_data_bytes.to_le_bytes())
         .map_err(|e| format!("Write error: {}", e))?;
 
     // ---- Write Audio Data ----
     if use_float {
         // Write 32-bit floats directly
         for &sample in samples {
-            writer.write_all(&sample.to_le_bytes())
+            writer
+                .write_all(&sample.to_le_bytes())
                 .map_err(|e| format!("Write error: {}", e))?;
         }
     } else {
@@ -153,14 +173,14 @@ pub fn write_wav_file(
             // Clamp and scale to i16 range
             let clamped = sample.clamp(-1.0, 1.0);
             let scaled = (clamped * 32767.0) as i16;
-            writer.write_all(&scaled.to_le_bytes())
+            writer
+                .write_all(&scaled.to_le_bytes())
                 .map_err(|e| format!("Write error: {}", e))?;
         }
     }
 
     // Flush and finish
-    writer.flush()
-        .map_err(|e| format!("Flush error: {}", e))?;
+    writer.flush().map_err(|e| format!("Flush error: {}", e))?;
 
     Ok(())
 }
@@ -265,9 +285,7 @@ pub fn normalize_audio(samples: &mut [f32], target_peak: f32) -> f32 {
     }
 
     // Find current peak
-    let current_peak = samples.iter()
-        .map(|s| s.abs())
-        .fold(0.0_f32, f32::max);
+    let current_peak = samples.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
 
     if current_peak < 0.0001 {
         // Audio is essentially silent
@@ -302,9 +320,7 @@ mod tests {
     #[test]
     fn test_analyze_audio() {
         // Create a simple sine wave
-        let samples: Vec<f32> = (0..1000)
-            .map(|i| (i as f32 * 0.1).sin() * 0.5)
-            .collect();
+        let samples: Vec<f32> = (0..1000).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
 
         let stats = analyze_audio(&samples, 48000);
 

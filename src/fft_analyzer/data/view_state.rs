@@ -44,13 +44,10 @@ pub fn eval_gradient(stops: &[GradientStop], t: f32) -> (f32, f32, f32) {
         return (last.r, last.g, last.b);
     }
     // Find bracketing stops
-    let mut idx = 0;
-    for i in 1..stops.len() {
-        if t < stops[i].position {
-            break;
-        }
-        idx = i;
-    }
+    let idx = stops
+        .windows(2)
+        .position(|pair| t < pair[1].position)
+        .unwrap_or(stops.len() - 2);
     let s0 = &stops[idx];
     let s1 = &stops[(idx + 1).min(stops.len() - 1)];
     let seg_len = s1.position - s0.position;
@@ -141,6 +138,11 @@ pub struct ViewState {
     pub recon_freq_count: usize,
     pub recon_freq_min_hz: f32,
     pub recon_freq_max_hz: f32,
+    /// Normalization floor for ISTFT overlap-add denominator.
+    /// Samples where the squared-window sum falls below this value are zeroed.
+    /// Default: 1e-6. User-configurable via sidebar "Norm Floor" field.
+    /// Uses f64 to allow very small thresholds (down to ~1e-30).
+    pub recon_norm_floor: f64,
 
     // Full data bounds (for reset zoom / unlocked scrolling)
     pub data_freq_max_hz: f32,
@@ -169,6 +171,7 @@ impl Default for ViewState {
             recon_freq_count: 4097,
             recon_freq_min_hz: 0.0,
             recon_freq_max_hz: 5000.0,
+            recon_norm_floor: 1e-6,
 
             data_freq_max_hz: 5000.0,
             data_time_min_sec: 0.0,

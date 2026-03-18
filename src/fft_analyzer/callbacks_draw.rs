@@ -8,23 +8,126 @@ use fltk::{
 };
 
 use crate::app_state::format_time;
-use crate::app_state::AppState;
+use crate::app_state::{AppState, MouseMode, MouseSelection, MouseSurface, SharedCallbacks};
 use crate::data;
-use crate::dbg_log;
 use crate::debug_flags;
 use crate::layout::Widgets;
 use crate::ui::theme;
+
+const PLAYBACK_CURSOR_W: i32 = 3;
+const MIN_SELECT_DRAG_PX: i32 = 4;
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  DRAW CALLBACKS
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub fn setup_draw_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+pub fn setup_draw_callbacks(
+    widgets: &Widgets,
+    state: &Rc<RefCell<AppState>>,
+    shared: &SharedCallbacks,
+) {
     setup_spectrogram_draw(widgets, state);
-    setup_spectrogram_mouse(widgets, state);
+    setup_spectrogram_mouse(widgets, state, shared);
     setup_waveform_draw(widgets, state);
+    setup_waveform_mouse(widgets, state, shared);
     setup_freq_axis_draw(widgets, state);
     setup_time_axis_draw(widgets, state);
+    setup_scrubber_draw(widgets, state);
+}
+
+fn clamp_local_x(x: i32, widget_w: i32) -> i32 {
+    x.clamp(0, widget_w.max(1))
+}
+
+fn clamp_local_y(y: i32, widget_h: i32) -> i32 {
+    y.clamp(0, widget_h.max(1))
+}
+
+fn local_x_to_time(st: &AppState, local_x: i32, widget_w: i32) -> f64 {
+    let t = clamp_local_x(local_x, widget_w) as f64 / widget_w.max(1) as f64;
+    st.view.x_to_time(t)
+}
+
+fn local_y_to_freq(st: &AppState, local_y: i32, widget_h: i32) -> f32 {
+    let t = 1.0 - (clamp_local_y(local_y, widget_h) as f32 / widget_h.max(1) as f32);
+    st.view.y_to_freq(t)
+}
+
+fn selection_rect(selection: MouseSelection, widget_w: i32, widget_h: i32) -> (i32, i32, i32, i32) {
+    let x0 = clamp_local_x(selection.start_x.min(selection.current_x), widget_w);
+    let x1 = clamp_local_x(selection.start_x.max(selection.current_x), widget_w);
+    let y0 = clamp_local_y(selection.start_y.min(selection.current_y), widget_h);
+    let y1 = clamp_local_y(selection.start_y.max(selection.current_y), widget_h);
+    (x0, y0, x1, y1)
+}
+
+fn draw_selection_overlay(w: &impl WidgetExt, selection: MouseSelection) {
+    let (x0, y0, x1, y1) = selection_rect(selection, w.w(), w.h());
+    let rect_w = (x1 - x0).max(1);
+    let rect_h = (y1 - y0).max(1);
+
+    fltk::draw::set_draw_color(theme::color(theme::ACCENT_YELLOW));
+    fltk::draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
+    fltk::draw::draw_rect(w.x() + x0, w.y() + y0, rect_w, rect_h);
+    fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
+}
+
+fn pan_time_view(st: &mut AppState, delta_seconds: f64) {
+    let range = st.view.visible_time_range();
+    let data_min = st.view.data_time_min_sec;
+    let data_max = st.view.data_time_max_sec;
+    let data_range = (data_max - data_min).max(0.0);
+    if range <= 0.0 || data_range <= 0.0 {
+        return;
+    }
+
+    if range >= data_range {
+        st.view.time_min_sec = data_min;
+        st.view.time_max_sec = data_max;
+        return;
+    }
+
+    let mut new_min = st.view.time_min_sec + delta_seconds;
+    let mut new_max = new_min + range;
+    if new_min < data_min {
+        new_min = data_min;
+        new_max = data_min + range;
+    }
+    if new_max > data_max {
+        new_max = data_max;
+        new_min = data_max - range;
+    }
+    st.view.time_min_sec = new_min;
+    st.view.time_max_sec = new_max;
+}
+
+fn pan_freq_view(st: &mut AppState, delta_hz: f32) {
+    let range = st.view.visible_freq_range();
+    let data_min = 1.0_f32;
+    let data_max = st.view.data_freq_max_hz.max(data_min);
+    let data_range = (data_max - data_min).max(0.0);
+    if range <= 0.0 || data_range <= 0.0 {
+        return;
+    }
+
+    if range >= data_range {
+        st.view.freq_min_hz = data_min;
+        st.view.freq_max_hz = data_max;
+        return;
+    }
+
+    let mut new_min = st.view.freq_min_hz + delta_hz;
+    let mut new_max = new_min + range;
+    if new_min < data_min {
+        new_min = data_min;
+        new_max = data_min + range;
+    }
+    if new_max > data_max {
+        new_max = data_max;
+        new_min = data_max - range;
+    }
+    st.view.freq_min_hz = new_min;
+    st.view.freq_max_hz = new_max;
 }
 
 // ── Spectrogram display ──
@@ -44,30 +147,150 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             let Ok(mut st) = state.try_borrow_mut() else {
                 dbg_log!(
                     debug_flags::RENDER_DBG,
-                    "[RENDER] Spectrogram draw skipped: state borrow conflict"
+                    "Render",
+                    "Spectrogram draw skipped: state borrow conflict"
                 );
                 return;
             };
-            if let Some(spec) = st.spectrogram.clone() {
+            let overview_spec = st.overview_spectrogram.clone();
+            let focus_spec = st.focus_spectrogram.clone();
+            let legacy_spec = st.spectrogram.clone();
+            if overview_spec.is_some() || focus_spec.is_some() || legacy_spec.is_some() {
                 let view = st.view.clone();
+                let focus_params = st
+                    .focus_spec_params
+                    .clone()
+                    .unwrap_or_else(|| st.fft_params.clone());
+                let overview_params = st
+                    .overview_spec_params
+                    .clone()
+                    .or_else(|| {
+                        st.audio_data
+                            .as_ref()
+                            .map(|a| st.overview_params_for_audio(a.num_samples()))
+                    })
+                    .unwrap_or_else(|| st.overview_fft_defaults.clone());
                 let proc_time_min = st.fft_params.start_seconds();
                 let proc_time_max = st.fft_params.stop_seconds();
-                st.spec_renderer.draw(
-                    &spec,
-                    &view,
-                    proc_time_min,
-                    proc_time_max,
-                    w.x(),
-                    w.y(),
-                    w.w(),
-                    w.h(),
-                );
+                let render_full_file_outside_roi = st.render_full_file_outside_roi;
+                let ww = w.w().max(1);
+                let wh = w.h().max(1);
+
+                let first_px = (0..ww).find(|&px| {
+                    let t = px as f64 / ww as f64;
+                    let time = view.x_to_time(t);
+                    time >= proc_time_min && time <= proc_time_max
+                });
+                let last_px = (0..ww).rfind(|&px| {
+                    let t = px as f64 / ww as f64;
+                    let time = view.x_to_time(t);
+                    time >= proc_time_min && time <= proc_time_max
+                });
+
+                let first_py = (0..wh).find(|&py| {
+                    let flipped_py = wh - 1 - py;
+                    let t = flipped_py as f32 / wh as f32;
+                    let freq = view.y_to_freq(t);
+                    freq >= view.recon_freq_min_hz && freq <= view.recon_freq_max_hz
+                });
+                let last_py = (0..wh).rfind(|&py| {
+                    let flipped_py = wh - 1 - py;
+                    let t = flipped_py as f32 / wh as f32;
+                    let freq = view.y_to_freq(t);
+                    freq >= view.recon_freq_min_hz && freq <= view.recon_freq_max_hz
+                });
+
+                let roi_clip = match (first_px, last_px, first_py, last_py) {
+                    (Some(px0), Some(px1), Some(py0), Some(py1)) if px1 >= px0 && py1 >= py0 => {
+                        Some((w.x() + px0, w.y() + py0, px1 - px0 + 1, py1 - py0 + 1))
+                    }
+                    _ => None,
+                };
+
+                if let Some(spec) = overview_spec.or_else(|| legacy_spec.clone()) {
+                    if focus_spec.is_some() {
+                        if let Some((clip_x, clip_y, clip_w, clip_h)) = roi_clip {
+                            let right_x = clip_x + clip_w;
+                            let bottom_y = clip_y + clip_h;
+                            let outside_regions = [
+                                (w.x(), w.y(), w.w(), (clip_y - w.y()).max(0)),
+                                (w.x(), bottom_y, w.w(), (w.y() + w.h() - bottom_y).max(0)),
+                                (w.x(), clip_y, (clip_x - w.x()).max(0), clip_h),
+                                (right_x, clip_y, (w.x() + w.w() - right_x).max(0), clip_h),
+                            ];
+
+                            for (cx, cy, cw, ch) in outside_regions {
+                                if cw > 0 && ch > 0 {
+                                    fltk::draw::push_clip(cx, cy, cw, ch);
+                                    st.overview_spec_renderer.draw(
+                                        &spec,
+                                        &view,
+                                        &overview_params,
+                                        proc_time_min,
+                                        proc_time_max,
+                                        render_full_file_outside_roi,
+                                        w.x(),
+                                        w.y(),
+                                        w.w(),
+                                        w.h(),
+                                    );
+                                    fltk::draw::pop_clip();
+                                }
+                            }
+                        } else {
+                            st.overview_spec_renderer.draw(
+                                &spec,
+                                &view,
+                                &overview_params,
+                                proc_time_min,
+                                proc_time_max,
+                                render_full_file_outside_roi,
+                                w.x(),
+                                w.y(),
+                                w.w(),
+                                w.h(),
+                            );
+                        }
+                    } else {
+                        st.overview_spec_renderer.draw(
+                            &spec,
+                            &view,
+                            &overview_params,
+                            proc_time_min,
+                            proc_time_max,
+                            render_full_file_outside_roi,
+                            w.x(),
+                            w.y(),
+                            w.w(),
+                            w.h(),
+                        );
+                    }
+                }
+
+                if let Some(spec) = focus_spec.or(legacy_spec) {
+                    if let Some((clip_x, clip_y, clip_w, clip_h)) = roi_clip {
+                        fltk::draw::push_clip(clip_x, clip_y, clip_w, clip_h);
+                        st.focus_spec_renderer.draw(
+                            &spec,
+                            &view,
+                            &focus_params,
+                            proc_time_min,
+                            proc_time_max,
+                            false,
+                            w.x(),
+                            w.y(),
+                            w.w(),
+                            w.h(),
+                        );
+                        fltk::draw::pop_clip();
+                    }
+                }
 
                 let cursor_cx = if st.transport.duration_samples > 0 {
                     let playback_time =
                         st.recon_start_seconds() + st.audio_player.get_position_seconds();
                     let cursor_t = st.view.time_to_x(playback_time);
-                    if cursor_t >= 0.0 && cursor_t <= 1.0 {
+                    if (0.0..=1.0).contains(&cursor_t) {
                         Some(w.x() + (cursor_t * w.w() as f64) as i32)
                     } else {
                         None
@@ -85,9 +308,174 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
         match draw_data {
             Some(cursor_cx) => {
+                let st = match state.try_borrow() {
+                    Ok(st) => st,
+                    Err(_) => return,
+                };
+
+                let time_to_x_unclamped = |time_sec: f64| {
+                    let range = st.view.time_max_sec - st.view.time_min_sec;
+                    if range <= 0.0 {
+                        0.0
+                    } else {
+                        (time_sec - st.view.time_min_sec) / range
+                    }
+                };
+
+                let freq_to_y_unclamped = |freq_hz: f32| {
+                    let min = st.view.freq_min_hz.max(1.0);
+                    let max = st.view.freq_max_hz.max(min + 1.0);
+                    match st.view.freq_scale {
+                        crate::data::FreqScale::Linear => (freq_hz - min) / (max - min),
+                        crate::data::FreqScale::Log => (freq_hz / min).ln() / (max / min).ln(),
+                        crate::data::FreqScale::Power(power) => {
+                            let p = power.clamp(0.0, 1.0);
+                            if p <= 0.001 {
+                                (freq_hz - min) / (max - min)
+                            } else if p >= 0.999 {
+                                (freq_hz / min).ln() / (max / min).ln()
+                            } else {
+                                let eval_freq = |t: f32| {
+                                    let linear_freq = min + (max - min) * t;
+                                    let log_freq = min * (max / min).powf(t);
+                                    linear_freq.powf(1.0 - p) * log_freq.powf(p)
+                                };
+
+                                let (mut lo, mut hi) = if freq_hz < min {
+                                    let mut lo = -1.0_f32;
+                                    let hi = 0.0_f32;
+                                    while eval_freq(lo) > freq_hz {
+                                        lo *= 2.0;
+                                    }
+                                    (lo, hi)
+                                } else if freq_hz > max {
+                                    let lo = 1.0_f32;
+                                    let mut hi = 2.0_f32;
+                                    while eval_freq(hi) < freq_hz {
+                                        hi *= 2.0;
+                                    }
+                                    (lo, hi)
+                                } else {
+                                    (0.0_f32, 1.0_f32)
+                                };
+
+                                for _ in 0..40 {
+                                    let mid = (lo + hi) / 2.0;
+                                    let f = eval_freq(mid);
+                                    if f < freq_hz {
+                                        lo = mid;
+                                    } else {
+                                        hi = mid;
+                                    }
+                                }
+                                (lo + hi) / 2.0
+                            }
+                        }
+                    }
+                };
+
+                let roi_t0 = time_to_x_unclamped(st.fft_params.start_seconds());
+                let roi_t1 = time_to_x_unclamped(st.fft_params.stop_seconds());
+                let roi_f0 = freq_to_y_unclamped(st.view.recon_freq_min_hz);
+                let roi_f1 = freq_to_y_unclamped(st.view.recon_freq_max_hz);
+
+                if roi_t1 > roi_t0 && roi_f1 > roi_f0 {
+                    let stroke_px = 3;
+
+                    let roi_left = w.x() + (roi_t0 * w.w() as f64) as i32;
+                    let roi_right = w.x() + (roi_t1 * w.w() as f64) as i32;
+                    let roi_top = w.y() + ((1.0 - roi_f1) * w.h() as f32) as i32;
+                    let roi_bottom = w.y() + ((1.0 - roi_f0) * w.h() as f32) as i32;
+
+                    let vis_left = w.x();
+                    let vis_right = w.x() + w.w();
+                    let vis_top = w.y();
+                    let vis_bottom = w.y() + w.h();
+
+                    let horiz_x0 = roi_left.max(vis_left);
+                    let horiz_x1 = roi_right.min(vis_right);
+                    let vert_y0 = roi_top.max(vis_top);
+                    let vert_y1 = roi_bottom.min(vis_bottom);
+                    let left_edge_visible =
+                        roi_left > vis_left + stroke_px && roi_left <= vis_right;
+                    let right_edge_visible =
+                        roi_right >= vis_left && roi_right < vis_right - stroke_px;
+                    let has_visible_vertical_edge = left_edge_visible || right_edge_visible;
+
+                    fltk::draw::set_draw_color(theme::color(theme::ACCENT_BLUE));
+
+                    // Top edge: entirely outside the ROI, clipped to visible horizontal span.
+                    if roi_top > vis_top + stroke_px
+                        && roi_top <= vis_bottom
+                        && horiz_x1 > horiz_x0
+                        && has_visible_vertical_edge
+                    {
+                        fltk::draw::draw_rectf(
+                            (horiz_x0 - stroke_px).max(vis_left),
+                            roi_top - stroke_px,
+                            ((horiz_x1 + stroke_px).min(vis_right)
+                                - (horiz_x0 - stroke_px).max(vis_left))
+                            .max(1),
+                            stroke_px,
+                        );
+                    }
+
+                    // Bottom edge: entirely outside the ROI.
+                    if roi_bottom >= vis_top
+                        && roi_bottom < vis_bottom - stroke_px
+                        && horiz_x1 > horiz_x0
+                        && has_visible_vertical_edge
+                    {
+                        fltk::draw::draw_rectf(
+                            (horiz_x0 - stroke_px).max(vis_left),
+                            roi_bottom,
+                            ((horiz_x1 + stroke_px).min(vis_right)
+                                - (horiz_x0 - stroke_px).max(vis_left))
+                            .max(1),
+                            stroke_px,
+                        );
+                    }
+
+                    // Left edge: only draw if the actual left ROI boundary is visible.
+                    if left_edge_visible && vert_y1 > vert_y0 {
+                        fltk::draw::draw_rectf(
+                            roi_left - stroke_px,
+                            (vert_y0 - stroke_px).max(vis_top),
+                            stroke_px,
+                            ((vert_y1 + stroke_px).min(vis_bottom)
+                                - (vert_y0 - stroke_px).max(vis_top))
+                            .max(1),
+                        );
+                    }
+
+                    // Right edge: only draw if the actual right ROI boundary is visible.
+                    if right_edge_visible && vert_y1 > vert_y0 {
+                        fltk::draw::draw_rectf(
+                            roi_right,
+                            (vert_y0 - stroke_px).max(vis_top),
+                            stroke_px,
+                            ((vert_y1 + stroke_px).min(vis_bottom)
+                                - (vert_y0 - stroke_px).max(vis_top))
+                            .max(1),
+                        );
+                    }
+                }
+
                 if let Some(cx) = cursor_cx {
                     fltk::draw::set_draw_color(theme::color(theme::ACCENT_RED));
-                    fltk::draw::draw_line(cx, w.y(), cx, w.y() + w.h());
+                    fltk::draw::draw_rectf(
+                        cx - PLAYBACK_CURSOR_W / 2,
+                        w.y(),
+                        PLAYBACK_CURSOR_W,
+                        w.h(),
+                    );
+                }
+
+                if st.mouse_mode != MouseMode::Move
+                    && let Some(selection) = st.mouse_selection
+                    && selection.surface == MouseSurface::Spectrogram
+                {
+                    draw_selection_overlay(w, selection);
                 }
             }
             None => {
@@ -102,31 +490,71 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 }
 
 // ── Spectrogram mouse handling (seek + hover readout + zoom) ──
-fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+fn setup_spectrogram_mouse(
+    widgets: &Widgets,
+    state: &Rc<RefCell<AppState>>,
+    shared: &SharedCallbacks,
+) {
     let state = state.clone();
+    let update_info = shared.update_info.clone();
     let mut cursor_readout = widgets.cursor_readout.clone();
     let mut spec_display_c = widgets.spec_display.clone();
     let mut waveform_display_c = widgets.waveform_display.clone();
     let mut freq_axis_c = widgets.freq_axis.clone();
     let mut time_axis_c = widgets.time_axis.clone();
+    let mut scrub_slider_c = widgets.scrub_slider.clone();
+    let mut input_start = widgets.input_start.clone();
+    let mut input_stop = widgets.input_stop.clone();
+    let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
+    let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
 
     let mut spec_display = widgets.spec_display.clone();
     spec_display.handle(move |w, ev| {
+        let mut redraw_all = || {
+            spec_display_c.redraw();
+            waveform_display_c.redraw();
+            freq_axis_c.redraw();
+            time_axis_c.redraw();
+            scrub_slider_c.redraw();
+        };
+
         match ev {
             Event::Enter => {
                 // Must return true for Enter so FLTK sends Move events to this widget
                 true
             }
             Event::Push => {
-                // Click to seek - convert spectrogram time to audio position
                 let mx = app::event_x() - w.x();
-                let t = mx as f64 / w.w() as f64;
-                let st = state.borrow();
-                let time = st.view.x_to_time(t);
-                // Seek is relative to recon_start_seconds
-                let audio_pos = (time - st.recon_start_seconds()).max(0.0);
-                st.audio_player.set_seeking(true);
-                st.audio_player.seek_to(audio_pos);
+                let my = app::event_y() - w.y();
+                let mut st = state.borrow_mut();
+                match st.mouse_mode {
+                    MouseMode::Time => {
+                        let time = local_x_to_time(&st, mx, w.w());
+                        let audio_pos = (time - st.recon_start_seconds()).max(0.0);
+                        st.audio_player.set_seeking(true);
+                        st.audio_player.seek_to(audio_pos);
+                    }
+                    MouseMode::Move => {
+                        st.mouse_selection = Some(MouseSelection {
+                            surface: MouseSurface::Spectrogram,
+                            start_x: clamp_local_x(mx, w.w()),
+                            start_y: clamp_local_y(my, w.h()),
+                            current_x: clamp_local_x(mx, w.w()),
+                            current_y: clamp_local_y(my, w.h()),
+                        });
+                    }
+                    MouseMode::SelectZoom | MouseMode::RoiSelect => {
+                        st.mouse_selection = Some(MouseSelection {
+                            surface: MouseSurface::Spectrogram,
+                            start_x: clamp_local_x(mx, w.w()),
+                            start_y: clamp_local_y(my, w.h()),
+                            current_x: clamp_local_x(mx, w.w()),
+                            current_y: clamp_local_y(my, w.h()),
+                        });
+                    }
+                }
+                drop(st);
+                spec_display_c.redraw();
                 true
             }
             Event::Move => {
@@ -140,21 +568,48 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 let time = st.view.x_to_time(tx_norm);
                 let freq = st.view.y_to_freq(ty_norm);
 
-                if st.spectrogram.is_none() {
-                    dbg_log!(debug_flags::CURSOR_DBG, "[CURSOR-DBG] No spectrogram loaded");
+                let in_time_roi =
+                    time >= st.fft_params.start_seconds() && time <= st.fft_params.stop_seconds();
+                let in_freq_roi =
+                    freq >= st.view.recon_freq_min_hz && freq <= st.view.recon_freq_max_hz;
+                let in_roi = in_time_roi && in_freq_roi;
+
+                let hover_spec = if in_roi {
+                    st.focus_spectrogram
+                        .as_ref()
+                        .or(st.spectrogram.as_ref())
+                        .or(st.overview_spectrogram.as_ref())
+                } else if st.render_full_file_outside_roi {
+                    st.overview_spectrogram.as_ref().or(st.spectrogram.as_ref())
+                } else {
+                    None
+                };
+
+                if hover_spec.is_none() {
+                    dbg_log!(debug_flags::CURSOR_DBG, "Cursor", "No spectrogram loaded");
                 }
 
-                if let Some(ref spec) = st.spectrogram {
+                if let Some(spec) = hover_spec {
                     let frame_idx_opt = spec.frame_at_time(time);
                     if frame_idx_opt.is_none() {
-                        dbg_log!(debug_flags::CURSOR_DBG,
-                            "[CURSOR-DBG] frame_at_time({}) => None (frames={})", time, spec.num_frames());
+                        dbg_log!(
+                            debug_flags::CURSOR_DBG,
+                            "Cursor",
+                            "frame_at_time({}) => None (frames={})",
+                            time,
+                            spec.num_frames()
+                        );
                     }
                     if let Some(frame_idx) = frame_idx_opt {
                         let bin_idx_opt = spec.bin_at_freq(freq);
                         if bin_idx_opt.is_none() {
-                            dbg_log!(debug_flags::CURSOR_DBG,
-                                "[CURSOR-DBG] bin_at_freq({}) => None (bins={})", freq, spec.num_bins());
+                            dbg_log!(
+                                debug_flags::CURSOR_DBG,
+                                "Cursor",
+                                "bin_at_freq({}) => None (bins={})",
+                                freq,
+                                spec.num_bins()
+                            );
                         }
                         if let Some(bin_idx) = bin_idx_opt {
                             if let Some(mag) = spec
@@ -163,19 +618,28 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                                 .and_then(|f| f.magnitudes.get(bin_idx))
                             {
                                 let db = data::Spectrogram::magnitude_to_db(*mag);
-                                let text = format!(
-                                    "{:.1} Hz | {:.1} dB | {:.5}s",
-                                    freq, db, time
+                                let text = format!("{:.1} Hz | {:.1} dB | {:.5}s", freq, db, time);
+                                dbg_log!(
+                                    debug_flags::CURSOR_DBG,
+                                    "Cursor",
+                                    "OK: {} | widget geom: x={} y={} w={} h={} visible={}",
+                                    text,
+                                    cursor_readout.x(),
+                                    cursor_readout.y(),
+                                    cursor_readout.w(),
+                                    cursor_readout.h(),
+                                    cursor_readout.visible()
                                 );
-                                dbg_log!(debug_flags::CURSOR_DBG,
-                                    "[CURSOR-DBG] OK: {} | widget geom: x={} y={} w={} h={} visible={}",
-                                    text, cursor_readout.x(), cursor_readout.y(),
-                                    cursor_readout.w(), cursor_readout.h(), cursor_readout.visible());
                                 cursor_readout.set_label(&text);
                                 cursor_readout.redraw();
                             } else {
-                                dbg_log!(debug_flags::CURSOR_DBG,
-                                    "[CURSOR-DBG] mag lookup failed: frame_idx={} bin_idx={}", frame_idx, bin_idx);
+                                dbg_log!(
+                                    debug_flags::CURSOR_DBG,
+                                    "Cursor",
+                                    "mag lookup failed: frame_idx={} bin_idx={}",
+                                    frame_idx,
+                                    bin_idx
+                                );
                             }
                         }
                     }
@@ -188,56 +652,60 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 let my = app::event_y() - w.y();
 
                 let modifiers = app::event_state();
-                let has_ctrl = modifiers.contains(fltk::enums::Shortcut::Ctrl.into());
-                let has_alt = modifiers.contains(fltk::enums::Shortcut::Alt.into());
+                let has_ctrl = modifiers.contains(fltk::enums::Shortcut::Ctrl);
+                let has_shift = modifiers.contains(fltk::enums::Shortcut::Shift);
+                let has_alt = modifiers.contains(fltk::enums::Shortcut::Alt);
 
                 // Scroll direction: Up = positive, Down = negative
                 let scroll_up = matches!(dy, fltk::app::MouseWheel::Up);
 
                 let mut st = state.borrow_mut();
 
-                // ── Navigation scheme ──
-                // No modifier:     Pan frequency (scroll up = higher freq)
-                // Ctrl:            Pan time (scroll up = earlier in time)
-                // Alt:             Zoom frequency centered on cursor Y
-                // Alt+Ctrl:        Zoom time centered on cursor X
-                // swap_zoom_axes:  Swaps which axis Alt vs Alt+Ctrl zooms
+                let focus_x = (mx as f64 / w.w().max(1) as f64).clamp(0.0, 1.0);
+                let focus_y = (1.0 - my as f32 / w.h().max(1) as f32).clamp(0.0, 1.0);
+                let time_zoom_factor = if scroll_up {
+                    1.0 / st.mouse_zoom_factor as f64
+                } else {
+                    st.mouse_zoom_factor as f64
+                };
+                let freq_zoom_factor = if scroll_up {
+                    1.0 / st.mouse_zoom_factor
+                } else {
+                    st.mouse_zoom_factor
+                };
 
                 if has_alt {
-                    // Alt held → ZOOM mode
-                    let zoom_freq = if st.swap_zoom_axes { has_ctrl } else { !has_ctrl };
+                    let pan_time = has_ctrl || has_shift;
+                    let pan_freq = !has_ctrl || has_shift;
 
-                    if zoom_freq {
-                        // Zoom frequency axis centered on cursor Y
-                        let focus_t = 1.0 - (my as f32 / w.h() as f32);
-                        let focus_freq = st.view.y_to_freq(focus_t);
+                    if pan_time {
+                        let delta = if scroll_up {
+                            -st.view.visible_time_range() * 0.15
+                        } else {
+                            st.view.visible_time_range() * 0.15
+                        };
+                        pan_time_view(&mut st, delta);
+                    }
 
-                        let mzf = st.mouse_zoom_factor;
-                        let zoom_factor = if scroll_up { 1.0 / mzf } else { mzf };
-                        let range = st.view.visible_freq_range();
-                        let new_range = (range * zoom_factor).clamp(10.0, st.view.data_freq_max_hz);
+                    if pan_freq {
+                        let delta = if scroll_up {
+                            st.view.visible_freq_range() * 0.15
+                        } else {
+                            -st.view.visible_freq_range() * 0.15
+                        };
+                        pan_freq_view(&mut st, delta);
+                    }
+                } else {
+                    let zoom_time = !has_shift || has_ctrl;
+                    let zoom_freq = !has_ctrl || has_shift;
 
-                        let ratio = focus_t;
-                        st.view.freq_min_hz = (focus_freq - new_range * ratio).max(1.0);
-                        st.view.freq_max_hz = st.view.freq_min_hz + new_range;
-                        if st.view.freq_max_hz > st.view.data_freq_max_hz {
-                            st.view.freq_max_hz = st.view.data_freq_max_hz;
-                            st.view.freq_min_hz = (st.view.freq_max_hz - new_range).max(1.0);
-                        }
-                    } else {
-                        // Zoom time axis centered on cursor X
-                        let focus_t = mx as f64 / w.w() as f64;
-                        let focus_time = st.view.x_to_time(focus_t);
-
-                        let mzf = st.mouse_zoom_factor as f64;
-                        let zoom_factor = if scroll_up { 1.0 / mzf } else { mzf };
+                    if zoom_time {
+                        let focus_time = st.view.x_to_time(focus_x);
                         let range = st.view.visible_time_range();
                         let data_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
-                        let new_range = (range * zoom_factor).clamp(0.001, data_range);
-
-                        let ratio = focus_t;
+                        let new_range = (range * time_zoom_factor).clamp(0.001, data_range);
                         st.view.time_min_sec =
-                            (focus_time - new_range * ratio).max(st.view.data_time_min_sec);
+                            (focus_time - new_range * focus_x).max(st.view.data_time_min_sec);
                         st.view.time_max_sec = st.view.time_min_sec + new_range;
                         if st.view.time_max_sec > st.view.data_time_max_sec {
                             st.view.time_max_sec = st.view.data_time_max_sec;
@@ -245,60 +713,160 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                                 (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
                         }
                     }
-                } else if has_ctrl {
-                    // Ctrl (no Alt) → Pan time axis
-                    let range = st.view.visible_time_range();
-                    let pan_step = range * 0.15; // 15% of visible range per scroll tick
-                    let delta = if scroll_up { -pan_step } else { pan_step };
 
-                    let data_min = st.view.data_time_min_sec;
-                    let data_max = st.view.data_time_max_sec;
-
-                    st.view.time_min_sec = (st.view.time_min_sec + delta).max(data_min);
-                    st.view.time_max_sec = st.view.time_min_sec + range;
-                    if st.view.time_max_sec > data_max {
-                        st.view.time_max_sec = data_max;
-                        st.view.time_min_sec = (data_max - range).max(data_min);
-                    }
-                } else {
-                    // No modifier → Pan frequency axis
-                    let range = st.view.visible_freq_range();
-                    let pan_step = range * 0.15; // 15% of visible range per scroll tick
-                    let delta = if scroll_up { pan_step } else { -pan_step };
-
-                    let data_max = st.view.data_freq_max_hz;
-
-                    st.view.freq_min_hz = (st.view.freq_min_hz + delta).max(1.0);
-                    st.view.freq_max_hz = st.view.freq_min_hz + range;
-                    if st.view.freq_max_hz > data_max {
-                        st.view.freq_max_hz = data_max;
-                        st.view.freq_min_hz = (data_max - range).max(1.0);
+                    if zoom_freq {
+                        let focus_freq = st.view.y_to_freq(focus_y);
+                        let range = st.view.visible_freq_range();
+                        let new_range = (range * freq_zoom_factor).clamp(10.0, st.view.data_freq_max_hz);
+                        st.view.freq_min_hz = (focus_freq - new_range * focus_y).max(1.0);
+                        st.view.freq_max_hz = st.view.freq_min_hz + new_range;
+                        if st.view.freq_max_hz > st.view.data_freq_max_hz {
+                            st.view.freq_max_hz = st.view.data_freq_max_hz;
+                            st.view.freq_min_hz = (st.view.freq_max_hz - new_range).max(1.0);
+                        }
                     }
                 }
 
                 st.spec_renderer.invalidate();
                 st.wave_renderer.invalidate();
                 drop(st);
-                spec_display_c.redraw();
-                waveform_display_c.redraw();
-                freq_axis_c.redraw();
-                time_axis_c.redraw();
+                redraw_all();
                 true
             }
             Event::Drag => {
-                // Drag for seeking
                 let mx = app::event_x() - w.x();
-                let t = mx as f64 / w.w() as f64;
-                let st = state.borrow();
-                let time = st.view.x_to_time(t);
-                let audio_pos = (time - st.recon_start_seconds()).max(0.0);
-                st.audio_player.seek_to(audio_pos);
+                let my = app::event_y() - w.y();
+                let mut st = state.borrow_mut();
+                match st.mouse_mode {
+                    MouseMode::Time => {
+                        let time = local_x_to_time(&st, mx, w.w());
+                        let audio_pos = (time - st.recon_start_seconds()).max(0.0);
+                        st.audio_player.seek_to(audio_pos);
+                    }
+                    MouseMode::Move => {
+                        if let Some(selection) = st.mouse_selection.as_mut()
+                            && selection.surface == MouseSurface::Spectrogram
+                        {
+                            let new_x = clamp_local_x(mx, w.w());
+                            let new_y = clamp_local_y(my, w.h());
+                            let dx = new_x - selection.current_x;
+                            let dy = new_y - selection.current_y;
+                            selection.current_x = new_x;
+                            selection.current_y = new_y;
+
+                            let time_delta = -(dx as f64 / w.w().max(1) as f64) * st.view.visible_time_range();
+                            let freq_delta = (dy as f32 / w.h().max(1) as f32) * st.view.visible_freq_range();
+                            pan_time_view(&mut st, time_delta);
+                            pan_freq_view(&mut st, freq_delta);
+                            st.invalidate_all_spectrogram_renderers();
+                            st.wave_renderer.invalidate();
+                            drop(st);
+                            redraw_all();
+                            return true;
+                        }
+                    }
+                    MouseMode::SelectZoom | MouseMode::RoiSelect => {
+                        if let Some(selection) = st.mouse_selection.as_mut()
+                            && selection.surface == MouseSurface::Spectrogram
+                        {
+                            selection.current_x = clamp_local_x(mx, w.w());
+                            selection.current_y = clamp_local_y(my, w.h());
+                        }
+                    }
+                }
+                drop(st);
+                spec_display_c.redraw();
                 true
             }
             Event::Released => {
-                // End seeking - allow normal end-of-track behavior
-                let st = state.borrow();
-                st.audio_player.set_seeking(false);
+                let mx = app::event_x() - w.x();
+                let my = app::event_y() - w.y();
+                let mut needs_update_info = false;
+                let mut needs_redraw_all = false;
+
+                let mut st = state.borrow_mut();
+                match st.mouse_mode {
+                    MouseMode::Time => {
+                        st.audio_player.set_seeking(false);
+                    }
+                    MouseMode::Move => {
+                        st.mouse_selection = None;
+                    }
+                    MouseMode::SelectZoom => {
+                        if let Some(mut selection) = st.mouse_selection.take()
+                            && selection.surface == MouseSurface::Spectrogram
+                        {
+                            selection.current_x = clamp_local_x(mx, w.w());
+                            selection.current_y = clamp_local_y(my, w.h());
+                            let (x0, y0, x1, y1) = selection_rect(selection, w.w(), w.h());
+                            if x1 - x0 >= MIN_SELECT_DRAG_PX && y1 - y0 >= MIN_SELECT_DRAG_PX {
+                                let time_start = local_x_to_time(&st, x0, w.w());
+                                let time_stop = local_x_to_time(&st, x1, w.w());
+                                let freq_max = local_y_to_freq(&st, y0, w.h());
+                                let freq_min = local_y_to_freq(&st, y1, w.h());
+
+                                st.view.time_min_sec =
+                                    time_start.min(time_stop).max(st.view.data_time_min_sec);
+                                st.view.time_max_sec =
+                                    time_start.max(time_stop).min(st.view.data_time_max_sec);
+                                st.view.freq_min_hz = freq_min.max(1.0);
+                                st.view.freq_max_hz = freq_max.min(st.view.data_freq_max_hz);
+                                st.invalidate_all_spectrogram_renderers();
+                                st.wave_renderer.invalidate();
+                                needs_redraw_all = true;
+                            }
+                        }
+                    }
+                    MouseMode::RoiSelect => {
+                        if let Some(mut selection) = st.mouse_selection.take()
+                            && selection.surface == MouseSurface::Spectrogram
+                        {
+                            selection.current_x = clamp_local_x(mx, w.w());
+                            selection.current_y = clamp_local_y(my, w.h());
+                            let (x0, y0, x1, y1) = selection_rect(selection, w.w(), w.h());
+                            if x1 - x0 >= MIN_SELECT_DRAG_PX && y1 - y0 >= MIN_SELECT_DRAG_PX {
+                                let start_time = local_x_to_time(&st, x0, w.w()).min(local_x_to_time(&st, x1, w.w()));
+                                let stop_time = local_x_to_time(&st, x0, w.w()).max(local_x_to_time(&st, x1, w.w()));
+                                let freq_max = local_y_to_freq(&st, y0, w.h());
+                                let freq_min = local_y_to_freq(&st, y1, w.h());
+                                let sample_rate = st.fft_params.sample_rate as f64;
+
+                                st.fft_params.start_sample = (start_time * sample_rate).round() as usize;
+                                st.fft_params.stop_sample = (stop_time * sample_rate).round() as usize;
+                                st.view.recon_freq_min_hz = freq_min.max(1.0);
+                                st.view.recon_freq_max_hz = freq_max.min(st.view.data_freq_max_hz);
+                                st.dirty = true;
+
+                                match st.fft_params.time_unit {
+                                    crate::data::TimeUnit::Seconds => {
+                                        input_start.set_value(&format!("{:.5}", st.fft_params.start_seconds()));
+                                        input_stop.set_value(&format!("{:.5}", st.fft_params.stop_seconds()));
+                                    }
+                                    crate::data::TimeUnit::Samples => {
+                                        input_start.set_value(&st.fft_params.start_sample.to_string());
+                                        input_stop.set_value(&st.fft_params.stop_sample.to_string());
+                                    }
+                                }
+                                input_recon_freq_min.set_value(&format!("{:.0}", st.view.recon_freq_min_hz));
+                                input_recon_freq_max.set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
+                                st.invalidate_all_spectrogram_renderers();
+                                st.wave_renderer.invalidate();
+                                needs_update_info = true;
+                                needs_redraw_all = true;
+                            }
+                        }
+                    }
+                }
+                drop(st);
+
+                if needs_update_info {
+                    (update_info.borrow_mut())();
+                }
+                if needs_redraw_all {
+                    redraw_all();
+                } else {
+                    spec_display_c.redraw();
+                }
                 true
             }
             Event::Leave => {
@@ -306,6 +874,188 @@ fn setup_spectrogram_mouse(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 cursor_readout.redraw();
                 true
             }
+            _ => false,
+        }
+    });
+}
+
+fn setup_waveform_mouse(
+    widgets: &Widgets,
+    state: &Rc<RefCell<AppState>>,
+    shared: &SharedCallbacks,
+) {
+    let state = state.clone();
+    let update_info = shared.update_info.clone();
+    let mut waveform_display_c = widgets.waveform_display.clone();
+    let mut spec_display_c = widgets.spec_display.clone();
+    let mut time_axis_c = widgets.time_axis.clone();
+    let mut scrub_slider_c = widgets.scrub_slider.clone();
+    let mut input_start = widgets.input_start.clone();
+    let mut input_stop = widgets.input_stop.clone();
+
+    let mut waveform_display = widgets.waveform_display.clone();
+    waveform_display.handle(move |w, ev| {
+        let mut redraw_time_views = || {
+            waveform_display_c.redraw();
+            spec_display_c.redraw();
+            time_axis_c.redraw();
+            scrub_slider_c.redraw();
+        };
+
+        match ev {
+            Event::Push => {
+                let mx = app::event_x() - w.x();
+                let my = app::event_y() - w.y();
+                let mut st = state.borrow_mut();
+                match st.mouse_mode {
+                    MouseMode::Time => {
+                        let time = local_x_to_time(&st, mx, w.w());
+                        let audio_pos = (time - st.recon_start_seconds()).max(0.0);
+                        st.audio_player.set_seeking(true);
+                        st.audio_player.seek_to(audio_pos);
+                    }
+                    MouseMode::Move => {
+                        st.mouse_selection = Some(MouseSelection {
+                            surface: MouseSurface::Waveform,
+                            start_x: clamp_local_x(mx, w.w()),
+                            start_y: clamp_local_y(my, w.h()),
+                            current_x: clamp_local_x(mx, w.w()),
+                            current_y: clamp_local_y(my, w.h()),
+                        });
+                    }
+                    MouseMode::SelectZoom | MouseMode::RoiSelect => {
+                        st.mouse_selection = Some(MouseSelection {
+                            surface: MouseSurface::Waveform,
+                            start_x: clamp_local_x(mx, w.w()),
+                            start_y: clamp_local_y(my, w.h()),
+                            current_x: clamp_local_x(mx, w.w()),
+                            current_y: clamp_local_y(my, w.h()),
+                        });
+                    }
+                }
+                drop(st);
+                waveform_display_c.redraw();
+                true
+            }
+            Event::Drag => {
+                let mx = app::event_x() - w.x();
+                let my = app::event_y() - w.y();
+                let mut st = state.borrow_mut();
+                match st.mouse_mode {
+                    MouseMode::Time => {
+                        let time = local_x_to_time(&st, mx, w.w());
+                        let audio_pos = (time - st.recon_start_seconds()).max(0.0);
+                        st.audio_player.seek_to(audio_pos);
+                    }
+                    MouseMode::Move => {
+                        if let Some(selection) = st.mouse_selection.as_mut()
+                            && selection.surface == MouseSurface::Waveform
+                        {
+                            let new_x = clamp_local_x(mx, w.w());
+                            let dx = new_x - selection.current_x;
+                            selection.current_x = new_x;
+                            selection.current_y = clamp_local_y(my, w.h());
+
+                            let time_delta = -(dx as f64 / w.w().max(1) as f64) * st.view.visible_time_range();
+                            pan_time_view(&mut st, time_delta);
+                            st.invalidate_all_spectrogram_renderers();
+                            st.wave_renderer.invalidate();
+                            drop(st);
+                            redraw_time_views();
+                            return true;
+                        }
+                    }
+                    MouseMode::SelectZoom | MouseMode::RoiSelect => {
+                        if let Some(selection) = st.mouse_selection.as_mut()
+                            && selection.surface == MouseSurface::Waveform
+                        {
+                            selection.current_x = clamp_local_x(mx, w.w());
+                            selection.current_y = clamp_local_y(my, w.h());
+                        }
+                    }
+                }
+                drop(st);
+                waveform_display_c.redraw();
+                true
+            }
+            Event::Released => {
+                let mx = app::event_x() - w.x();
+                let my = app::event_y() - w.y();
+                let mut needs_update_info = false;
+                let mut needs_redraw = false;
+
+                let mut st = state.borrow_mut();
+                match st.mouse_mode {
+                    MouseMode::Time => {
+                        st.audio_player.set_seeking(false);
+                    }
+                    MouseMode::Move => {
+                        st.mouse_selection = None;
+                    }
+                    MouseMode::SelectZoom => {
+                        if let Some(mut selection) = st.mouse_selection.take()
+                            && selection.surface == MouseSurface::Waveform
+                        {
+                            selection.current_x = clamp_local_x(mx, w.w());
+                            selection.current_y = clamp_local_y(my, w.h());
+                            let (x0, _, x1, _) = selection_rect(selection, w.w(), w.h());
+                            if x1 - x0 >= MIN_SELECT_DRAG_PX {
+                                let time_start = local_x_to_time(&st, x0, w.w());
+                                let time_stop = local_x_to_time(&st, x1, w.w());
+                                st.view.time_min_sec = time_start.min(time_stop).max(st.view.data_time_min_sec);
+                                st.view.time_max_sec = time_start.max(time_stop).min(st.view.data_time_max_sec);
+                                st.invalidate_all_spectrogram_renderers();
+                                st.wave_renderer.invalidate();
+                                needs_redraw = true;
+                            }
+                        }
+                    }
+                    MouseMode::RoiSelect => {
+                        if let Some(mut selection) = st.mouse_selection.take()
+                            && selection.surface == MouseSurface::Waveform
+                        {
+                            selection.current_x = clamp_local_x(mx, w.w());
+                            selection.current_y = clamp_local_y(my, w.h());
+                            let (x0, _, x1, _) = selection_rect(selection, w.w(), w.h());
+                            if x1 - x0 >= MIN_SELECT_DRAG_PX {
+                                let start_time = local_x_to_time(&st, x0, w.w()).min(local_x_to_time(&st, x1, w.w()));
+                                let stop_time = local_x_to_time(&st, x0, w.w()).max(local_x_to_time(&st, x1, w.w()));
+                                let sample_rate = st.fft_params.sample_rate as f64;
+                                st.fft_params.start_sample = (start_time * sample_rate).round() as usize;
+                                st.fft_params.stop_sample = (stop_time * sample_rate).round() as usize;
+                                st.dirty = true;
+
+                                match st.fft_params.time_unit {
+                                    crate::data::TimeUnit::Seconds => {
+                                        input_start.set_value(&format!("{:.5}", st.fft_params.start_seconds()));
+                                        input_stop.set_value(&format!("{:.5}", st.fft_params.stop_seconds()));
+                                    }
+                                    crate::data::TimeUnit::Samples => {
+                                        input_start.set_value(&st.fft_params.start_sample.to_string());
+                                        input_stop.set_value(&st.fft_params.stop_sample.to_string());
+                                    }
+                                }
+                                st.invalidate_all_spectrogram_renderers();
+                                st.wave_renderer.invalidate();
+                                needs_update_info = true;
+                                needs_redraw = true;
+                            }
+                        }
+                    }
+                }
+                drop(st);
+
+                if needs_update_info {
+                    (update_info.borrow_mut())();
+                }
+                if needs_redraw {
+                    redraw_time_views();
+                } else {
+                    waveform_display_c.redraw();
+                }
+                true
+            }
+            Event::Leave => true,
             _ => false,
         }
     });
@@ -328,7 +1078,8 @@ fn setup_waveform_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             let Ok(mut st) = state.try_borrow_mut() else {
                 dbg_log!(
                     debug_flags::RENDER_DBG,
-                    "[RENDER] Waveform draw skipped: state borrow conflict"
+                    "Render",
+                    "Waveform draw skipped: state borrow conflict"
                 );
                 return;
             };
@@ -337,7 +1088,7 @@ fn setup_waveform_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 let playback_time =
                     st.recon_start_seconds() + st.audio_player.get_position_seconds();
                 let t = st.view.time_to_x(playback_time);
-                if t >= 0.0 && t <= 1.0 {
+                if (0.0..=1.0).contains(&t) {
                     Some((t * w.w() as f64) as i32)
                 } else {
                     None
@@ -374,6 +1125,14 @@ fn setup_waveform_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
             st.reconstructed_audio = audio_opt;
         }
         // State borrow released — axis callbacks can borrow freely.
+
+        if let Ok(st) = state.try_borrow()
+            && st.mouse_mode != MouseMode::Move
+            && let Some(selection) = st.mouse_selection
+            && selection.surface == MouseSurface::Waveform
+        {
+            draw_selection_overlay(w, selection);
+        }
     });
 }
 
@@ -393,11 +1152,12 @@ fn setup_freq_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let Ok(st) = state.try_borrow() else {
             dbg_log!(
                 debug_flags::RENDER_DBG,
-                "[RENDER] Freq axis draw skipped: state borrow conflict"
+                "Render",
+                "Freq axis draw skipped: state borrow conflict"
             );
             return;
         };
-        if st.spectrogram.is_none() {
+        if st.active_spectrogram().is_none() {
             return;
         }
 
@@ -458,20 +1218,25 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let Ok(st) = state.try_borrow() else {
             dbg_log!(
                 debug_flags::RENDER_DBG,
-                "[RENDER] Time axis draw skipped: state borrow conflict"
+                "Render",
+                "Time axis draw skipped: state borrow conflict"
             );
             return;
         };
-        if st.spectrogram.is_none() {
+        if st.active_spectrogram().is_none() {
             return;
         }
 
         fltk::draw::set_draw_color(theme::color(theme::TEXT_SECONDARY));
         fltk::draw::set_font(Font::Helvetica, 9);
 
+        let left_gutter = crate::layout::SPEC_LEFT_GUTTER_W;
+        let right_gutter = crate::layout::SPEC_RIGHT_GUTTER_W;
+        let drawable_w = (w.w() - left_gutter - right_gutter).max(1);
+
         // Smart adaptive time labels: target ~1 label per 80px, find a nice step
         let range = st.view.visible_time_range();
-        let target_labels = ((w.w() - 50) as f64 / 80.0).max(2.0);
+        let target_labels = (drawable_w as f64 / 80.0).max(2.0);
         let raw_step = range / target_labels;
         // Snap to nice step values
         let nice_steps = [
@@ -487,7 +1252,7 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let mut t = (st.view.time_min_sec / step).ceil() * step;
         while t <= st.view.time_max_sec {
             let x_norm = st.view.time_to_x(t);
-            let px = w.x() + 50 + ((x_norm * (w.w() - 50) as f64) as i32); // offset for freq axis
+            let px = w.x() + left_gutter + ((x_norm * drawable_w as f64) as i32);
             let label = if step < 0.01 {
                 format!("{:.3}s", t)
             } else if step < 0.1 {
@@ -513,17 +1278,70 @@ fn setup_time_axis_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         fltk::draw::set_draw_color(fltk::enums::Color::from_hex(0xf9e2af)); // accent yellow
         let t_start = st.view.time_to_x(proc_start);
         if t_start > 0.01 && t_start < 0.99 {
-            let px = w.x() + 50 + ((t_start * (w.w() - 50) as f64) as i32);
+            let px = w.x() + left_gutter + ((t_start * drawable_w as f64) as i32);
             fltk::draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
             fltk::draw::draw_line(px, w.y(), px, w.y() + w.h());
             fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
         }
         let t_stop = st.view.time_to_x(proc_stop);
         if t_stop > 0.01 && t_stop < 0.99 {
-            let px = w.x() + 50 + ((t_stop * (w.w() - 50) as f64) as i32);
+            let px = w.x() + left_gutter + ((t_stop * drawable_w as f64) as i32);
             fltk::draw::set_line_style(fltk::draw::LineStyle::Dash, 1);
             fltk::draw::draw_line(px, w.y(), px, w.y() + w.h());
             fltk::draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
+        }
+    });
+}
+
+// ── ROI-aware scrubber draw ──
+fn setup_scrubber_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+    let state = state.clone();
+
+    let mut scrub_slider = widgets.scrub_slider.clone();
+    scrub_slider.draw(move |w| {
+        fltk::draw::set_draw_color(theme::color(theme::BG_WIDGET));
+        fltk::draw::draw_rectf(w.x(), w.y(), w.w(), w.h());
+
+        let Ok(st) = state.try_borrow() else {
+            return;
+        };
+
+        let track_y = w.y() + w.h() / 2 - 2;
+        let track_h = 4;
+
+        // Base full-width track
+        fltk::draw::set_draw_color(theme::color(theme::BG_PANEL));
+        fltk::draw::draw_rectf(w.x(), track_y, w.w(), track_h);
+
+        let roi_start = st.fft_params.start_seconds();
+        let roi_stop = st.fft_params.stop_seconds();
+        let roi_vis_start = st.view.time_min_sec.max(roi_start);
+        let roi_vis_stop = st.view.time_max_sec.min(roi_stop);
+
+        if roi_vis_stop > roi_vis_start {
+            let x0 = w.x() + (st.view.time_to_x(roi_vis_start) * w.w() as f64) as i32;
+            let x1 = w.x() + (st.view.time_to_x(roi_vis_stop) * w.w() as f64) as i32;
+            let active_w = (x1 - x0).max(1);
+
+            fltk::draw::set_draw_color(theme::color(theme::ACCENT_BLUE));
+            fltk::draw::draw_rectf(x0, track_y, active_w, track_h);
+
+            // Thumb only appears when the playback position is both inside the ROI
+            // and inside the current viewport.
+            if st.audio_player.has_audio() {
+                let local_seconds = st.audio_player.get_position_samples() as f64
+                    / st.transport.sample_rate.max(1) as f64;
+                let global_seconds = st.recon_start_seconds() + local_seconds;
+                if global_seconds >= roi_start
+                    && global_seconds <= roi_stop
+                    && global_seconds >= st.view.time_min_sec
+                    && global_seconds <= st.view.time_max_sec
+                {
+                    let cx = w.x() + (st.view.time_to_x(global_seconds) * w.w() as f64) as i32;
+                    fltk::draw::set_draw_color(theme::color(theme::ACCENT_RED));
+                    fltk::draw::draw_rectf(cx - 2, w.y(), 4, w.h());
+                }
+            }
         }
     });
 }
@@ -555,7 +1373,7 @@ fn generate_freq_ticks(
 ) -> Vec<(f32, f32)> {
     // Target spacing: approximately 45 pixels between ticks
     let desired_pixel_gap = 45.0;
-    let target_count = (widget_h as f32 / desired_pixel_gap).max(3.0).min(20.0) as usize;
+    let target_count = (widget_h as f32 / desired_pixel_gap).clamp(3.0, 20.0) as usize;
 
     if target_count == 0 {
         return vec![];
@@ -683,7 +1501,7 @@ fn format_with_commas(n: i64) -> String {
     let mut result = String::from(prefix);
 
     for (i, ch) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(*ch);

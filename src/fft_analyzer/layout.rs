@@ -5,17 +5,15 @@ use fltk::{
     group::Flex,
     input::{FloatInput, Input},
     menu::{Choice, MenuBar},
-    output::{MultilineOutput, Output},
+    output::MultilineOutput,
     prelude::*,
-    valuator::{HorNiceSlider, HorSlider},
+    valuator::HorNiceSlider,
     widget::Widget,
     window::Window,
 };
 
-use crate::data::ColormapId;
 use crate::ui::theme;
 use crate::ui::tooltips::set_tooltip;
-use crate::validation::{attach_float_validation, attach_uint_validation};
 
 // ─── Window Layout Constants ────────────────────────────────────────────────────
 pub const WIN_W: i32 = 1200;
@@ -26,7 +24,9 @@ const STATUS_FFT_MIN_H: i32 = 0;
 pub const STATUS_FFT_OFFSET: i32 = 0;
 const SIDEBAR_W: i32 = 215;
 const SIDEBAR_INNER_W: i32 = 200;
-const SIDEBAR_INNER_H: i32 = 1400;
+const SIDEBAR_INNER_H: i32 = 1800;
+pub const SPEC_LEFT_GUTTER_W: i32 = 50;
+pub const SPEC_RIGHT_GUTTER_W: i32 = 20;
 
 // ─── Widgets struct ─────────────────────────────────────────────────────────────
 // Holds cloneable handles to every widget that callbacks need to access.
@@ -34,6 +34,7 @@ const SIDEBAR_INNER_H: i32 = 1400;
 pub struct Widgets {
     pub root: Flex,
     pub menu: MenuBar,
+    pub btn_key: Button,
     pub btn_open: Button,
     pub btn_save_fft: Button,
     pub btn_load_fft: Button,
@@ -69,10 +70,14 @@ pub struct Widgets {
     pub input_freq_count: Input,
     pub input_recon_freq_min: FloatInput,
     pub input_recon_freq_max: FloatInput,
+    pub btn_freq_max: Button,
+    pub input_norm_floor: FloatInput,
+    pub lbl_norm_floor_sci: Frame,
     pub btn_snap_to_view: Button,
     pub lbl_info: MultilineOutput,
     pub btn_tooltips: fltk::button::CheckButton,
     pub check_lock_active: fltk::button::CheckButton,
+    pub check_render_full_outside_roi: fltk::button::CheckButton,
     pub btn_home: Button,
     pub btn_save_defaults: Button,
     pub spec_display: Widget,
@@ -88,12 +93,16 @@ pub struct Widgets {
     pub btn_play: Button,
     pub btn_pause: Button,
     pub btn_stop: Button,
-    pub scrub_slider: HorSlider,
+    pub btn_mouse_mode_time: Button,
+    pub btn_mouse_mode_move: Button,
+    pub btn_mouse_mode_zoom: Button,
+    pub btn_mouse_mode_roi: Button,
+    pub scrub_slider: Widget,
     pub cursor_readout: Frame,
     pub lbl_time: Frame,
     pub repeat_choice: Choice,
     pub status_fft: MultilineOutput,
-    pub status_bar: Output,
+    pub status_bar: MultilineOutput,
     pub msg_bar: Frame,
 }
 
@@ -130,7 +139,15 @@ pub fn build_ui() -> (Window, Widgets) {
     msg_bar.set_label_color(theme::color(theme::TEXT_SECONDARY));
     msg_bar.set_label_size(11);
     msg_bar.set_align(Align::Inside | Align::Left);
-    // msg_bar gets remaining width (no fixed() call)
+
+    let mut btn_key = Button::default().with_label("Key");
+    btn_key.set_color(theme::color(theme::BG_WIDGET));
+    btn_key.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    set_tooltip(
+        &mut btn_key,
+        "Show all keyboard shortcuts used by the program.",
+    );
+    menu_row.fixed(&btn_key, 52);
 
     menu_row.end();
 
@@ -155,579 +172,8 @@ pub fn build_ui() -> (Window, Widgets) {
     left.set_margin(5);
     left.set_pad(2);
 
-    // ── Title ──
-    let mut title = Frame::default().with_label("FFT Analyzer");
-    title.set_label_size(15);
-    title.set_label_color(theme::color(theme::ACCENT_BLUE));
-    left.fixed(&title, 28);
-
-    // ════════════════════════════════════════════════════════════════
-    //  SECTION: File Operations
-    // ════════════════════════════════════════════════════════════════
-
-    let mut lbl_file = Frame::default().with_label("FILE");
-    lbl_file.set_label_color(theme::section_header_color());
-    lbl_file.set_label_size(11);
-    lbl_file.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_file, 18);
-
-    let mut btn_open = Button::default().with_label("Open Audio File");
-    btn_open.set_color(theme::color(theme::BG_WIDGET));
-    btn_open.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(
-        &mut btn_open,
-        "Open a WAV audio file for analysis.\nSupports 8/16/24/32-bit PCM and float formats.",
-    );
-    left.fixed(&btn_open, 28);
-
-    let mut btn_save_fft = Button::default().with_label("Save FFT Data");
-    btn_save_fft.set_color(theme::color(theme::BG_WIDGET));
-    btn_save_fft.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_save_fft.deactivate();
-    set_tooltip(
-        &mut btn_save_fft,
-        "Export spectrogram data to CSV.\nRequires FFT data to be computed first.",
-    );
-    left.fixed(&btn_save_fft, 28);
-
-    let mut btn_load_fft = Button::default().with_label("Load FFT Data");
-    btn_load_fft.set_color(theme::color(theme::BG_WIDGET));
-    btn_load_fft.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(
-        &mut btn_load_fft,
-        "Import previously saved FFT data from CSV.",
-    );
-    left.fixed(&btn_load_fft, 28);
-
-    let mut btn_save_wav = Button::default().with_label("Export WAV");
-    btn_save_wav.set_color(theme::color(theme::BG_WIDGET));
-    btn_save_wav.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_save_wav.deactivate();
-    set_tooltip(
-        &mut btn_save_wav,
-        "Save reconstructed audio as 16-bit WAV.\nReconstruct audio first, then export.",
-    );
-    left.fixed(&btn_save_wav, 28);
-
-    // Separator
-    let mut sep1 = Frame::default();
-    sep1.set_frame(FrameType::FlatBox);
-    sep1.set_color(theme::color(theme::SEPARATOR));
-    left.fixed(&sep1, 1);
-
-    // ════════════════════════════════════════════════════════════════
-    //  SECTION: Analysis Parameters
-    // ════════════════════════════════════════════════════════════════
-
-    let mut lbl_analysis = Frame::default().with_label("ANALYSIS");
-    lbl_analysis.set_label_color(theme::section_header_color());
-    lbl_analysis.set_label_size(11);
-    lbl_analysis.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_analysis, 18);
-
-    // Time range
-    let mut btn_time_unit = Button::default().with_label("Unit: Seconds");
-    btn_time_unit.set_color(theme::color(theme::BG_WIDGET));
-    btn_time_unit.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_time_unit.set_label_size(11);
-    btn_time_unit.deactivate();
-    set_tooltip(
-        &mut btn_time_unit,
-        "Toggle between Seconds and Samples.\nClicking converts the start/stop values.",
-    );
-    left.fixed(&btn_time_unit, 25);
-
-    let mut input_start = FloatInput::default().with_label("Start:");
-    input_start.set_value("0");
-    input_start.set_color(theme::color(theme::BG_WIDGET));
-    input_start.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_start.deactivate();
-    set_tooltip(
-        &mut input_start,
-        "Analysis start position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.",
-    );
-    attach_float_validation(&mut input_start);
-    left.fixed(&input_start, 25);
-
-    let mut input_stop = FloatInput::default().with_label("Stop:");
-    input_stop.set_value("0");
-    input_stop.set_color(theme::color(theme::BG_WIDGET));
-    input_stop.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_stop.deactivate();
-    set_tooltip(
-        &mut input_stop,
-        "Analysis stop position.\nFunctional range: 0 to audio duration.\nYou can go outside this range if you want.",
-    );
-    attach_float_validation(&mut input_stop);
-    left.fixed(&input_stop, 25);
-
-    // Window length (segments) with preset dropdown + typed input + +/- buttons
-    let mut lbl_wl = Frame::default().with_label("Segment Size:");
-    lbl_wl.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_wl.set_label_size(11);
-    lbl_wl.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_wl, 16);
-
-    let mut seg_preset_choice = Choice::default();
-    seg_preset_choice.add_choice("256");
-    seg_preset_choice.add_choice("512");
-    seg_preset_choice.add_choice("1024");
-    seg_preset_choice.add_choice("2048");
-    seg_preset_choice.add_choice("4096");
-    seg_preset_choice.add_choice("8192");
-    seg_preset_choice.add_choice("16384");
-    seg_preset_choice.add_choice("32768");
-    seg_preset_choice.add_choice("65536");
-    seg_preset_choice.add_choice("Custom");
-    seg_preset_choice.set_value(5); // 8192 default
-    seg_preset_choice.set_color(theme::color(theme::BG_WIDGET));
-    seg_preset_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    seg_preset_choice.deactivate();
-    set_tooltip(
-        &mut seg_preset_choice,
-        "Preset segment sizes.\nNon-power-of-2 sizes also work (select Custom and type a value).",
-    );
-    left.fixed(&seg_preset_choice, 25);
-
-    let mut input_seg_size = Input::default();
-    input_seg_size.set_value("8192");
-    input_seg_size.set_color(theme::color(theme::BG_WIDGET));
-    input_seg_size.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_seg_size.deactivate();
-    set_tooltip(
-        &mut input_seg_size,
-        "Type an exact segment size (samples), then press Enter.\nMust be even (realfft requirement). Range: 4 to active-range sample count.\nThe dropdown above selects common presets.",
-    );
-    crate::validation::attach_uint_validation(&mut input_seg_size);
-    left.fixed(&input_seg_size, 25);
-
-    // Overlap
-    let mut slider_overlap = HorNiceSlider::default();
-    slider_overlap.set_minimum(0.0);
-    slider_overlap.set_maximum(99.0);
-    slider_overlap.set_value(75.0);
-    slider_overlap.set_color(theme::color(theme::BG_WIDGET));
-    slider_overlap.set_selection_color(theme::accent_color());
-    slider_overlap.deactivate();
-    set_tooltip(
-        &mut slider_overlap,
-        "Overlap between adjacent FFT windows.\nFunctional range: 0% to 99%.\nHigher = more time frames, smoother spectrogram.\n75% is standard for Hann window.",
-    );
-    left.fixed(&slider_overlap, 22);
-
-    let mut lbl_overlap_val = Frame::default().with_label("Overlap: 75%");
-    lbl_overlap_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_overlap_val.set_label_size(11);
-    lbl_overlap_val.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_overlap_val, 14);
-
-    // Hop size display (read-only)
-    let mut lbl_hop_info = Frame::default().with_label("Hop: -- smp (-- ms)");
-    lbl_hop_info.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_hop_info.set_label_size(10);
-    lbl_hop_info.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_hop_info, 14);
-
-    let mut input_segments_per_active = Input::default().with_label("Segments/Active:");
-    input_segments_per_active.set_value("0");
-    input_segments_per_active.set_color(theme::color(theme::BG_WIDGET));
-    input_segments_per_active.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_segments_per_active.deactivate();
-    set_tooltip(
-        &mut input_segments_per_active,
-        "Target segment count across active analysis range.
-Last edited field drives solver.
-Editing this keeps overlap fixed and adjusts segment size.",
-    );
-    attach_uint_validation(&mut input_segments_per_active);
-    left.fixed(&input_segments_per_active, 25);
-
-    let mut input_bins_per_segment = Input::default().with_label("Freq Bins/Segment:");
-    input_bins_per_segment.set_value("0");
-    input_bins_per_segment.set_color(theme::color(theme::BG_WIDGET));
-    input_bins_per_segment.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_bins_per_segment.deactivate();
-    set_tooltip(
-        &mut input_bins_per_segment,
-        "Frequency bins per segment (FFT bins), not time slices.
-`bins = (window_length * zero_pad_factor)/2 + 1`.
-This value is mathematically tied to segment size + zero-pad.
-If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
-    );
-    attach_uint_validation(&mut input_bins_per_segment);
-    left.fixed(&input_bins_per_segment, 25);
-
-    // Window type
-    let mut window_type_choice = Choice::default();
-    window_type_choice.add_choice("Hann");
-    window_type_choice.add_choice("Hamming");
-    window_type_choice.add_choice("Blackman");
-    window_type_choice.add_choice("Kaiser");
-    window_type_choice.set_value(0);
-    window_type_choice.set_color(theme::color(theme::BG_WIDGET));
-    window_type_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    window_type_choice.deactivate();
-    set_tooltip(
-        &mut window_type_choice,
-        "Windowing function applied to each FFT segment.\nHann: general purpose, good frequency resolution.\nHamming: slightly better sidelobe rejection.\nBlackman: best sidelobe rejection, wider main lobe.\nKaiser: configurable via beta parameter.",
-    );
-    left.fixed(&window_type_choice, 25);
-
-    let mut input_kaiser_beta = FloatInput::default().with_label("Kaiser B:");
-    input_kaiser_beta.set_value("8.6");
-    input_kaiser_beta.set_color(theme::color(theme::BG_WIDGET));
-    input_kaiser_beta.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_kaiser_beta.deactivate();
-    set_tooltip(
-        &mut input_kaiser_beta,
-        "Kaiser window beta parameter.\nFunctional range: 0.0 to 20.0.\nHigher = narrower main lobe, higher sidelobes.\n8.6 approximates a Blackman window.",
-    );
-    left.fixed(&input_kaiser_beta, 25);
-
-    let mut check_center = fltk::button::CheckButton::default().with_label(" Center/Pad");
-    check_center.set_checked(false);
-    check_center.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    check_center.deactivate();
-    set_tooltip(
-        &mut check_center,
-        "Add zero-padding around signal for symmetric analysis.\nRecommended: ON for most use cases.",
-    );
-    left.fixed(&check_center, 22);
-
-    // Zero-padding factor
-    let mut lbl_zp = Frame::default().with_label("Zero-Pad Factor:");
-    lbl_zp.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_zp.set_label_size(11);
-    lbl_zp.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_zp, 16);
-
-    let mut zero_pad_choice = Choice::default();
-    zero_pad_choice.add_choice("1x (none)");
-    zero_pad_choice.add_choice("2x");
-    zero_pad_choice.add_choice("4x");
-    zero_pad_choice.add_choice("8x");
-    zero_pad_choice.set_value(0);
-    zero_pad_choice.set_color(theme::color(theme::BG_WIDGET));
-    zero_pad_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    zero_pad_choice.deactivate();
-    set_tooltip(
-        &mut zero_pad_choice,
-        "Zero-padding factor for FFT.\n1x = no padding (standard).\n2x/4x/8x = interpolate frequency bins\nfor smoother spectrograms.\nDoes not change actual frequency resolution.",
-    );
-    left.fixed(&zero_pad_choice, 25);
-
-    // Resolution trade-off display (live feedback)
-    let mut lbl_resolution_info = MultilineOutput::default();
-    lbl_resolution_info.set_value("--");
-    lbl_resolution_info.set_text_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_resolution_info.set_text_size(9);
-    lbl_resolution_info.set_color(theme::color(theme::BG_WIDGET));
-    left.fixed(&lbl_resolution_info, 56);
-
-    let mut btn_rerun = Button::default().with_label("Recompute + Rebuild (Space)");
-    btn_rerun.set_color(theme::color(theme::ACCENT_BLUE));
-    btn_rerun.set_label_color(theme::color(theme::BG_DARK));
-    btn_rerun.set_label_size(11);
-    btn_rerun.deactivate();
-    set_tooltip(
-        &mut btn_rerun,
-        "Rerun FFT + reconstruct audio with current parameters.\nShortcut: Spacebar (works from anywhere).\nAll outputs (spectrogram, waveform, audio) will update.",
-    );
-    left.fixed(&btn_rerun, 28);
-
-    // Separator
-    let mut sep2 = Frame::default();
-    sep2.set_frame(FrameType::FlatBox);
-    sep2.set_color(theme::color(theme::SEPARATOR));
-    left.fixed(&sep2, 1);
-
-    // ════════════════════════════════════════════════════════════════
-    //  SECTION: Display
-    // ════════════════════════════════════════════════════════════════
-
-    let mut lbl_display = Frame::default().with_label("DISPLAY");
-    lbl_display.set_label_color(theme::section_header_color());
-    lbl_display.set_label_size(11);
-    lbl_display.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_display, 18);
-
-    // Colormap
-    let mut colormap_choice = Choice::default();
-    for cm in ColormapId::ALL {
-        colormap_choice.add_choice(cm.name());
-    }
-    colormap_choice.set_value(0);
-    colormap_choice.set_color(theme::color(theme::BG_WIDGET));
-    colormap_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    set_tooltip(
-        &mut colormap_choice,
-        "Color scheme for the spectrogram display.\nClassic: blue-cyan-green-yellow-red (rainbow)\nViridis/Magma/Inferno: perceptually uniform scientific colormaps\nGreyscale: black to white\nInverted Grey: white to black (print-friendly)\nCustom: editable gradient with draggable color stops",
-    );
-    left.fixed(&colormap_choice, 25);
-
-    // Gradient editor area (preview bar + interactive stop handles)
-    // Visible for all colormaps as a preview, interactive only when Custom selected
-    let mut gradient_preview = Widget::default();
-    gradient_preview.set_frame(FrameType::BorderBox);
-    gradient_preview.set_color(theme::color(theme::BG_WIDGET));
-    set_tooltip(
-        &mut gradient_preview,
-        "Custom gradient editor.\nClick: add a color stop\nDrag: move a stop\nRight-click: delete a stop\nDouble-click a stop: change its color\nSelect 'Custom' colormap to edit.",
-    );
-    left.fixed(&gradient_preview, 30);
-
-    // Freq Scale Power slider (0.0 = linear, 1.0 = log, anything between)
-    let mut slider_scale = HorNiceSlider::default();
-    slider_scale.set_minimum(0.0);
-    slider_scale.set_maximum(1.0);
-    slider_scale.set_value(0.5);
-    slider_scale.set_step(0.01, 1);
-    slider_scale.set_color(theme::color(theme::BG_WIDGET));
-    slider_scale.set_selection_color(theme::accent_color());
-    set_tooltip(
-        &mut slider_scale,
-        "Frequency axis scaling power.\nLeft (0.0) = Linear: uniform Hz spacing.\nRight (1.0) = Log: octave-based spacing.\nMiddle = blend between both.\nAdjust to taste.",
-    );
-    left.fixed(&slider_scale, 22);
-
-    let mut lbl_scale_val = Frame::default().with_label("Scale: 50%");
-    lbl_scale_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_scale_val.set_label_size(11);
-    lbl_scale_val.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_scale_val, 14);
-
-    // Threshold
-    let mut slider_threshold = HorNiceSlider::default();
-    slider_threshold.set_minimum(-200.0);
-    slider_threshold.set_maximum(0.0);
-    slider_threshold.set_value(-87.0);
-    slider_threshold.set_color(theme::color(theme::BG_WIDGET));
-    slider_threshold.set_selection_color(theme::accent_color());
-    set_tooltip(
-        &mut slider_threshold,
-        "Minimum dB level to display.\nFunctional range: -200 dB to 0 dB.\nAnything below this threshold appears as background color.\nLower = show more quiet detail. Higher = focus on loud content.",
-    );
-    left.fixed(&slider_threshold, 22);
-
-    let mut lbl_threshold_val = Frame::default().with_label("Threshold: -87 dB");
-    lbl_threshold_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_threshold_val.set_label_size(11);
-    lbl_threshold_val.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_threshold_val, 14);
-
-    // dB Ceiling
-    let mut slider_ceiling = HorNiceSlider::default();
-    slider_ceiling.set_minimum(-40.0);
-    slider_ceiling.set_maximum(20.0);
-    slider_ceiling.set_value(0.0);
-    slider_ceiling.set_color(theme::color(theme::BG_WIDGET));
-    slider_ceiling.set_selection_color(theme::accent_color());
-    set_tooltip(
-        &mut slider_ceiling,
-        "Maximum dB level for color mapping.\nAuto-set from data. Adjust to change dynamic range.\nRange: -40 to +20 dB.",
-    );
-    left.fixed(&slider_ceiling, 22);
-
-    let mut lbl_ceiling_val = Frame::default().with_label("Ceiling: 0 dB");
-    lbl_ceiling_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_ceiling_val.set_label_size(11);
-    lbl_ceiling_val.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_ceiling_val, 14);
-
-    // Brightness
-    let mut slider_brightness = HorNiceSlider::default();
-    slider_brightness.set_minimum(0.1);
-    slider_brightness.set_maximum(3.0);
-    slider_brightness.set_value(1.0);
-    slider_brightness.set_color(theme::color(theme::BG_WIDGET));
-    slider_brightness.set_selection_color(theme::accent_color());
-    set_tooltip(
-        &mut slider_brightness,
-        "Overall brightness multiplier.\nFunctional range: 0.1 to 3.0.\n1.0 = neutral. Higher = brighter colors for quiet content.",
-    );
-    left.fixed(&slider_brightness, 22);
-
-    let mut lbl_brightness_val = Frame::default().with_label("Brightness: 1.0");
-    lbl_brightness_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_brightness_val.set_label_size(11);
-    lbl_brightness_val.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_brightness_val, 14);
-
-    // Gamma
-    let mut slider_gamma = HorNiceSlider::default();
-    slider_gamma.set_minimum(0.5);
-    slider_gamma.set_maximum(5.0);
-    slider_gamma.set_value(2.2);
-    slider_gamma.set_color(theme::color(theme::BG_WIDGET));
-    slider_gamma.set_selection_color(theme::accent_color());
-    set_tooltip(
-        &mut slider_gamma,
-        "Perceptual gamma correction for dB display.\nFunctional range: 0.5 to 5.0.\n2.2 = standard perceptual gamma (recommended).\nHigher = more contrast, quiet content less visible.\nLower = flatter, quiet content more visible.",
-    );
-    left.fixed(&slider_gamma, 22);
-
-    let mut lbl_gamma_val = Frame::default().with_label("Gamma: 2.2");
-    lbl_gamma_val.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_gamma_val.set_label_size(11);
-    lbl_gamma_val.set_align(Align::Inside | Align::Right);
-    left.fixed(&lbl_gamma_val, 14);
-
-    // Separator
-    let mut sep3 = Frame::default();
-    sep3.set_frame(FrameType::FlatBox);
-    sep3.set_color(theme::color(theme::SEPARATOR));
-    left.fixed(&sep3, 1);
-
-    // ════════════════════════════════════════════════════════════════
-    //  SECTION: Reconstruction
-    // ════════════════════════════════════════════════════════════════
-
-    let mut lbl_recon = Frame::default().with_label("RECONSTRUCTION");
-    lbl_recon.set_label_color(theme::section_header_color());
-    lbl_recon.set_label_size(11);
-    lbl_recon.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_recon, 18);
-
-    // Frequency count
-    let mut lbl_fc = Frame::default().with_label("Freq Count:");
-    lbl_fc.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_fc.set_label_size(11);
-    lbl_fc.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_fc, 16);
-
-    let mut input_freq_count = Input::default();
-    input_freq_count.set_value("4097");
-    input_freq_count.set_color(theme::color(theme::BG_WIDGET));
-    input_freq_count.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_freq_count.deactivate();
-    set_tooltip(
-        &mut input_freq_count,
-        "Number of top-magnitude frequency bins to keep per frame.\nFunctional range: 1 to max bins (shown in INFO).\nMax = perfect reconstruction. Lower = simplified/filtered sound.\nAt 1, only the loudest frequency per frame is reconstructed.",
-    );
-    attach_uint_validation(&mut input_freq_count);
-    left.fixed(&input_freq_count, 25);
-
-    // Frequency range
-    let mut lbl_freq_min = Frame::default().with_label("Recon Min Freq (Hz):");
-    lbl_freq_min.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_freq_min.set_label_size(11);
-    lbl_freq_min.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_freq_min, 16);
-
-    let mut input_recon_freq_min = FloatInput::default();
-    input_recon_freq_min.set_value("0");
-    input_recon_freq_min.set_color(theme::color(theme::BG_WIDGET));
-    input_recon_freq_min.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_recon_freq_min.deactivate();
-    set_tooltip(
-        &mut input_recon_freq_min,
-        "Minimum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins below this frequency are zeroed out.",
-    );
-    attach_float_validation(&mut input_recon_freq_min);
-    left.fixed(&input_recon_freq_min, 25);
-
-    let mut lbl_freq_max = Frame::default().with_label("Recon Max Freq (Hz):");
-    lbl_freq_max.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_freq_max.set_label_size(11);
-    lbl_freq_max.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_freq_max, 16);
-
-    let mut input_recon_freq_max = FloatInput::default();
-    input_recon_freq_max.set_value("5000");
-    input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
-    input_recon_freq_max.set_text_color(theme::color(theme::TEXT_PRIMARY));
-    input_recon_freq_max.deactivate();
-    set_tooltip(
-        &mut input_recon_freq_max,
-        "Maximum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins above this frequency are zeroed out.",
-    );
-    attach_float_validation(&mut input_recon_freq_max);
-    left.fixed(&input_recon_freq_max, 25);
-
-    // Snap viewport to processing window
-    let mut btn_snap_to_view = Button::default().with_label("Snap to View");
-    btn_snap_to_view.set_color(theme::color(theme::BG_WIDGET));
-    btn_snap_to_view.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_snap_to_view.set_label_size(11);
-    btn_snap_to_view.deactivate();
-    set_tooltip(
-        &mut btn_snap_to_view,
-        "Copy current viewport bounds into\nStart/Stop and Freq Min/Max fields.\nThen recompute.",
-    );
-    left.fixed(&btn_snap_to_view, 25);
-
-    // Separator
-    let mut sep4 = Frame::default();
-    sep4.set_frame(FrameType::FlatBox);
-    sep4.set_color(theme::color(theme::SEPARATOR));
-    left.fixed(&sep4, 1);
-
-    // ════════════════════════════════════════════════════════════════
-    //  SECTION: Info Panel (read-only)
-    // ════════════════════════════════════════════════════════════════
-
-    let mut lbl_info_header = Frame::default().with_label("INFO");
-    lbl_info_header.set_label_color(theme::section_header_color());
-    lbl_info_header.set_label_size(11);
-    lbl_info_header.set_align(Align::Inside | Align::Left);
-    left.fixed(&lbl_info_header, 18);
-
-    let mut lbl_info = MultilineOutput::default();
-    lbl_info.set_value("No audio loaded");
-    lbl_info.set_text_color(theme::color(theme::TEXT_SECONDARY));
-    lbl_info.set_text_size(10);
-    lbl_info.set_color(theme::color(theme::BG_WIDGET));
-    left.fixed(&lbl_info, 110);
-
-    // Separator
-    let mut sep5 = Frame::default();
-    sep5.set_frame(FrameType::FlatBox);
-    sep5.set_color(theme::color(theme::SEPARATOR));
-    left.fixed(&sep5, 1);
-
-    // Tooltip toggle
-    let mut btn_tooltips = fltk::button::CheckButton::default().with_label(" Show Tooltips");
-    btn_tooltips.set_checked(true);
-    btn_tooltips.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    btn_tooltips.set_label_size(10);
-    set_tooltip(&mut btn_tooltips, "Toggle tooltip help bubbles on/off.");
-    left.fixed(&btn_tooltips, 22);
-
-    // Lock viewport to active area toggle
-    let mut check_lock_active = fltk::button::CheckButton::default().with_label(" Lock to Active");
-    check_lock_active.set_checked(false);
-    check_lock_active.set_label_color(theme::color(theme::TEXT_SECONDARY));
-    check_lock_active.set_label_size(10);
-    set_tooltip(
-        &mut check_lock_active,
-        "When checked, viewport auto-snaps to the\nactive time and frequency range after recompute.\nSnaps both axes with a short delay.",
-    );
-    left.fixed(&check_lock_active, 22);
-
-    // Home button — snap viewport to processing range
-    let mut btn_home = Button::default().with_label("Home");
-    btn_home.set_color(theme::color(theme::BG_WIDGET));
-    btn_home.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_home.set_label_size(11);
-    set_tooltip(
-        &mut btn_home,
-        "Snap viewport to the active processing\ntime range (Start/Stop) and frequency range\n(Recon Min/Max Freq).",
-    );
-    left.fixed(&btn_home, 25);
-
-    // Save As Default button
-    let mut btn_save_defaults = Button::default().with_label("Save As Default");
-    btn_save_defaults.set_color(theme::color(theme::BG_WIDGET));
-    btn_save_defaults.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_save_defaults.set_label_size(11);
-    set_tooltip(
-        &mut btn_save_defaults,
-        "Save current settings to muSickBeets.ini.\nThese become the defaults on next launch.",
-    );
-    left.fixed(&btn_save_defaults, 25);
-
-    // Spacer to push everything up
-    Frame::default();
+    // Build all sidebar controls via layout_sidebar module
+    let sb = crate::layout_sidebar::build_sidebar(&mut left);
 
     left.end();
     left_scroll.end();
@@ -739,10 +185,26 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     right.set_pad(2);
 
     // ── Waveform strip ──
+    // Keep waveform width locked to the spectrogram's drawable width by
+    // bracketing it with the same left/right gutters used by spec_row.
+    let mut waveform_row = Flex::default().row();
+    right.fixed(&waveform_row, 100);
+
+    let mut waveform_left_spacer = Frame::default();
+    waveform_left_spacer.set_frame(FrameType::FlatBox);
+    waveform_left_spacer.set_color(theme::color(theme::BG_DARK));
+    waveform_row.fixed(&waveform_left_spacer, SPEC_LEFT_GUTTER_W);
+
     let mut waveform_display = Widget::default();
     waveform_display.set_frame(FrameType::FlatBox);
     waveform_display.set_color(theme::color(theme::BG_DARK));
-    right.fixed(&waveform_display, 100);
+
+    let mut waveform_right_spacer = Frame::default();
+    waveform_right_spacer.set_frame(FrameType::FlatBox);
+    waveform_right_spacer.set_color(theme::color(theme::BG_DARK));
+    waveform_row.fixed(&waveform_right_spacer, SPEC_RIGHT_GUTTER_W);
+
+    waveform_row.end();
 
     // ── Spectrogram area (with Y scrollbar) ──
     let mut spec_row = Flex::default().row();
@@ -751,7 +213,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     let mut freq_axis = Widget::default();
     freq_axis.set_frame(FrameType::FlatBox);
     freq_axis.set_color(theme::color(theme::BG_DARK));
-    spec_row.fixed(&freq_axis, 50);
+    spec_row.fixed(&freq_axis, SPEC_LEFT_GUTTER_W);
 
     // Main spectrogram display
     let mut spec_display = Widget::default();
@@ -786,11 +248,14 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     freq_zoom_col.fixed(&btn_freq_zoom_out, 20);
 
     freq_zoom_col.end();
-    spec_row.fixed(&freq_zoom_col, 20);
+    spec_row.fixed(&freq_zoom_col, SPEC_RIGHT_GUTTER_W);
 
     spec_row.end();
 
     // ── Time axis label area ──
+    // Keep this full-width; the draw code applies the shared left/right
+    // spectrogram gutters internally so labels align with the spectrogram
+    // drawable region without double-counting offsets.
     let mut time_axis = Widget::default();
     time_axis.set_frame(FrameType::FlatBox);
     time_axis.set_color(theme::color(theme::BG_DARK));
@@ -826,22 +291,31 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     time_zoom_row.end();
     right.fixed(&time_zoom_row, 20);
 
-    // ── Scrubber row (full-width playback position slider) ──
+    // ── Scrubber row ──
+    // Match scrubber width to the spectrogram drawable area so the playback
+    // position geometry lines up with the spectrogram, waveform, and time axis.
     let mut scrub_row = Flex::default().row();
     scrub_row.set_color(theme::color(theme::BG_PANEL));
     right.fixed(&scrub_row, 18);
 
-    let mut scrub_slider = HorSlider::default();
-    scrub_slider.set_minimum(0.0);
-    scrub_slider.set_maximum(1.0);
-    scrub_slider.set_value(0.0);
+    let mut scrub_left_spacer = Frame::default();
+    scrub_left_spacer.set_frame(FrameType::FlatBox);
+    scrub_left_spacer.set_color(theme::color(theme::BG_PANEL));
+    scrub_row.fixed(&scrub_left_spacer, SPEC_LEFT_GUTTER_W);
+
+    let mut scrub_slider = Widget::default();
+    scrub_slider.set_frame(FrameType::FlatBox);
     scrub_slider.set_color(theme::color(theme::BG_WIDGET));
-    scrub_slider.set_selection_color(theme::color(theme::ACCENT_RED));
     scrub_slider.deactivate();
     set_tooltip(
         &mut scrub_slider,
         "Playback position scrubber.\nDrag to seek. Audio plays from drag position when in play mode.",
     );
+
+    let mut scrub_right_spacer = Frame::default();
+    scrub_right_spacer.set_frame(FrameType::FlatBox);
+    scrub_right_spacer.set_color(theme::color(theme::BG_PANEL));
+    scrub_row.fixed(&scrub_right_spacer, SPEC_RIGHT_GUTTER_W);
 
     scrub_row.end();
 
@@ -870,6 +344,57 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     btn_stop.deactivate();
     set_tooltip(&mut btn_stop, "Stop playback and reset to start.");
     transport_row.fixed(&btn_stop, 36);
+
+    let mut mode_gap = Frame::default();
+    mode_gap.set_frame(FrameType::FlatBox);
+    mode_gap.set_color(theme::color(theme::BG_PANEL));
+    transport_row.fixed(&mode_gap, 50);
+
+    let mut lbl_mouse_mode = Frame::default().with_label("Mode");
+    lbl_mouse_mode.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_mouse_mode.set_label_size(11);
+    lbl_mouse_mode.set_align(Align::Inside | Align::Left);
+    transport_row.fixed(&lbl_mouse_mode, 36);
+
+    let mut btn_mouse_mode_time = Button::default().with_label("Time");
+    btn_mouse_mode_time.set_color(theme::color(theme::ACCENT_BLUE));
+    btn_mouse_mode_time.set_label_color(theme::color(theme::BG_DARK));
+    btn_mouse_mode_time.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_time,
+        "Mouse mode: Time. Click or drag in the spectrogram or waveform to seek playback.",
+    );
+    transport_row.fixed(&btn_mouse_mode_time, 48);
+
+    let mut btn_mouse_mode_move = Button::default().with_label("Move");
+    btn_mouse_mode_move.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_move.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_move.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_move,
+        "Mouse mode: Move. Drag the spectrogram to pan time and frequency, or drag the waveform to pan time.",
+    );
+    transport_row.fixed(&btn_mouse_mode_move, 52);
+
+    let mut btn_mouse_mode_zoom = Button::default().with_label("Sel Zoom");
+    btn_mouse_mode_zoom.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_zoom.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_zoom.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_zoom,
+        "Mouse mode: Select Zoom. Drag a box to zoom into that region.",
+    );
+    transport_row.fixed(&btn_mouse_mode_zoom, 66);
+
+    let mut btn_mouse_mode_roi = Button::default().with_label("ROI Sel");
+    btn_mouse_mode_roi.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_roi.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_roi.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_roi,
+        "Mouse mode: ROI Select. Drag a box to set Start/Stop and Recon Min/Max without recomputing.",
+    );
+    transport_row.fixed(&btn_mouse_mode_roi, 60);
 
     // Flexible spacer pushes everything after it to the right
     Frame::default();
@@ -914,6 +439,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     status_fft.set_color(theme::color(theme::BG_PANEL));
     status_fft.set_text_color(theme::color(theme::TEXT_SECONDARY));
     status_fft.set_text_size(11);
+    status_fft.set_wrap(true);
     set_tooltip(
         &mut status_fft,
         "My active time range (the selected portion of the full audio) is divided into overlapping segments; each segment is then transformed into a set of frequency bins – the vertical columns of the spectrogram.",
@@ -921,10 +447,10 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
 
     // ─── STATUS BAR ───────────────────────────────────────────────────────────
 
-    let mut status_bar = Output::default()
+    let mut status_bar = MultilineOutput::default()
         .with_pos(0, WIN_H - STATUS_H)
         .with_size(WIN_W, STATUS_H);
-    status_bar.set_value("Ready | Load an audio file to begin");
+    status_bar.set_value("Ready  |  Load an audio file to begin");
     status_bar.set_color(theme::color(theme::BG_PANEL));
     status_bar.set_text_color(theme::color(theme::TEXT_SECONDARY));
     status_bar.set_text_size(11);
@@ -937,47 +463,52 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     let widgets = Widgets {
         root,
         menu,
-        btn_open,
-        btn_save_fft,
-        btn_load_fft,
-        btn_save_wav,
-        btn_time_unit,
-        input_start,
-        input_stop,
-        input_seg_size,
-        seg_preset_choice,
-        slider_overlap,
-        lbl_overlap_val,
-        lbl_hop_info,
-        input_segments_per_active,
-        input_bins_per_segment,
-        window_type_choice,
-        input_kaiser_beta,
-        check_center,
-        zero_pad_choice,
-        lbl_resolution_info,
-        btn_rerun,
-        colormap_choice,
-        gradient_preview,
-        slider_scale,
-        lbl_scale_val,
-        slider_threshold,
-        lbl_threshold_val,
-        slider_ceiling,
-        lbl_ceiling_val,
-        slider_brightness,
-        lbl_brightness_val,
-        slider_gamma,
-        lbl_gamma_val,
-        input_freq_count,
-        input_recon_freq_min,
-        input_recon_freq_max,
-        btn_snap_to_view,
-        lbl_info,
-        btn_tooltips,
-        check_lock_active,
-        btn_home,
-        btn_save_defaults,
+        btn_key,
+        btn_open: sb.btn_open,
+        btn_save_fft: sb.btn_save_fft,
+        btn_load_fft: sb.btn_load_fft,
+        btn_save_wav: sb.btn_save_wav,
+        btn_time_unit: sb.btn_time_unit,
+        input_start: sb.input_start,
+        input_stop: sb.input_stop,
+        input_seg_size: sb.input_seg_size,
+        seg_preset_choice: sb.seg_preset_choice,
+        slider_overlap: sb.slider_overlap,
+        lbl_overlap_val: sb.lbl_overlap_val,
+        lbl_hop_info: sb.lbl_hop_info,
+        input_segments_per_active: sb.input_segments_per_active,
+        input_bins_per_segment: sb.input_bins_per_segment,
+        window_type_choice: sb.window_type_choice,
+        input_kaiser_beta: sb.input_kaiser_beta,
+        check_center: sb.check_center,
+        zero_pad_choice: sb.zero_pad_choice,
+        lbl_resolution_info: sb.lbl_resolution_info,
+        btn_rerun: sb.btn_rerun,
+        colormap_choice: sb.colormap_choice,
+        gradient_preview: sb.gradient_preview,
+        slider_scale: sb.slider_scale,
+        lbl_scale_val: sb.lbl_scale_val,
+        slider_threshold: sb.slider_threshold,
+        lbl_threshold_val: sb.lbl_threshold_val,
+        slider_ceiling: sb.slider_ceiling,
+        lbl_ceiling_val: sb.lbl_ceiling_val,
+        slider_brightness: sb.slider_brightness,
+        lbl_brightness_val: sb.lbl_brightness_val,
+        slider_gamma: sb.slider_gamma,
+        lbl_gamma_val: sb.lbl_gamma_val,
+        input_freq_count: sb.input_freq_count,
+        input_recon_freq_min: sb.input_recon_freq_min,
+        input_recon_freq_max: sb.input_recon_freq_max,
+        btn_freq_max: sb.btn_freq_max,
+        input_norm_floor: sb.input_norm_floor,
+        lbl_norm_floor_sci: sb.lbl_norm_floor_sci,
+        btn_snap_to_view: sb.btn_snap_to_view,
+        lbl_info: sb.lbl_info,
+        btn_tooltips: sb.btn_tooltips,
+        check_lock_active: sb.check_lock_active,
+        check_render_full_outside_roi: sb.check_render_full_outside_roi,
+        btn_home: sb.btn_home,
+        btn_save_defaults: sb.btn_save_defaults,
         spec_display,
         waveform_display,
         freq_axis,
@@ -991,6 +522,10 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         btn_play,
         btn_pause,
         btn_stop,
+        btn_mouse_mode_time,
+        btn_mouse_mode_move,
+        btn_mouse_mode_zoom,
+        btn_mouse_mode_roi,
         scrub_slider,
         cursor_readout,
         lbl_time,

@@ -61,7 +61,8 @@ pub const FREQUENCY_TABLE_MAX_OCTAVE: i32 = 20;
 
 /// Total number of semitones in our frequency table
 /// 21 octaves * 12 semitones per octave = 252 entries
-pub const FREQUENCY_TABLE_SIZE: usize = ((FREQUENCY_TABLE_MAX_OCTAVE - FREQUENCY_TABLE_MIN_OCTAVE + 1) * 12) as usize;
+pub const FREQUENCY_TABLE_SIZE: usize =
+    ((FREQUENCY_TABLE_MAX_OCTAVE - FREQUENCY_TABLE_MIN_OCTAVE + 1) * 12) as usize;
 
 /// Pre-computed frequency table - generated once at startup
 /// Each entry is the frequency in Hz for that semitone
@@ -80,7 +81,7 @@ impl FrequencyTable {
     pub fn new() -> Self {
         let mut frequencies = [0.0_f32; FREQUENCY_TABLE_SIZE];
 
-        for semitone_index in 0..FREQUENCY_TABLE_SIZE {
+        for (semitone_index, freq) in frequencies.iter_mut().enumerate() {
             // Convert table index to MIDI note number
             // C0 is MIDI note 12 (index 0 in our table)
             let midi_note = semitone_index as i32 + 12;
@@ -88,9 +89,7 @@ impl FrequencyTable {
             // Calculate frequency using the standard formula
             // f = 440 * 2^((midi_note - 69) / 12)
             let semitones_from_a4 = midi_note - A4_MIDI_NOTE;
-            let frequency = A4_FREQUENCY_HZ * 2.0_f32.powf(semitones_from_a4 as f32 / 12.0);
-
-            frequencies[semitone_index] = frequency;
+            *freq = A4_FREQUENCY_HZ * 2.0_f32.powf(semitones_from_a4 as f32 / 12.0);
         }
 
         Self { frequencies }
@@ -104,12 +103,12 @@ impl FrequencyTable {
     /// - semitone: The semitone within the octave (0-11, where 0=C, 1=C#, etc.)
     pub fn get_frequency(&self, octave: i32, semitone: i32) -> Option<f32> {
         // Check if the octave is within our valid range
-        if octave < FREQUENCY_TABLE_MIN_OCTAVE || octave > FREQUENCY_TABLE_MAX_OCTAVE {
+        if !(FREQUENCY_TABLE_MIN_OCTAVE..=FREQUENCY_TABLE_MAX_OCTAVE).contains(&octave) {
             return None;
         }
 
         // Check if the semitone is valid (0-11)
-        if semitone < 0 || semitone > 11 {
+        if !(0..=11).contains(&semitone) {
             return None;
         }
 
@@ -123,7 +122,6 @@ impl FrequencyTable {
 
         Some(self.frequencies[table_index])
     }
-
 }
 
 // Implement Default so we can easily create a frequency table
@@ -171,7 +169,12 @@ pub fn lerp(start_value: f32, end_value: f32, progress: f32) -> f32 {
 /// - progress: How far along the transition (0.0 to 1.0)
 /// - curve_strength: How curved the interpolation is (1.0 = linear, higher = more curved)
 #[inline]
-pub fn exponential_interpolation(start_value: f32, end_value: f32, progress: f32, curve_strength: f32) -> f32 {
+pub fn exponential_interpolation(
+    start_value: f32,
+    end_value: f32,
+    progress: f32,
+    curve_strength: f32,
+) -> f32 {
     let clamped_progress = progress.clamp(0.0, 1.0);
 
     // Apply exponential curve
@@ -189,7 +192,12 @@ pub fn exponential_interpolation(start_value: f32, end_value: f32, progress: f32
 /// - progress: How far along the transition (0.0 to 1.0)
 /// - curve_strength: How curved the interpolation is (1.0 = linear, higher = more curved)
 #[inline]
-pub fn logarithmic_interpolation(start_value: f32, end_value: f32, progress: f32, curve_strength: f32) -> f32 {
+pub fn logarithmic_interpolation(
+    start_value: f32,
+    end_value: f32,
+    progress: f32,
+    curve_strength: f32,
+) -> f32 {
     let clamped_progress = progress.clamp(0.0, 1.0);
 
     // Apply logarithmic curve (inverse of exponential)
@@ -233,7 +241,9 @@ impl RandomNumberGenerator {
     pub fn new(seed: u32) -> Self {
         // Ensure we don't start with 0 (which would cause all zeros)
         let initial_state = if seed == 0 { 1 } else { seed };
-        Self { state: initial_state }
+        Self {
+            state: initial_state,
+        }
     }
 
     /// Creates a new generator seeded from a channel ID
@@ -304,7 +314,10 @@ pub fn note_letter_to_semitone(note_char: char) -> Option<i32> {
 /// - frequency_table: Reference to the pre-computed frequency table
 ///
 /// Returns: The frequency in Hz, or None if the pitch string is invalid
-pub fn parse_pitch_to_frequency(pitch_string: &str, frequency_table: &FrequencyTable) -> Option<f32> {
+pub fn parse_pitch_to_frequency(
+    pitch_string: &str,
+    frequency_table: &FrequencyTable,
+) -> Option<f32> {
     let pitch_lower = pitch_string.to_lowercase();
     let chars: Vec<char> = pitch_lower.chars().collect();
 
@@ -344,7 +357,7 @@ pub fn parse_pitch_to_frequency(pitch_string: &str, frequency_table: &FrequencyT
     let octave: i32 = octave_str.parse().ok()?;
 
     // Check if the octave is within our valid range
-    if octave < FREQUENCY_TABLE_MIN_OCTAVE || octave > FREQUENCY_TABLE_MAX_OCTAVE {
+    if !(FREQUENCY_TABLE_MIN_OCTAVE..=FREQUENCY_TABLE_MAX_OCTAVE).contains(&octave) {
         return None;
     }
 

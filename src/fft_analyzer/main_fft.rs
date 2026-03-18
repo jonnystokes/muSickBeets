@@ -1,3 +1,5 @@
+#[macro_use]
+mod debug_flags;
 mod app_state;
 mod callbacks_draw;
 mod callbacks_file;
@@ -5,9 +7,11 @@ mod callbacks_nav;
 mod callbacks_ui;
 mod csv_export;
 mod data;
-mod debug_flags;
+mod gradient_editor;
 mod layout;
+mod layout_sidebar;
 mod playback;
+mod poll_loop;
 mod processing;
 mod rendering;
 mod settings;
@@ -16,16 +20,12 @@ mod validation;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 
 use fltk::{app, prelude::*};
 
-use app_state::{format_time, AppState, SharedCallbacks, SharedCb, WorkerMessage};
-use data::TimeUnit;
-use layout::{Widgets, STATUS_FFT_OFFSET};
-use playback::audio_player::PlaybackState;
-use processing::fft_engine::FftEngine;
-use processing::reconstructor::Reconstructor;
+use app_state::{AppState, SharedCallbacks, SharedCb, WorkerMessage};
+use layout::{STATUS_FFT_OFFSET, Widgets};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CREATE SHARED CALLBACKS
@@ -99,14 +99,18 @@ fn create_shared_callbacks(
 
             let sentence = info.format_segmentation_sentence();
             status_fft.set_value(&sentence);
-            let width_chars = ((win.w() - 16).max(40) / 7).max(20) as usize;
+            // Estimate height needed for word-wrapped text.
+            // Use ~7px per char at text_size=11 to estimate wrapped line count.
+            let width_px = (win.w() - 16).max(100) as usize;
+            let char_width = 7usize; // approximate px per character at size 11
+            let chars_per_line = (width_px / char_width).max(10);
             let line_count = sentence
                 .split('\n')
-                .map(|line| ((line.chars().count().max(1) - 1) / width_chars) + 1)
+                .map(|line| ((line.chars().count().max(1) - 1) / chars_per_line) + 1)
                 .sum::<usize>()
                 .max(1) as i32;
             let fft_h = (line_count * 17 + 8).max(24);
-            let base_h = 25;
+            let base_h = status_bar.h(); // respect auto-expanded status bar height
             let menu_h = 25;
             let win_h = win.h();
             let win_w = win.w();
@@ -185,23 +189,37 @@ fn create_shared_callbacks(
         let mut input_freq_count = widgets.input_freq_count.clone();
         let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
         let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_freq_max = widgets.btn_freq_max.clone();
+        let mut input_norm_floor = widgets.input_norm_floor.clone();
+        let mut btn_mouse_mode_time = widgets.btn_mouse_mode_time.clone();
+        let mut btn_mouse_mode_move = widgets.btn_mouse_mode_move.clone();
+        let mut btn_mouse_mode_zoom = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_mouse_mode_roi = widgets.btn_mouse_mode_roi.clone();
         let mut btn_play = widgets.btn_play.clone();
         let mut btn_pause = widgets.btn_pause.clone();
         let mut btn_stop = widgets.btn_stop.clone();
         let mut scrub_slider = widgets.scrub_slider.clone();
         let mut repeat_choice = widgets.repeat_choice.clone();
         let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
+        let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
         Rc::new(RefCell::new(Box::new(move || {
             btn_save_fft.activate();
             input_freq_count.activate();
             input_recon_freq_min.activate();
             input_recon_freq_max.activate();
+            btn_freq_max.activate();
+            input_norm_floor.activate();
+            btn_mouse_mode_time.activate();
+            btn_mouse_mode_move.activate();
+            btn_mouse_mode_zoom.activate();
+            btn_mouse_mode_roi.activate();
             btn_play.activate();
             btn_pause.activate();
             btn_stop.activate();
             scrub_slider.activate();
             repeat_choice.activate();
             btn_snap_to_view.activate();
+            check_render_full_outside_roi.activate();
         })))
     };
 
@@ -212,12 +230,118 @@ fn create_shared_callbacks(
         })))
     };
 
+    // ── Processing lock: disable sidebar/transport during operations ──
+
+    let disable_for_processing: SharedCb = {
+        let mut btn_time_unit = widgets.btn_time_unit.clone();
+        let mut input_start = widgets.input_start.clone();
+        let mut input_stop = widgets.input_stop.clone();
+        let mut input_seg_size = widgets.input_seg_size.clone();
+        let mut seg_preset_choice = widgets.seg_preset_choice.clone();
+        let mut slider_overlap = widgets.slider_overlap.clone();
+        let mut input_segments_per_active = widgets.input_segments_per_active.clone();
+        let mut input_bins_per_segment = widgets.input_bins_per_segment.clone();
+        let mut window_type_choice = widgets.window_type_choice.clone();
+        let mut check_center = widgets.check_center.clone();
+        let mut zero_pad_choice = widgets.zero_pad_choice.clone();
+        let mut btn_save_fft = widgets.btn_save_fft.clone();
+        let mut btn_save_wav = widgets.btn_save_wav.clone();
+        let mut input_freq_count = widgets.input_freq_count.clone();
+        let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
+        let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_freq_max = widgets.btn_freq_max.clone();
+        let mut input_norm_floor = widgets.input_norm_floor.clone();
+        let mut btn_mouse_mode_time = widgets.btn_mouse_mode_time.clone();
+        let mut btn_mouse_mode_move = widgets.btn_mouse_mode_move.clone();
+        let mut btn_mouse_mode_zoom = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_mouse_mode_roi = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
+        let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn_time_unit.deactivate();
+            input_start.deactivate();
+            input_stop.deactivate();
+            input_seg_size.deactivate();
+            seg_preset_choice.deactivate();
+            slider_overlap.deactivate();
+            input_segments_per_active.deactivate();
+            input_bins_per_segment.deactivate();
+            window_type_choice.deactivate();
+            check_center.deactivate();
+            zero_pad_choice.deactivate();
+            btn_save_fft.deactivate();
+            btn_save_wav.deactivate();
+            input_freq_count.deactivate();
+            input_recon_freq_min.deactivate();
+            input_recon_freq_max.deactivate();
+            btn_freq_max.deactivate();
+            input_norm_floor.deactivate();
+            btn_mouse_mode_time.deactivate();
+            btn_mouse_mode_move.deactivate();
+            btn_mouse_mode_zoom.deactivate();
+            btn_mouse_mode_roi.deactivate();
+            btn_snap_to_view.deactivate();
+            check_render_full_outside_roi.deactivate();
+        })))
+    };
+
+    let enable_after_processing: SharedCb = {
+        let enable_audio = enable_audio_widgets.clone();
+        let enable_spec = enable_spec_widgets.clone();
+        let enable_wav = enable_wav_export.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            (enable_audio.borrow_mut())();
+            (enable_spec.borrow_mut())();
+            (enable_wav.borrow_mut())();
+        })))
+    };
+
+    // ── Rerun button mode switching ──
+
+    let set_btn_cancel_mode: SharedCb = {
+        let mut btn = widgets.btn_rerun.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn.set_label("Cancel (Space)");
+            btn.set_color(fltk::enums::Color::from_hex(crate::ui::theme::ACCENT_RED));
+            btn.set_label_color(fltk::enums::Color::from_hex(crate::ui::theme::BG_DARK));
+            btn.activate();
+            btn.redraw();
+        })))
+    };
+
+    let set_btn_busy_mode: SharedCb = {
+        let mut btn = widgets.btn_rerun.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn.set_label("Busy...");
+            btn.set_color(fltk::enums::Color::from_hex(crate::ui::theme::BG_PANEL));
+            btn.set_label_color(fltk::enums::Color::from_hex(crate::ui::theme::TEXT_DISABLED));
+            btn.deactivate();
+            btn.redraw();
+        })))
+    };
+
+    let set_btn_normal_mode: SharedCb = {
+        let mut btn = widgets.btn_rerun.clone();
+        Rc::new(RefCell::new(Box::new(move || {
+            btn.set_label("Recompute + Rebuild (Space)");
+            btn.set_color(fltk::enums::Color::from_hex(crate::ui::theme::ACCENT_BLUE));
+            btn.set_label_color(fltk::enums::Color::from_hex(crate::ui::theme::BG_DARK));
+            btn.activate();
+            btn.redraw();
+        })))
+    };
+
     SharedCallbacks {
         update_info,
         update_seg_label,
         enable_audio_widgets,
         enable_spec_widgets,
         enable_wav_export,
+        disable_for_processing,
+        enable_after_processing,
+        set_btn_cancel_mode,
+        set_btn_busy_mode,
+        set_btn_normal_mode,
     }
 }
 
@@ -243,8 +367,9 @@ fn main() {
 
     // Load settings from INI (or create default INI if missing)
     let cfg = settings::Settings::load_or_create();
-    eprintln!(
-        "[Settings] Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
+    app_log!(
+        "Settings",
+        "Loaded: recon_freq_max={}Hz, view_freq={}-{}Hz, window={}x{}",
         cfg.recon_freq_max_hz,
         cfg.view_freq_min_hz,
         cfg.view_freq_max_hz,
@@ -280,7 +405,9 @@ fn main() {
         st.view.recon_freq_min_hz = cfg.recon_freq_min_hz;
         st.view.recon_freq_max_hz = cfg.recon_freq_max_hz;
         st.view.recon_freq_count = cfg.recon_freq_count;
+        st.view.recon_norm_floor = cfg.recon_norm_floor;
         st.lock_to_active = cfg.lock_to_active;
+        st.render_full_file_outside_roi = cfg.render_full_file_outside_roi;
         st.time_zoom_factor = cfg.time_zoom_factor;
         st.freq_zoom_factor = cfg.freq_zoom_factor;
         st.mouse_zoom_factor = cfg.mouse_zoom_factor;
@@ -304,6 +431,18 @@ fn main() {
             "BinsPerSegment" => data::LastEditedField::BinsPerSegment,
             _ => data::LastEditedField::Overlap,
         };
+        st.overview_fft_defaults.window_length = cfg.overview_window_length;
+        st.overview_fft_defaults.overlap_percent = cfg.overview_overlap_percent;
+        st.overview_fft_defaults.window_type = match cfg.overview_window_type.as_str() {
+            "Rectangular" => data::WindowType::Rectangular,
+            "Hamming" => data::WindowType::Hamming,
+            "Blackman" => data::WindowType::Blackman,
+            "Kaiser" => data::WindowType::Kaiser(cfg.overview_kaiser_beta),
+            _ => data::WindowType::Hann,
+        };
+        st.overview_fft_defaults.use_center = cfg.overview_center_pad;
+        st.overview_fft_defaults.zero_pad_factor = cfg.overview_zero_pad_factor;
+        st.overview_fft_defaults.sample_rate = st.fft_params.sample_rate;
         Rc::new(RefCell::new(st))
     };
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
@@ -313,14 +452,16 @@ fn main() {
 
     // Wire up all callbacks
     callbacks_nav::setup_menu_callbacks(&widgets, &state);
+    callbacks_nav::setup_shortcut_key_button(&widgets);
     callbacks_file::setup_file_callbacks(&widgets, &state, &tx, &shared, &win);
     callbacks_file::setup_rerun_callback(&widgets, &state, &tx, &shared);
     callbacks_ui::setup_parameter_callbacks(&widgets, &state, &shared);
     callbacks_ui::setup_display_callbacks(&widgets, &state);
-    callbacks_ui::setup_gradient_editor(&widgets, &state);
+    gradient_editor::setup_gradient_editor(&widgets, &state);
     callbacks_ui::setup_playback_callbacks(&widgets, &state);
     callbacks_ui::setup_misc_callbacks(&widgets, &state, &win);
-    callbacks_draw::setup_draw_callbacks(&widgets, &state);
+    callbacks_ui::setup_mouse_mode_callbacks(&widgets, &state);
+    callbacks_draw::setup_draw_callbacks(&widgets, &state, &shared);
     let (x_scroll_gen, y_scroll_gen) = callbacks_nav::setup_scrollbar_callbacks(&widgets, &state);
     callbacks_nav::setup_zoom_callbacks(&widgets, &state);
     callbacks_nav::setup_snap_to_view(&widgets, &state);
@@ -353,567 +494,29 @@ fn main() {
         };
         widgets.seg_preset_choice.clone().set_value(preset_idx);
         widgets
+            .check_render_full_outside_roi
+            .clone()
+            .set_checked(st.render_full_file_outside_roi);
+        widgets
             .slider_overlap
             .clone()
             .set_value(st.fft_params.overlap_percent as f64);
+        widgets
+            .input_norm_floor
+            .clone()
+            .set_value(&format!("{}", st.view.recon_norm_floor));
+        widgets
+            .lbl_norm_floor_sci
+            .clone()
+            .set_label(&format!(
+                "{} = {}",
+                crate::validation::format_norm_floor_with_commas_f64(st.view.recon_norm_floor),
+                crate::validation::format_scientific_f64(st.view.recon_norm_floor)
+            ));
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    //  MAIN POLL LOOP (16ms)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    {
-        let state = state.clone();
-        let mut status_bar = widgets.status_bar.clone();
-        let mut spec_display = widgets.spec_display.clone();
-        let mut waveform_display = widgets.waveform_display.clone();
-        let mut freq_axis = widgets.freq_axis.clone();
-        let mut time_axis = widgets.time_axis.clone();
-        let mut scrub_slider = widgets.scrub_slider.clone();
-        let mut lbl_time = widgets.lbl_time.clone();
-        let mut slider_ceiling = widgets.slider_ceiling.clone();
-        let mut lbl_ceiling_val = widgets.lbl_ceiling_val.clone();
-        let enable_spec_widgets = shared.enable_spec_widgets.clone();
-        let enable_wav_export = shared.enable_wav_export.clone();
-        let enable_audio_widgets = shared.enable_audio_widgets.clone();
-        let update_info = shared.update_info.clone();
-        let update_seg_label = shared.update_seg_label.clone();
-        let mut input_stop = widgets.input_stop.clone();
-        let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
-        let mut x_scroll = widgets.x_scroll.clone();
-        let mut y_scroll = widgets.y_scroll.clone();
-        let tx = tx.clone();
-        let x_scroll_gen = x_scroll_gen.clone();
-        let y_scroll_gen = y_scroll_gen.clone();
-        let mut win_poll = win.clone();
-
-        // Track last-seen generation to detect user scrollbar interaction
-        let mut last_x_gen: u64 = 0;
-        let mut last_y_gen: u64 = 0;
-
-        app::add_timeout3(0.016, move |handle| {
-            // Skip expensive per-tick work when idle: no audio loaded means
-            // no scrollbars to sync, no transport to update, no info to refresh.
-            // Worker messages (rx) are still polled so FFT completion is handled.
-            let is_idle = state
-                .try_borrow()
-                .map(|st| st.audio_data.is_none() && !st.is_processing)
-                .unwrap_or(false);
-
-            if !is_idle {
-                (update_info.borrow_mut())();
-            }
-            // ── Sync scrollbars with view state (skip when idle) ──
-            if !is_idle {
-                let cur_x_gen = x_scroll_gen.get();
-                let cur_y_gen = y_scroll_gen.get();
-                let x_user_active = cur_x_gen != last_x_gen;
-                let y_user_active = cur_y_gen != last_y_gen;
-                last_x_gen = cur_x_gen;
-                last_y_gen = cur_y_gen;
-
-                let scroll_data = if let Ok(st) = state.try_borrow() {
-                    let data_time_range = st.view.data_time_max_sec - st.view.data_time_min_sec;
-                    let data_freq_min = 1.0_f32;
-                    let data_freq_range = st.view.data_freq_max_hz - data_freq_min;
-
-                    let x_data = if data_time_range > 0.001 {
-                        let vis_time = st.view.visible_time_range();
-                        let ratio = (vis_time / data_time_range).clamp(0.02, 1.0) as f32;
-                        let scroll_range = (data_time_range - vis_time).max(0.0);
-                        let frac = if scroll_range > 0.001 {
-                            ((st.view.time_min_sec - st.view.data_time_min_sec) / scroll_range)
-                                .clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
-                        Some((ratio, frac * 10000.0))
-                    } else {
-                        None
-                    };
-
-                    let y_data = if data_freq_range > 1.0 {
-                        let vis_freq = st.view.visible_freq_range();
-                        let ratio = (vis_freq / data_freq_range).clamp(0.02, 1.0);
-                        let scroll_range = (data_freq_range - vis_freq).max(0.0);
-                        let frac = if scroll_range > 0.1 {
-                            ((st.view.freq_min_hz - data_freq_min) / scroll_range).clamp(0.0, 1.0)
-                                as f64
-                        } else {
-                            0.0
-                        };
-                        Some((ratio, (1.0 - frac) * 10000.0))
-                    } else {
-                        None
-                    };
-
-                    Some((x_data, y_data))
-                } else {
-                    None
-                };
-
-                if let Some((x_data, y_data)) = scroll_data {
-                    if let Some((sz, pos)) = x_data {
-                        x_scroll.set_slider_size(sz);
-                        if !x_user_active {
-                            x_scroll.set_value(pos);
-                        }
-                    }
-                    if let Some((sz, pos)) = y_data {
-                        y_scroll.set_slider_size(sz);
-                        if !y_user_active {
-                            y_scroll.set_value(pos);
-                        }
-                    }
-                }
-            }
-
-            // ── Process worker messages ──
-            while let Ok(msg) = rx.try_recv() {
-                match msg {
-                    WorkerMessage::FftComplete(spectrogram) => {
-                        let num_frames = spectrogram.num_frames();
-
-                        // Store spectrogram, then auto-reconstruct
-                        let recon_data = {
-                            let mut st = state.borrow_mut();
-
-                            st.view.max_freq_bins = st.fft_params.num_frequency_bins();
-
-                            // Compute adaptive dB ceiling from actual data max amplitude
-                            let max_mag = spectrogram.max_magnitude();
-                            if max_mag > 0.0 {
-                                st.view.db_ceiling = 20.0 * max_mag.log10();
-                            }
-
-                            let spec_arc = Arc::new(spectrogram);
-                            let (min_t, max_t, max_f) =
-                                (spec_arc.min_time, spec_arc.max_time, spec_arc.max_freq);
-
-                            st.spectrogram = Some(spec_arc);
-
-                            // Update data bounds (full file range)
-                            st.view.data_time_min_sec = min_t;
-                            st.view.data_time_max_sec = max_t;
-                            if max_f > 0.0 {
-                                st.view.data_freq_max_hz = max_f;
-                            }
-
-                            // Set viewport to full file range on first load
-                            if st.view.time_max_sec <= 0.0
-                                || st.view.time_max_sec == st.view.time_min_sec
-                            {
-                                st.view.time_min_sec = min_t;
-                                st.view.time_max_sec = max_t;
-                            }
-                            if max_f > 0.0 && st.view.freq_max_hz <= 1.0 {
-                                st.view.freq_max_hz = max_f;
-                            }
-
-                            st.spec_renderer.invalidate();
-
-                            // Prepare reconstruction: filter spectrogram to processing time range
-                            let spec = st.spectrogram.clone().unwrap();
-                            let params = st.fft_params.clone();
-                            let view = st.view.clone();
-
-                            // Get processing time range (derived from sample counts)
-                            let proc_time_min = params.start_seconds();
-                            let proc_time_max = params.stop_seconds();
-
-                            st.recon_start_sample = params.start_sample;
-
-                            (spec, params, view, proc_time_min, proc_time_max)
-                        };
-
-                        // Sync ceiling slider to auto-computed dB ceiling
-                        {
-                            let st = state.borrow();
-                            let ceil = st.view.db_ceiling;
-                            slider_ceiling.set_value(ceil as f64);
-                            lbl_ceiling_val.set_label(&format!("Ceiling: {} dB", ceil as i32));
-                        }
-
-                        (enable_spec_widgets.borrow_mut())();
-                        (update_info.borrow_mut())();
-                        status_bar.set_value(&format!(
-                            "FFT done ({} frames) | Reconstructing...",
-                            num_frames
-                        ));
-                        spec_display.redraw();
-                        freq_axis.redraw();
-                        time_axis.redraw();
-
-                        // Auto-trigger reconstruction with time-filtered spectrogram
-                        let tx_clone = tx.clone();
-                        let (spec, params, view, proc_time_min, proc_time_max) = recon_data;
-
-                        // Pre-filter frames on main thread
-                        let filtered_frames: Vec<_> = spec
-                            .frames
-                            .iter()
-                            .filter(|f| {
-                                f.time_seconds >= proc_time_min && f.time_seconds <= proc_time_max
-                            })
-                            .cloned()
-                            .collect();
-
-                        // Set recon_start_sample from actual first frame time
-                        // (frame time = center_sample / sample_rate, so round-trip is exact for practical lengths)
-                        if let Some(first) = filtered_frames.first() {
-                            let sr = params.sample_rate as f64;
-                            state.borrow_mut().recon_start_sample =
-                                (first.time_seconds * sr).round() as usize;
-                        }
-
-                        std::thread::spawn(move || {
-                            let result =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    let filtered_spec =
-                                        data::Spectrogram::from_frames(filtered_frames);
-                                    Reconstructor::reconstruct(&filtered_spec, &params, &view)
-                                }));
-                            match result {
-                                Ok(reconstructed) => {
-                                    tx_clone
-                                        .send(WorkerMessage::ReconstructionComplete(reconstructed))
-                                        .ok();
-                                }
-                                Err(panic) => {
-                                    let msg = panic
-                                        .downcast_ref::<String>()
-                                        .map(|s| s.clone())
-                                        .or_else(|| {
-                                            panic.downcast_ref::<&str>().map(|s| s.to_string())
-                                        })
-                                        .unwrap_or_else(|| "unknown panic".to_string());
-                                    eprintln!("[Reconstruction thread] PANIC: {}", msg);
-                                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-                                }
-                            }
-                        });
-                    }
-                    WorkerMessage::ReconstructionComplete(mut reconstructed) => {
-                        // Normalize reconstructed audio for proper playback volume
-                        {
-                            let st = state.borrow();
-                            if st.normalize_audio {
-                                reconstructed.normalize(st.normalize_peak);
-                            }
-                        }
-                        let recon_result = {
-                            let mut st = state.borrow_mut();
-                            // Wrap samples in Arc for the player. Currently still
-                            // clones the Vec; true zero-copy requires AudioData.samples
-                            // to become Arc<Vec<f32>> (planned for Category 7).
-                            let playback_samples = Arc::new(reconstructed.samples.clone());
-                            match st
-                                .audio_player
-                                .load_audio(playback_samples, reconstructed.sample_rate)
-                            {
-                                Ok(_) => {
-                                    let num_smp = reconstructed.num_samples();
-                                    let sr = reconstructed.sample_rate;
-                                    st.transport.duration_samples = num_smp;
-                                    st.transport.sample_rate = sr;
-                                    st.wave_renderer.invalidate();
-
-                                    st.reconstructed_audio = Some(reconstructed);
-                                    st.is_processing = false;
-                                    st.dirty = false;
-
-                                    // Auto-start playback if Play was pressed while dirty
-                                    let should_play = st.play_pending;
-                                    st.play_pending = false;
-                                    if should_play {
-                                        st.audio_player.play();
-                                        st.transport.is_playing = true;
-                                    }
-
-                                    Ok((num_smp, sr))
-                                }
-                                Err(e) => {
-                                    st.is_processing = false;
-                                    st.play_pending = false;
-                                    Err(e)
-                                }
-                            }
-                        };
-                        match recon_result {
-                            Ok((num_smp, sr)) => {
-                                let duration_sec = num_smp as f64 / sr.max(1) as f64;
-                                (enable_wav_export.borrow_mut())();
-                                status_bar.set_value(&format!(
-                                    "Reconstructed | {:.2}s | {} samples",
-                                    duration_sec, num_smp
-                                ));
-                                spec_display.redraw();
-                                waveform_display.redraw();
-                                freq_axis.redraw();
-                                time_axis.redraw();
-
-                                // If "Lock to Active" is on, snap viewport to processing
-                                // range (time + frequency) after a short delay so the UI
-                                // has time to finish updating renderers/redraws.
-                                let lock_active = state.borrow().lock_to_active;
-                                if lock_active {
-                                    let state_lock = state.clone();
-                                    let mut spec_d = spec_display.clone();
-                                    let mut wave_d = waveform_display.clone();
-                                    let mut freq_a = freq_axis.clone();
-                                    let mut time_a = time_axis.clone();
-                                    app::add_timeout3(0.5, move |_| {
-                                        let mut st = state_lock.borrow_mut();
-                                        // Snap time to reconstruction range
-                                        let proc_min = st.recon_start_seconds();
-                                        let proc_max = proc_min + st.transport.duration_seconds();
-                                        if proc_max > proc_min {
-                                            st.view.time_min_sec =
-                                                proc_min.max(st.view.data_time_min_sec);
-                                            st.view.time_max_sec =
-                                                proc_max.min(st.view.data_time_max_sec);
-                                        }
-                                        // Snap frequency to reconstruction range
-                                        st.view.freq_min_hz = st.view.recon_freq_min_hz.max(1.0);
-                                        st.view.freq_max_hz =
-                                            st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
-                                        st.spec_renderer.invalidate();
-                                        st.wave_renderer.invalidate();
-                                        drop(st);
-                                        spec_d.redraw();
-                                        wave_d.redraw();
-                                        freq_a.redraw();
-                                        time_a.redraw();
-                                    });
-                                }
-                            }
-                            Err(e) => {
-                                status_bar.set_value(&format!("Reconstruction error: {}", e));
-                                fltk::dialog::alert_default(&format!(
-                                    "Failed to load reconstructed audio:\n{}",
-                                    e
-                                ));
-                            }
-                        }
-                    }
-                    WorkerMessage::AudioLoaded(audio, filename, norm_gain) => {
-                        let num_smp = audio.num_samples();
-                        let duration = audio.duration_seconds;
-                        let nyquist = audio.nyquist_freq();
-                        let sample_rate = audio.sample_rate;
-                        let audio = Arc::new(audio);
-
-                        let params_clone;
-                        {
-                            let mut st = state.borrow_mut();
-
-                            st.audio_player.stop();
-                            st.fft_params.sample_rate = sample_rate;
-                            st.fft_params.start_sample = 0;
-                            st.fft_params.stop_sample = num_smp;
-                            st.audio_data = Some(audio.clone());
-                            st.has_audio = true;
-                            st.source_norm_gain = norm_gain;
-
-                            st.view.data_time_min_sec = 0.0;
-                            st.view.data_time_max_sec = duration;
-                            st.view.time_min_sec = 0.0;
-                            st.view.time_max_sec = duration;
-                            st.view.data_freq_max_hz = nyquist;
-                            st.view.freq_min_hz = st.view.freq_min_hz.min(nyquist);
-                            st.view.freq_max_hz = st.view.freq_max_hz.min(nyquist);
-                            st.view.recon_freq_max_hz = st.view.recon_freq_max_hz.min(nyquist);
-                            st.view.max_freq_bins = st.fft_params.num_frequency_bins();
-                            st.view.recon_freq_count = st.fft_params.num_frequency_bins();
-
-                            st.transport.duration_samples = num_smp;
-                            st.transport.sample_rate = sample_rate;
-                            st.transport.position_samples = 0;
-
-                            st.spec_renderer.invalidate();
-                            st.wave_renderer.invalidate();
-
-                            params_clone = st.fft_params.clone();
-                            // is_processing stays true — FFT thread follows
-
-                            let fname = filename
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
-                            st.current_filename = fname.clone();
-                            drop(st);
-                            win_poll.set_label(&format!("muSickBeets - {}", fname));
-                        }
-
-                        // Sync UI widgets
-                        {
-                            let st = state.borrow();
-                            match st.fft_params.time_unit {
-                                crate::data::TimeUnit::Seconds => {
-                                    input_stop.set_value(&format!("{:.5}", duration));
-                                }
-                                crate::data::TimeUnit::Samples => {
-                                    input_stop.set_value(&num_smp.to_string());
-                                }
-                            }
-                            input_recon_freq_max
-                                .set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
-                        }
-
-                        (enable_audio_widgets.borrow_mut())();
-                        (update_info.borrow_mut())();
-                        (update_seg_label.borrow_mut())();
-
-                        // Launch background FFT (reconstruction auto-follows via FftComplete)
-                        eprintln!(
-                            "[Open] Spawning FFT thread (window={}, overlap={}%)",
-                            params_clone.window_length, params_clone.overlap_percent
-                        );
-                        let tx_clone = tx.clone();
-                        let audio_for_fft = audio.clone();
-                        std::thread::spawn(move || {
-                            let result =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    eprintln!("[FFT thread] Started");
-                                    let spectrogram =
-                                        FftEngine::process(&audio_for_fft, &params_clone);
-                                    eprintln!(
-                                        "[FFT thread] Complete: {} frames",
-                                        spectrogram.num_frames()
-                                    );
-                                    spectrogram
-                                }));
-                            match result {
-                                Ok(spectrogram) => {
-                                    tx_clone.send(WorkerMessage::FftComplete(spectrogram)).ok();
-                                }
-                                Err(panic_val) => {
-                                    let msg: String = panic_val
-                                        .downcast_ref::<String>()
-                                        .cloned()
-                                        .or_else(|| {
-                                            panic_val.downcast_ref::<&str>().map(|s| s.to_string())
-                                        })
-                                        .unwrap_or_else(|| "unknown panic".to_string());
-                                    eprintln!("[FFT thread] PANIC: {}", msg);
-                                    tx_clone.send(WorkerMessage::WorkerPanic(msg)).ok();
-                                }
-                            }
-                        });
-
-                        status_bar.set_value(&format!(
-                            "Processing FFT... | {:.2}s | {} Hz | {}",
-                            duration,
-                            sample_rate,
-                            filename.file_name().unwrap_or_default().to_string_lossy()
-                        ));
-                        spec_display.redraw();
-                        waveform_display.redraw();
-                    }
-
-                    WorkerMessage::WavSaved(result) => match result {
-                        Ok(path) => {
-                            status_bar.set_value(&format!("WAV saved: {:?}", path));
-                        }
-                        Err(msg) => {
-                            fltk::dialog::alert_default(&format!("Error saving WAV:\n{}", msg));
-                            status_bar.set_value("WAV save failed");
-                        }
-                    },
-
-                    WorkerMessage::CsvSaved(result) => match result {
-                        Ok((_, num_frames, time_min, time_max)) => {
-                            status_bar.set_value(&format!(
-                                "FFT saved ({} frames, {:.2}s-{:.2}s)",
-                                num_frames, time_min, time_max
-                            ));
-                        }
-                        Err(msg) => {
-                            fltk::dialog::alert_default(&format!("Error saving CSV:\n{}", msg));
-                            status_bar.set_value("Save failed");
-                        }
-                    },
-
-                    WorkerMessage::WorkerPanic(msg) => {
-                        eprintln!("[Worker] PANIC: {}", msg);
-                        {
-                            let mut st = state.borrow_mut();
-                            st.is_processing = false;
-                            st.play_pending = false;
-                        }
-                        status_bar.set_value(&format!("Error: worker thread panicked: {}", msg));
-                    }
-                }
-            }
-
-            // Check for disconnected channel (worker panicked without sending)
-            if state.borrow().is_processing {
-                use std::sync::mpsc::TryRecvError;
-                if let Err(TryRecvError::Disconnected) = rx.try_recv() {
-                    eprintln!("[Worker] Channel disconnected — worker thread likely panicked without sending a message");
-                    let mut st = state.borrow_mut();
-                    st.is_processing = false;
-                    st.play_pending = false;
-                    drop(st);
-                    status_bar.set_value("Error: processing failed (worker thread lost)");
-                }
-            }
-
-            // ── Update transport position ──
-            let transport_data = {
-                let Ok(mut st) = state.try_borrow_mut() else {
-                    app::repeat_timeout3(0.016, handle);
-                    return;
-                };
-                if st.audio_player.has_audio() {
-                    let local_samples = st.audio_player.get_position_samples();
-                    let playing = st.audio_player.get_state() == PlaybackState::Playing;
-                    let global_samples = st.recon_start_sample + local_samples;
-                    st.transport.position_samples = global_samples;
-                    let dur_samples = st.transport.duration_samples;
-                    let sr = st.transport.sample_rate;
-                    let time_unit = st.fft_params.time_unit;
-                    Some((
-                        local_samples,
-                        dur_samples,
-                        global_samples,
-                        sr,
-                        playing,
-                        time_unit,
-                    ))
-                } else {
-                    None
-                }
-            };
-            if let Some((local_smp, dur_smp, global_smp, sr, playing, time_unit)) = transport_data {
-                if dur_smp > 0 {
-                    scrub_slider.set_value(local_smp as f64 / dur_smp as f64);
-                }
-                let label = match time_unit {
-                    TimeUnit::Samples => {
-                        format!("L {} / {}\nG {}", local_smp, dur_smp, global_smp,)
-                    }
-                    TimeUnit::Seconds => {
-                        let sr_f = sr.max(1) as f64;
-                        format!(
-                            "L {} / {}\nG {}",
-                            format_time(local_smp as f64 / sr_f),
-                            format_time(dur_smp as f64 / sr_f),
-                            format_time(global_smp as f64 / sr_f),
-                        )
-                    }
-                };
-                lbl_time.set_label(&label);
-                if playing {
-                    spec_display.redraw();
-                    waveform_display.redraw();
-                }
-            }
-
-            app::repeat_timeout3(0.016, handle);
-        });
-    }
+    // ── Start the 16ms poll loop (worker messages, scrollbar sync, transport) ──
+    poll_loop::start_poll_loop(&state, &widgets, &shared, &tx, rx, x_scroll_gen, y_scroll_gen, &win);
 
     win.show();
     app.run().unwrap();

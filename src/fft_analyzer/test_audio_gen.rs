@@ -1,8 +1,6 @@
 /// Generate test WAV files for FFT analyzer testing
-/// 
 /// Run with: cargo run --bin test_audio_gen
-
-use hound::{WavWriter, WavSpec, SampleFormat};
+use hound::{SampleFormat, WavSpec, WavWriter};
 use std::f32::consts::PI;
 
 fn main() {
@@ -10,13 +8,13 @@ fn main() {
 
     // 1. Pure sine wave at 440 Hz (A4 note)
     generate_sine_wave("test_sine_440hz.wav", 440.0, 2.0);
-    
+
     // 2. Chirp (sweep from 100 Hz to 1000 Hz)
     generate_chirp("test_chirp.wav", 100.0, 1000.0, 3.0);
-    
+
     // 3. Multi-tone (combination of several frequencies)
     generate_multitone("test_multitone.wav", &[220.0, 440.0, 880.0], 2.0);
-    
+
     // 4. White noise
     generate_white_noise("test_noise.wav", 2.0);
 
@@ -89,11 +87,11 @@ fn generate_multitone(filename: &str, frequencies: &[f32], duration: f32) {
     for i in 0..num_samples {
         let t = i as f32 / sample_rate as f32;
         let mut sample = 0.0;
-        
+
         for &freq in frequencies {
             sample += (2.0 * PI * freq * t).sin() / frequencies.len() as f32;
         }
-        
+
         let amplitude = (sample * i16::MAX as f32) as i16;
         writer.write_sample(amplitude).unwrap();
     }
@@ -103,7 +101,7 @@ fn generate_multitone(filename: &str, frequencies: &[f32], duration: f32) {
 
 fn generate_white_noise(filename: &str, duration: f32) {
     use rand::Rng;
-    
+
     let sample_rate = 48000;
     let spec = WavSpec {
         channels: 1,

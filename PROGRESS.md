@@ -1,134 +1,83 @@
 # Progress Tracker
 
-## Completed Features
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](src/tracker/documentation.md) | [FFT Guide](src/fft_analyzer/fft_analyzer_documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
 
-### FFT Segmentation Redesign (Feb 2026)
-Full overhaul of FFT segmentation controls with bidirectional parameter solving.
+---
 
-- [x] **Phase 1** -- Environment + session reliability
-  - Resolved missing system linker dependencies for FLTK on Ubuntu
-  - Documented required apt packages, mirrored guidance into AGENTS.md
-- [x] **Phase 2** -- Status bar FFT diagnostic readout
-  - Dedicated FFT status readout widget with tooltip showing segmentation explanation
-  - Auto-growing bottom status region based on wrapped text length
-- [x] **Phase 3** -- Segmentation control model (live recalculation)
-  - Pure segmentation solver module with deterministic dependency resolution
-  - Segments-per-active-area input + bins-per-segment input
-  - `LastEditedField` enum tracks which control was last edited for solver routing
-  - Live dependent field updates while typing
-  - Hard constraints enforced (even window, min 4 samples, overlap capped, hop >= 1)
-- [x] **Phase 4** -- Time unit toggle expansion
-  - All editable sample/time fields toggle between samples and seconds
-  - Internal storage remains sample-based; display converts on the fly
-  - Transport, Start/Stop, info readouts, and navigation all respect the toggle
-- [x] **Phase 5** -- Persistence + compatibility
-  - Settings INI persistence for solver fields (target_segments, target_bins, last_edited)
-  - CSV metadata export/import with backward compatibility for older files
-  - Round-trip and backward-compat regression tests
-- [x] **Phase 6** -- Validation + QA
-  - `cargo build` + `cargo test` passing
-  - Manual smoke checks completed
+## Git Rules
 
-### Segmentation Overhaul Features (Feb 2026)
-- [x] Resolution trade-off display (live multi-line info in ANALYSIS section)
-- [x] dB ceiling slider (DISPLAY section, auto-set from data, user-adjustable)
-- [x] Direct segment size input + presets (typed input + dropdown, +/- steps through presets)
-- [x] Zero-padding factor (1x/2x/4x/8x, full FFT pipeline integration)
-- [x] Hop size display (read-only, below overlap slider)
+- Don't manage GitHub. The user will handle that.
+- Only push when the user explicitly asks.
 
-### Custom Gradient/Color Ramp Editor (Feb 2026)
-- [x] GradientStop data structure, eval_gradient(), default 7-stop rainbow
-- [x] Custom variant added to ColormapId (8th dropdown option)
-- [x] Interactive preview widget: click to add, drag to move, right-click to delete, shift+click for color picker
-- [x] ColorLUT extended with set_custom_stops() for dynamic gradient rendering
-- [x] Save/load custom gradient to settings.ini
+---
 
-### Bug Fixes (Feb 2026)
-- [x] Text field validation: switched from set_callback() to handle() so validation survives when functional callbacks are attached later
-- [x] Spacebar guard v3 -- FINAL: three-layer approach (clear_visible_focus + block_space! macro + window handler)
-- [x] Global time display: transport bar shows "L" (local) and "G" (global) time
-- [x] Time calculation precision: recon_start_time from actual first FFT frame time
-- [x] Volume reduction fix: reconstructor overlap-add normalization uses adaptive threshold
-- [x] Remove 64-sample minimum on segment size (now allows down to 4)
-- [x] Fix Save As Default button (SIDEBAR_INNER_H overflow from gradient widget)
+## Sub-Agent Launch Policy
 
-### Lock to Active v2 (Feb 2026)
-- [x] Matches Home button behavior: snaps both time AND frequency to active range
-- [x] Uses 0.5s delay via app::add_timeout3 after reconstruction completes
-- [x] Tooltip updated to mention both time and frequency
+Ask for confirmation before launching sub-agents unless the user has given standing permission. Begin every sub-agent prompt with the preamble from `AGENTS.md`. Research sub-agents may run in parallel; only one writer per file set at a time.
 
-### Code Review + Fixes (Feb 2026)
-4 AI reviewers (Claude Opus, Trinity, MiniMax, Big Pickle) reviewed the codebase.
-Cross-referenced and deduplicated into CATEGORIZED_ISSUES.md (9 categories, 35 issues).
+---
 
-- [x] **Category 1** -- Input Validation & Edge Cases (7 items)
-  - reset_zoom() uses freq_min_hz=1.0 not 0.0
-  - Early bail for sample_rate==0
-  - Documented take()+put-back pattern as intentional
-  - NaN-safe binary search in frame_at_time()
-  - Defensive sort in Spectrogram::from_frames()
-  - Min window raised from 2 to 4
-  - Memory warning for huge zero-padded FFTs
-- [x] **Category 2** -- Idle/Polling Overhead (2 items)
-  - is_idle guard skipping update_info() and scrollbar sync when no audio loaded
-  - ViewState clone assessed as not worth fixing (~200 bytes)
-- [x] **Infrastructure** -- Debug flags system
-  - debug_flags.rs with toggleable CURSOR_DBG, FFT_DBG, PLAYBACK_DBG, RENDER_DBG
-  - dbg_log! macro for conditional debug output
+## Completed Work
 
-### UI Restructure -- Transport + Cursor Readout (Feb 2026)
-- [x] Split transport from 1 row into 2 rows: scrubber (18px) + controls (28px)
-- [x] cursor_readout Frame widget shows freq/dB/time between Stop button and L/G time
-- [x] Event::Enter handler so FLTK delivers Event::Move to spectrogram Widget
-- [x] Event::Leave clears readout when mouse exits spectrogram
+### Single-Frame FFT / Reconstruction Correctness -- CLOSED
 
-### Mouse Navigation Redesign (Feb 2026)
-- [x] New scroll wheel scheme:
-  - No modifier: pan frequency axis (up/down)
-  - Ctrl + scroll: pan time axis (left/right)
-  - Alt + scroll: zoom frequency centered on cursor Y
-  - Alt + Ctrl + scroll: zoom time centered on cursor X
-- [x] swap_zoom_axes setting (persisted in settings.ini) swaps Alt vs Alt+Ctrl zoom axes
-- [x] Pan step: 15% of visible range per tick; zoom uses mouse_zoom_factor setting
+All known issues resolved or documented as expected DSP behavior.
+
+**What was done (steps 1-12):**
+- Researched and documented STFT/ISTFT theory for edge cases
+- Instrumented reconstruction with detailed logging
+- Fixed centered reconstruction support cropping
+- Replaced aggressive 10%-of-max threshold with user-configurable norm floor
+- Attempted f32::MIN_POSITIVE threshold -- discovered division-by-near-zero spike issue, reverted to 1e-6
+- Added rectangular window (zero gaps, edge-to-edge)
+- Added "Max" button for setting recon freq to Nyquist
+- Added dense sample dump logging (`FRAME_SAMPLE_DUMP_DBG`)
+- Fixed Home button (sidebar overflow from new widgets)
+- Upgraded norm floor to f64 for deeper precision (range 1e-30 to 1e-4)
+- Fixed norm floor label not updating on recompute
+- Added word wrap to resolution info text field
+- Added 25 automated tests
+- Updated all documentation
+
+**What's established:**
+- Silent gaps at window endpoints: expected NOLA violation for tapered windows. User-tunable via Norm Floor. Rectangular eliminates entirely.
+- Boundary discontinuities with sparse bins at 0% overlap: expected spectrogram inconsistency. Not a bug. More overlap or full-spectrum reduces them.
+- Default recon_freq_max = 5000Hz (not Nyquist). "Max" button sets to Nyquist.
+- Rectangular window behaves identically to Hamming when all bins active (both have nonzero endpoints, near-perfect reconstruction). Differs in spectral analysis quality (more leakage, less sidelobe rejection).
+- Identity-mode roundtrip: near-perfect with any window when all bins active.
 
 ---
 
 ## Active Work
 
-### Code Review Issues (CATEGORIZED_ISSUES.md)
-- [x] Categories 1-2 complete. Remaining:
-- [ ] Category 3: Data Correctness (4 items)
-- [ ] Category 4: Error Handling & Resilience (4 items)
-- [ ] Category 5: Audio Playback (3 items)
-- [ ] Category 6: UI Thread Blocking (4 items)
-- [ ] Category 7: Memory Efficiency (2 items)
-- [ ] Category 8: Rendering Performance (5 items)
-- [ ] Category 9: FFT/Reconstruction Pipeline (4 items)
+Ready for next feature. Upcoming: new controls in the transport bar area (to the right of the Stop button), and spectrogram selection/editing features. Details pending.
 
 ---
 
 ## Backburner
 
-- [ ] File open freeze -- intermittent, debug logging in place but root cause not found
-- [ ] Analysis presets layer (transients, tonal, balanced)
-- [ ] Per-section reset-to-default (Analysis / Display / Reconstruction)
-- [ ] FFT Analyzer user guide (documentation.md is tracker-centric)
-- [ ] Update map.md line counts and architecture summaries after major refactors
-- [ ] Update README.md after this development stage
+| Item | Notes |
+|------|-------|
+| Periodic vs symmetric windows | Decided to keep symmetric. Low priority. |
+| Noise floor measurement | User-directed: select a "silent" region, compute floor, save to settings. Not auto. |
+| Synthesis window / cross-fade | WOLA smoothing for modified-STFT boundaries at low overlap. Deferred. |
 
 ---
 
-## Key Architecture Notes
-- Settings loaded in main() before UI, applied to AppState
-- FreqScale::Power(f32) replaces old Log/Linear toggle
-- Audio normalization happens both on file load AND after reconstruction
-- Zoom factors stored in AppState, read from settings
-- Freq axis labels use pixel-space-first generation with binary search inversion
-- is_seeking flag prevents playback from auto-pausing during cursor drag
-- Save As Default captures current AppState into Settings struct and writes INI
-- Custom gradient: Vec<GradientStop> in ViewState, piped through ColorLUT and SpectrogramRenderer
-- Settings file: `settings.ini` in working directory (created on first run)
+## Test Suite (25 tests, all passing)
 
-## Attribution
-- Spectrogram visualization and reconstruction inspired by [Audio-Experiments](https://github.com/SebLague/Audio-Experiments) by Sebastian Lague (MIT License)
-- Custom gradient editor inspired by [Gradient-Editor](https://github.com/SebLague/Gradient-Editor) by Sebastian Lague
+Located in `reconstructor.rs`:
+- Identity roundtrip: Hann 75%, Hamming 0%, Kaiser 0%, Hann 0%, Blackman 0%
+- Rectangular: zero gaps, single-frame edge-to-edge
+- Sparse bins: Hamming 0% boundary jumps, Hann 50% reduced artifacts
+- Gap regression: Hann 44100-sample single frame
+- Spike safety: all 5 window types at 0% overlap with sparse bins
+- Centered mode: frame count correctness
+- Frame boundary diagnostic: rectangular with sparse bins
+
+---
+
+## Strict Project Boundary
+
+- Do not move into instrument-project planning until the user says so.
+- Rectangular window was added for future single-frame edge-to-edge capture needs.

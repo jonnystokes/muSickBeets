@@ -1,5 +1,7 @@
 # muSickBeets
 
+> **Docs:** [AGENTS](AGENTS.md) | [Progress](PROGRESS.md) | [Architecture](map.md) | [Coding Rules](CODING_RULES.md) | [Tracker Guide](src/tracker/documentation.md) | [FFT Guide](src/fft_analyzer/fft_analyzer_documentation.md) | [README](README.md) | [Project Memory](ai_memory.md)
+
 A music toolkit written in Rust featuring a CSV-driven tracker synthesizer and a real-time FFT spectrogram analyzer.
 
 
@@ -32,7 +34,7 @@ https://rustup.rs
 ### FFT Analyzer
 - Dark-themed cockpit UI built with FLTK
 - Real-time spectrogram visualization with multiple colormaps
-- Configurable FFT parameters (window size, hop length, window type)
+- Configurable FFT parameters (window size, overlap, window type, zero padding)
 - Frequency range and bin count filtering on the spectrogram display
 - Audio reconstruction from selected frequency ranges
 - CSV export/import of FFT data for external analysis
@@ -103,7 +105,7 @@ c4 sine a:0.5, e4 trisaw:0.5 a:0.4, g4 square a:0.3,,,,,,,,,
 | `.` | Release (begin fade out) |
 | `master rv:0.6'0.4` | Master reverb: room 0.6, mix 0.4 |
 
-For the full documentation on instruments, effects, envelopes, and how to extend the system, see [documentation.md](documentation.md).
+For the full tracker documentation on instruments, effects, envelopes, and how to extend the system, see [Tracker Guide](src/tracker/documentation.md). For the FFT analyzer, see [FFT Guide](src/fft_analyzer/fft_analyzer_documentation.md).
 
 ## Project Structure
 

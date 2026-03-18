@@ -6,11 +6,27 @@ use super::data::{
     FftFrame, FftParams, LastEditedField, Spectrogram, TimeUnit, ViewState, WindowType,
 };
 
+/// Reconstruction parameters imported from CSV: (freq_count, freq_min_hz, freq_max_hz).
+pub type ReconParams = (usize, f32, f32);
+
+/// Viewport display state imported from CSV.
+#[derive(Debug, Clone)]
+pub struct ImportedViewParams {
+    /// Viewport frequency display range (what the user was looking at when saving).
+    pub freq_min_hz: Option<f32>,
+    pub freq_max_hz: Option<f32>,
+}
+
+/// Export spectrogram to CSV, optionally filtering to a time range.
+///
+/// If `time_range` is `Some((min, max))`, only frames within the range are written.
+/// Pass `None` to export all frames.
 pub fn export_to_csv<P: AsRef<Path>>(
     spectrogram: &Spectrogram,
     params: &FftParams,
     view: &ViewState,
     path: P,
+    time_range: Option<(f64, f64)>,
 ) -> Result<()> {
     let file = File::create(&path)
         .with_context(|| format!("Failed to create CSV file: {:?}", path.as_ref()))?;
@@ -21,6 +37,7 @@ pub fn export_to_csv<P: AsRef<Path>>(
 
     // Write metadata header (row 1): FFT params + reconstruction params
     let window_type_str = match params.window_type {
+        WindowType::Rectangular => "Rectangular".to_string(),
         WindowType::Hann => "Hann".to_string(),
         WindowType::Hamming => "Hamming".to_string(),
         WindowType::Blackman => "Blackman".to_string(),
@@ -49,39 +66,66 @@ pub fn export_to_csv<P: AsRef<Path>>(
                 LastEditedField::SegmentsPerActive => "SegmentsPerActive".to_string(),
                 LastEditedField::BinsPerSegment => "BinsPerSegment".to_string(),
             }, // 15
+            format!("{:.2}", view.freq_min_hz),                         // 16: viewport freq min
+            format!("{:.2}", view.freq_max_hz),                         // 17: viewport freq max
         ])
         .context("Failed to write CSV metadata")?;
 
     // Write column labels (row 2)
     writer
-        .write_record(&["time_sec", "frequency_hz", "magnitude", "phase_rad"])
+        .write_record(["time_sec", "frequency_hz", "magnitude", "phase_rad"])
         .context("Failed to write CSV header")?;
 
     // Write data (row 3+)
+    let freqs = &spectrogram.frequencies;
+    let num_bins = freqs.len();
+    let mut num_frames_written: usize = 0;
     for frame in &spectrogram.frames {
+        // Skip frames outside the time range if specified
+        if let Some((t_min, t_max)) = time_range
+            && (frame.time_seconds < t_min || frame.time_seconds > t_max)
+        {
+            continue;
+        }
         let time = frame.time_seconds;
 
-        for i in 0..frame.frequencies.len() {
+        for (i, &freq) in freqs.iter().enumerate() {
             writer
                 .write_record(&[
                     format!("{:.10}", time),
-                    format!("{:.4}", frame.frequencies[i]),
+                    format!("{:.4}", freq),
                     format!("{:.6}", frame.magnitudes[i]),
                     format!("{:.6}", frame.phases[i]),
                 ])
                 .context("Failed to write CSV record")?;
         }
+        num_frames_written += 1;
     }
 
     writer.flush().context("Failed to flush CSV writer")?;
 
+    dbg_log!(
+        crate::debug_flags::FILE_IO_DBG,
+        "CSV Export",
+        "Wrote {} frames x {} bins ({} records) to {:?}",
+        num_frames_written,
+        num_bins,
+        num_frames_written * num_bins,
+        path.as_ref()
+    );
+
     Ok(())
 }
 
-/// Returns (Spectrogram, FftParams, optional recon params)
+/// Returns (Spectrogram, FftParams, optional recon params, viewport params)
 pub fn import_from_csv<P: AsRef<Path>>(
     path: P,
-) -> Result<(Spectrogram, FftParams, Option<(usize, f32, f32)>)> {
+) -> Result<(
+    Spectrogram,
+    FftParams,
+    Option<ReconParams>,
+    ImportedViewParams,
+)> {
     use csv::ReaderBuilder;
 
     let mut reader = ReaderBuilder::new()
@@ -163,22 +207,14 @@ pub fn import_from_csv<P: AsRef<Path>>(
     // Optional segmentation solver metadata (fields 13-15, backward-compatible)
     let target_segments_per_active: Option<usize> = if metadata.len() >= 14 {
         let n = metadata[13].parse().unwrap_or(0);
-        if n > 0 {
-            Some(n)
-        } else {
-            None
-        }
+        if n > 0 { Some(n) } else { None }
     } else {
         None
     };
 
     let target_bins_per_segment: Option<usize> = if metadata.len() >= 15 {
         let n = metadata[14].parse().unwrap_or(0);
-        if n > 0 {
-            Some(n)
-        } else {
-            None
-        }
+        if n > 0 { Some(n) } else { None }
     } else {
         None
     };
@@ -193,19 +229,38 @@ pub fn import_from_csv<P: AsRef<Path>>(
         LastEditedField::Overlap
     };
 
+    // Optional viewport frequency range (fields 16-17, backward-compatible)
+    let view_params = ImportedViewParams {
+        freq_min_hz: if metadata.len() >= 17 {
+            metadata[16].parse().ok()
+        } else {
+            None
+        },
+        freq_max_hz: if metadata.len() >= 18 {
+            metadata[17].parse().ok()
+        } else {
+            None
+        },
+    };
+
     // Skip column labels (row 2) — validate it exists and looks like a header
     match records.next() {
         Some(Ok(row)) => {
             // Sanity check: first field should be the column label, not numeric data
-            if let Some(first) = row.get(0) {
-                if first.parse::<f64>().is_ok() {
-                    eprintln!("[CSV Import] Warning: row 2 looks like data, not a header (first field: {:?}). It will be skipped.", first);
-                }
+            if let Some(first) = row.get(0)
+                && first.parse::<f64>().is_ok()
+            {
+                app_log!(
+                    "CSV Import",
+                    "Warning: row 2 looks like data, not a header (first field: {:?}). It will be skipped.",
+                    first
+                );
             }
         }
         Some(Err(e)) => {
-            eprintln!(
-                "[CSV Import] Warning: failed to read row 2 (column labels): {}",
+            app_log!(
+                "CSV Import",
+                "Warning: failed to read row 2 (column labels): {}",
                 e
             );
         }
@@ -230,45 +285,64 @@ pub fn import_from_csv<P: AsRef<Path>>(
         let magnitude: f32 = record[2].parse().unwrap_or(0.0);
         let phase_rad: f32 = record[3].parse().unwrap_or(0.0);
 
-        frames_map.entry(time_sec).or_insert_with(Vec::new).push((
-            frequency_hz,
-            magnitude,
-            phase_rad,
-        ));
+        frames_map
+            .entry(time_sec)
+            .or_default()
+            .push((frequency_hz, magnitude, phase_rad));
     }
 
-    // Build frames
+    // Build frames. Frequency bins are shared across all frames (stored once
+    // on Spectrogram), so we extract them from the first frame's data.
     let mut frames = Vec::new();
+    let mut shared_frequencies: Option<Vec<f32>> = None;
     for (time_str, bins) in frames_map {
         let time_seconds: f64 = time_str.parse().unwrap_or(0.0);
 
-        let mut frequencies = Vec::new();
         let mut magnitudes = Vec::new();
         let mut phases = Vec::new();
 
-        for (freq, mag, phase) in bins {
-            frequencies.push(freq);
+        if shared_frequencies.is_none() {
+            // First frame: extract frequency values for the shared vector
+            let freqs: Vec<f32> = bins.iter().map(|&(freq, _, _)| freq).collect();
+            shared_frequencies = Some(freqs);
+        }
+
+        for (_freq, mag, phase) in bins {
             magnitudes.push(mag);
             phases.push(phase);
         }
 
         frames.push(FftFrame {
             time_seconds,
-            frequencies,
             magnitudes,
             phases,
         });
     }
 
-    let spectrogram = Spectrogram::from_frames(frames);
+    let freq_count = shared_frequencies.as_ref().map_or(0, |f| f.len());
+    let frame_count = frames.len();
+    let spectrogram =
+        Spectrogram::from_frames_with_frequencies(frames, shared_frequencies.unwrap_or_default());
+
+    dbg_log!(
+        crate::debug_flags::FILE_IO_DBG,
+        "CSV Import",
+        "Read {} frames x {} bins from {:?} (sr={}, window={}, overlap={}%)",
+        frame_count,
+        freq_count,
+        path.as_ref(),
+        sample_rate,
+        window_length,
+        overlap_percent
+    );
 
     let params = FftParams {
         window_length,
         overlap_percent,
         window_type,
         use_center,
-        start_sample: start_sample,
-        stop_sample: stop_sample,
+        start_sample,
+        stop_sample,
         time_unit: TimeUnit::Seconds,
         sample_rate,
         zero_pad_factor,
@@ -277,7 +351,7 @@ pub fn import_from_csv<P: AsRef<Path>>(
         last_edited_field,
     };
 
-    Ok((spectrogram, params, recon_params))
+    Ok((spectrogram, params, recon_params, view_params))
 }
 
 #[cfg(test)]
@@ -288,12 +362,11 @@ mod tests {
     fn test_csv_roundtrip() {
         let frame = FftFrame {
             time_seconds: 0.0,
-            frequencies: vec![0.0, 100.0, 200.0],
             magnitudes: vec![0.5, 0.8, 0.3],
             phases: vec![0.0, 1.57, 3.14],
         };
 
-        let spec = Spectrogram::from_frames(vec![frame]);
+        let spec = Spectrogram::from_frames_with_frequencies(vec![frame], vec![0.0, 100.0, 200.0]);
         let mut params = FftParams::default();
         params.target_segments_per_active = Some(17);
         params.target_bins_per_segment = Some(1025);
@@ -301,9 +374,9 @@ mod tests {
         let view = ViewState::default();
 
         let temp_path = "/tmp/test_roundtrip.csv";
-        export_to_csv(&spec, &params, &view, temp_path).expect("Export should succeed");
+        export_to_csv(&spec, &params, &view, temp_path, None).expect("Export should succeed");
 
-        let (imported_spec, imported_params, recon) =
+        let (imported_spec, imported_params, recon, view_imported) =
             import_from_csv(temp_path).expect("Import should succeed");
 
         assert_eq!(imported_params.sample_rate, params.sample_rate);
@@ -324,6 +397,12 @@ mod tests {
         assert!((fmin - view.recon_freq_min_hz).abs() < 1.0);
         assert!((fmax - view.recon_freq_max_hz).abs() < 1.0);
 
+        // Viewport freq range roundtrip
+        assert!(view_imported.freq_min_hz.is_some());
+        assert!(view_imported.freq_max_hz.is_some());
+        assert!((view_imported.freq_min_hz.unwrap() - view.freq_min_hz).abs() < 1.0);
+        assert!((view_imported.freq_max_hz.unwrap() - view.freq_max_hz).abs() < 1.0);
+
         std::fs::remove_file(temp_path).ok();
     }
 
@@ -338,7 +417,8 @@ mod tests {
 ";
         std::fs::write(temp_path, csv).expect("write test csv");
 
-        let (_spec, params, _recon) = import_from_csv(temp_path).expect("import should succeed");
+        let (_spec, params, _recon, _view) =
+            import_from_csv(temp_path).expect("import should succeed");
         assert_eq!(params.target_segments_per_active, None);
         assert_eq!(params.target_bins_per_segment, None);
         assert_eq!(params.last_edited_field, LastEditedField::Overlap);
@@ -351,26 +431,24 @@ mod tests {
         let frames = vec![
             FftFrame {
                 time_seconds: 0.0,
-                frequencies: vec![0.0, 100.0],
                 magnitudes: vec![0.1, 0.2],
                 phases: vec![0.0, 0.5],
             },
             FftFrame {
                 time_seconds: 0.01,
-                frequencies: vec![0.0, 100.0],
                 magnitudes: vec![0.3, 0.4],
                 phases: vec![1.0, 1.5],
             },
         ];
 
-        let spec = Spectrogram::from_frames(frames);
+        let spec = Spectrogram::from_frames_with_frequencies(frames, vec![0.0, 100.0]);
         let params = FftParams::default();
         let view = ViewState::default();
 
         let temp_path = "/tmp/test_multi_frames.csv";
-        export_to_csv(&spec, &params, &view, temp_path).expect("Export should succeed");
+        export_to_csv(&spec, &params, &view, temp_path, None).expect("Export should succeed");
 
-        let (imported_spec, _, _) = import_from_csv(temp_path).expect("Import should succeed");
+        let (imported_spec, _, _, _) = import_from_csv(temp_path).expect("Import should succeed");
         assert_eq!(imported_spec.num_frames(), 2);
 
         std::fs::remove_file(temp_path).ok();

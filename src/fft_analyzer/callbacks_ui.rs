@@ -3,10 +3,9 @@ use std::rc::Rc;
 
 use fltk::{enums::CallbackTrigger, prelude::*};
 
-use crate::app_state::{set_msg, AppState, MsgLevel, SharedCallbacks, UpdateThrottle};
+use crate::app_state::{set_msg, AppState, MouseMode, MsgLevel, SharedCallbacks, UpdateThrottle};
 use crate::data::{
-    eval_gradient, ColormapId, FreqScale, GradientStop, LastEditedField, SolverConstraints,
-    TimeUnit, WindowType,
+    ColormapId, FreqScale, LastEditedField, SolverConstraints, TimeUnit, WindowType,
 };
 use crate::layout::Widgets;
 use crate::settings::Settings;
@@ -215,7 +214,7 @@ pub fn setup_parameter_callbacks(
                 input_seg_size.take_focus().ok();
                 return;
             }
-            if idx >= 0 && idx < 9 {
+            if (0..9).contains(&idx) {
                 let requested_size = SEG_PRESETS[idx as usize];
                 let mut st = state.borrow_mut();
 
@@ -380,6 +379,7 @@ fn apply_segmentation_solver(st: &mut AppState) {
             active_samples,
             window_length: st.fft_params.window_length,
             overlap_percent: st.fft_params.overlap_percent,
+            use_center: st.fft_params.use_center,
             zero_pad_factor: st.fft_params.zero_pad_factor,
             target_segments_per_active: st.fft_params.target_segments_per_active,
             target_bins_per_segment: st.fft_params.target_bins_per_segment,
@@ -412,7 +412,7 @@ fn find_preset_index(size: usize) -> Option<usize> {
 fn round_even(n: usize) -> usize {
     if n < 2 {
         2
-    } else if n % 2 != 0 {
+    } else if !n.is_multiple_of(2) {
         n + 1
     } else {
         n
@@ -615,19 +615,52 @@ pub fn setup_playback_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>
                     _ => false,
                 };
             }
+
+            let seek_from_widget_x = |st: &crate::app_state::AppState, mx: i32, widget_w: i32| {
+                let roi_start = st.fft_params.start_seconds();
+                let roi_stop = st.fft_params.stop_seconds();
+                let roi_vis_start = st.view.time_min_sec.max(roi_start);
+                let roi_vis_stop = st.view.time_max_sec.min(roi_stop);
+                if roi_vis_stop <= roi_vis_start || widget_w <= 0 {
+                    return None;
+                }
+
+                let x0 = (st.view.time_to_x(roi_vis_start) * widget_w as f64) as i32;
+                let x1 = (st.view.time_to_x(roi_vis_stop) * widget_w as f64) as i32;
+                let lo = x0.min(x1);
+                let hi = x0.max(x1);
+                if mx < lo || mx > hi {
+                    return None;
+                }
+
+                let t = (mx as f64 / widget_w as f64).clamp(0.0, 1.0);
+                let global_time = st.view.x_to_time(t).clamp(roi_start, roi_stop);
+                let local_time = (global_time - st.recon_start_seconds()).max(0.0);
+                let seek_sample = (local_time * st.transport.sample_rate.max(1) as f64) as usize;
+                Some(seek_sample.min(st.transport.duration_samples))
+            };
+
             match ev {
                 fltk::enums::Event::Push => {
+                    let mx = fltk::app::event_x() - s.x();
                     let st = state.borrow();
-                    st.audio_player.set_seeking(true);
-                    let seek_sample = (s.value() * st.transport.duration_samples as f64) as usize;
-                    st.audio_player.seek_to_sample(seek_sample);
-                    true
+                    if let Some(seek_sample) = seek_from_widget_x(&st, mx, s.w()) {
+                        st.audio_player.set_seeking(true);
+                        st.audio_player.seek_to_sample(seek_sample);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 fltk::enums::Event::Drag => {
+                    let mx = fltk::app::event_x() - s.x();
                     let st = state.borrow();
-                    let seek_sample = (s.value() * st.transport.duration_samples as f64) as usize;
-                    st.audio_player.seek_to_sample(seek_sample);
-                    true
+                    if let Some(seek_sample) = seek_from_widget_x(&st, mx, s.w()) {
+                        st.audio_player.seek_to_sample(seek_sample);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 fltk::enums::Event::Released => {
                     let st = state.borrow();
@@ -681,6 +714,41 @@ pub fn setup_misc_callbacks(
         });
     }
 
+    // Render full file outside ROI toggle
+    {
+        let state = state.clone();
+        let mut spec_display = widgets.spec_display.clone();
+        let mut freq_axis = widgets.freq_axis.clone();
+        let mut time_axis = widgets.time_axis.clone();
+
+        let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
+        check_render_full_outside_roi.set_callback(move |c| {
+            let mut st = state.borrow_mut();
+            st.render_full_file_outside_roi = c.is_checked();
+            st.invalidate_all_spectrogram_renderers();
+            drop(st);
+            spec_display.redraw();
+            freq_axis.redraw();
+            time_axis.redraw();
+        });
+    }
+
+    // Max freq button — set recon max to Nyquist
+    {
+        let state = state.clone();
+        let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_rerun = widgets.btn_rerun.clone();
+
+        let mut btn_freq_max = widgets.btn_freq_max.clone();
+        btn_freq_max.set_callback(move |_| {
+            let nyquist = state.borrow().view.data_freq_max_hz;
+            if nyquist > 0.0 {
+                input_recon_freq_max.set_value(&format!("{:.0}", nyquist));
+                btn_rerun.do_callback();
+            }
+        });
+    }
+
     // Home button — snap viewport to reconstruction time + freq range
     {
         let state = state.clone();
@@ -688,12 +756,21 @@ pub fn setup_misc_callbacks(
         let mut waveform_display = widgets.waveform_display.clone();
         let mut freq_axis = widgets.freq_axis.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
 
         let mut btn_home = widgets.btn_home.clone();
         btn_home.set_callback(move |_| {
             let mut st = state.borrow_mut();
             let proc_min = st.fft_params.start_seconds();
             let proc_max = st.fft_params.stop_seconds();
+            app_log!(
+                "Home",
+                "proc_time={:.3}-{:.3}s freq={:.0}-{:.0}Hz data_time={:.3}-{:.3}s data_freq={:.0}Hz",
+                proc_min, proc_max,
+                st.view.recon_freq_min_hz, st.view.recon_freq_max_hz,
+                st.view.data_time_min_sec, st.view.data_time_max_sec,
+                st.view.data_freq_max_hz
+            );
             if proc_max > proc_min {
                 st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
                 st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);
@@ -701,13 +778,14 @@ pub fn setup_misc_callbacks(
             // Snap frequency to reconstruction range
             st.view.freq_min_hz = st.view.recon_freq_min_hz.max(1.0);
             st.view.freq_max_hz = st.view.recon_freq_max_hz.min(st.view.data_freq_max_hz);
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             freq_axis.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -724,328 +802,147 @@ pub fn setup_misc_callbacks(
             cfg.window_width = win.w();
             cfg.window_height = win.h();
             cfg.save();
-            eprintln!("[Settings] Saved current settings to settings.ini");
+            app_log!("Settings", "Saved current settings to settings.ini");
         });
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  GRADIENT EDITOR (draw + handle callbacks for the gradient preview widget)
-// ═══════════════════════════════════════════════════════════════════════════
+pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+    fn style_buttons(
+        btn_time: &mut fltk::button::Button,
+        btn_move: &mut fltk::button::Button,
+        btn_zoom: &mut fltk::button::Button,
+        btn_roi: &mut fltk::button::Button,
+        mode: MouseMode,
+    ) {
+        use fltk::enums::Color;
 
-/// Internal state for the gradient editor mouse interaction.
-struct GradientEditorState {
-    selected_stop: Option<usize>,
-    dragging: bool,
-}
+        let selected_bg = Color::from_hex(crate::ui::theme::ACCENT_BLUE);
+        let selected_fg = Color::from_hex(crate::ui::theme::BG_DARK);
+        let idle_bg = Color::from_hex(crate::ui::theme::BG_WIDGET);
+        let idle_fg = Color::from_hex(crate::ui::theme::TEXT_PRIMARY);
 
-const GRAD_BAR_H: i32 = 20; // height of the gradient bar
-const STOP_HANDLE_H: i32 = 10; // height of the triangle handles below
+        let is_time = mode == MouseMode::Time;
+        btn_time.set_color(if is_time { selected_bg } else { idle_bg });
+        btn_time.set_label_color(if is_time { selected_fg } else { idle_fg });
 
-/// Pixel margin from widget left/right edges for the gradient bar
-const GRAD_MARGIN: i32 = 4;
+        let is_move = mode == MouseMode::Move;
+        btn_move.set_color(if is_move { selected_bg } else { idle_bg });
+        btn_move.set_label_color(if is_move { selected_fg } else { idle_fg });
 
-pub fn setup_gradient_editor(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
-    let editor_state = Rc::new(RefCell::new(GradientEditorState {
-        selected_stop: None,
-        dragging: false,
-    }));
+        let is_zoom = mode == MouseMode::SelectZoom;
+        btn_zoom.set_color(if is_zoom { selected_bg } else { idle_bg });
+        btn_zoom.set_label_color(if is_zoom { selected_fg } else { idle_fg });
 
-    // ── Draw callback ──
+        let is_roi = mode == MouseMode::RoiSelect;
+        btn_roi.set_color(if is_roi { selected_bg } else { idle_bg });
+        btn_roi.set_label_color(if is_roi { selected_fg } else { idle_fg });
+
+        btn_time.redraw();
+        btn_move.redraw();
+        btn_zoom.redraw();
+        btn_roi.redraw();
+    }
+
+    {
+        let mut btn_time = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi = widgets.btn_mouse_mode_roi.clone();
+        style_buttons(
+            &mut btn_time,
+            &mut btn_move,
+            &mut btn_zoom,
+            &mut btn_roi,
+            state.borrow().mouse_mode,
+        );
+    }
+
     {
         let state = state.clone();
-        let editor_state = editor_state.clone();
-        let mut gradient_preview = widgets.gradient_preview.clone();
-        gradient_preview.draw(move |w| {
-            use fltk::draw;
-            use fltk::enums::{Color, Font};
-
-            let x = w.x();
-            let y = w.y();
-            let ww = w.w();
-            let _wh = w.h();
-
-            // Background
-            draw::set_draw_color(Color::from_hex(0x313244));
-            draw::draw_rectf(x, y, ww, GRAD_BAR_H + STOP_HANDLE_H);
-
-            let bar_x = x + GRAD_MARGIN;
-            let bar_w = ww - GRAD_MARGIN * 2;
-            if bar_w <= 0 {
-                return;
-            }
-
-            // Draw gradient bar pixel by pixel
-            let st = state.borrow();
-            let is_custom = st.view.colormap == ColormapId::Custom;
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_time.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::Time;
+            st.mouse_selection = None;
             drop(st);
-
-            // Read stops (we need them for drawing; re-borrow for short duration)
-            let st = state.borrow();
-            let stops_snapshot: Vec<GradientStop> = st.view.custom_gradient.clone();
-            drop(st);
-
-            for px in 0..bar_w {
-                let t = px as f32 / bar_w.max(1) as f32;
-                let (r, g, b) = eval_gradient(&stops_snapshot, t);
-                let color = Color::from_rgb(
-                    (r.clamp(0.0, 1.0) * 255.0) as u8,
-                    (g.clamp(0.0, 1.0) * 255.0) as u8,
-                    (b.clamp(0.0, 1.0) * 255.0) as u8,
-                );
-                draw::set_draw_color(color);
-                draw::draw_rectf(bar_x + px, y, 1, GRAD_BAR_H);
-            }
-
-            // Draw border around bar
-            draw::set_draw_color(Color::from_hex(0x6c7086));
-            draw::draw_rect(bar_x, y, bar_w, GRAD_BAR_H);
-
-            // Draw stop handles as triangles below the bar
-            let es = editor_state.borrow();
-            let handle_y = y + GRAD_BAR_H;
-            for (i, stop) in stops_snapshot.iter().enumerate() {
-                let cx = bar_x + (stop.position * bar_w as f32) as i32;
-                let is_selected = es.selected_stop == Some(i) && is_custom;
-
-                // Triangle pointing up
-                let half = 4;
-                if is_selected {
-                    draw::set_draw_color(Color::from_hex(0xffffff));
-                } else if is_custom {
-                    draw::set_draw_color(Color::from_hex(0xcdd6f4));
-                } else {
-                    draw::set_draw_color(Color::from_hex(0x6c7086));
-                }
-                draw::begin_polygon();
-                draw::vertex((cx - half) as f64, (handle_y + STOP_HANDLE_H) as f64);
-                draw::vertex(cx as f64, handle_y as f64);
-                draw::vertex((cx + half) as f64, (handle_y + STOP_HANDLE_H) as f64);
-                draw::end_polygon();
-
-                // Outline
-                draw::set_draw_color(Color::from_hex(0x1e1e2e));
-                draw::begin_line();
-                draw::vertex((cx - half) as f64, (handle_y + STOP_HANDLE_H) as f64);
-                draw::vertex(cx as f64, handle_y as f64);
-                draw::vertex((cx + half) as f64, (handle_y + STOP_HANDLE_H) as f64);
-                draw::end_line();
-            }
-            drop(es);
-
-            // If not in custom mode, draw a subtle overlay label
-            if !is_custom {
-                draw::set_draw_color(Color::from_hex(0x6c7086));
-                draw::set_font(Font::Helvetica, 9);
-                let label = "Select 'Custom' to edit";
-                let tw = draw::width(label) as i32;
-                draw::draw_text(label, bar_x + (bar_w - tw) / 2, y + GRAD_BAR_H / 2 + 3);
-            }
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::Time,
+            );
         });
     }
 
-    // ── Handle callback (mouse interaction) ──
     {
         let state = state.clone();
-        let editor_state = editor_state.clone();
-        let mut spec_display = widgets.spec_display.clone();
-        let mut gradient_preview_redraw = widgets.gradient_preview.clone();
-
-        let mut gradient_preview = widgets.gradient_preview.clone();
-        let mut btn_rerun_grad = widgets.btn_rerun.clone();
-        gradient_preview.handle(move |w, ev| {
-            // Block spacebar and trigger recompute on KeyUp
-            if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
-                return match ev {
-                    fltk::enums::Event::KeyDown | fltk::enums::Event::Shortcut => true,
-                    fltk::enums::Event::KeyUp => {
-                        btn_rerun_grad.do_callback();
-                        true
-                    }
-                    _ => false,
-                };
-            }
-            // Only allow interaction when colormap is Custom
-            {
-                let st = state.borrow();
-                if st.view.colormap != ColormapId::Custom {
-                    return false;
-                }
-            }
-
-            let x = w.x();
-            let ww = w.w();
-            let bar_x = x + GRAD_MARGIN;
-            let bar_w = ww - GRAD_MARGIN * 2;
-            if bar_w <= 0 {
-                return false;
-            }
-
-            match ev {
-                fltk::enums::Event::Push => {
-                    let mx = fltk::app::event_x();
-                    let _my = fltk::app::event_y();
-                    let button = fltk::app::event_button();
-                    let clicks = fltk::app::event_clicks();
-
-                    let pos_t = ((mx - bar_x) as f32 / bar_w as f32).clamp(0.0, 1.0);
-
-                    // Check if clicking on an existing stop handle
-                    let st = state.borrow();
-                    let stops = &st.view.custom_gradient;
-                    let hit_stop = find_stop_at_x(stops, pos_t, bar_w);
-                    drop(st);
-
-                    if button == 3 {
-                        // Right-click: delete stop (keep minimum 2)
-                        if let Some(idx) = hit_stop {
-                            let mut st = state.borrow_mut();
-                            if st.view.custom_gradient.len() > 2 {
-                                st.view.custom_gradient.remove(idx);
-                                st.spec_renderer.invalidate();
-                                drop(st);
-                                let mut es = editor_state.borrow_mut();
-                                es.selected_stop = None;
-                                es.dragging = false;
-                                drop(es);
-                                spec_display.redraw();
-                                gradient_preview_redraw.redraw();
-                            }
-                        }
-                        return true;
-                    }
-
-                    if let Some(idx) = hit_stop {
-                        // Clicked on existing stop
-                        let mut es = editor_state.borrow_mut();
-                        es.selected_stop = Some(idx);
-                        es.dragging = true;
-
-                        // Double-click: open color picker
-                        if clicks {
-                            es.dragging = false;
-                            drop(es);
-                            let st = state.borrow();
-                            let stop = st.view.custom_gradient[idx];
-                            drop(st);
-
-                            let cur_r = (stop.r.clamp(0.0, 1.0) * 255.0) as u8;
-                            let cur_g = (stop.g.clamp(0.0, 1.0) * 255.0) as u8;
-                            let cur_b = (stop.b.clamp(0.0, 1.0) * 255.0) as u8;
-                            let (nr, ng, nb) = fltk::dialog::color_chooser_with_default(
-                                "Pick Stop Color",
-                                fltk::dialog::ColorMode::Rgb,
-                                (cur_r, cur_g, cur_b),
-                            );
-                            // color_chooser_with_default returns the chosen color
-                            // (same as input if cancelled - compare to detect change)
-                            if nr != cur_r || ng != cur_g || nb != cur_b {
-                                let mut st = state.borrow_mut();
-                                st.view.custom_gradient[idx].r = nr as f32 / 255.0;
-                                st.view.custom_gradient[idx].g = ng as f32 / 255.0;
-                                st.view.custom_gradient[idx].b = nb as f32 / 255.0;
-                                st.spec_renderer.invalidate();
-                                drop(st);
-                                spec_display.redraw();
-                            }
-                        }
-                        gradient_preview_redraw.redraw();
-                        return true;
-                    }
-
-                    // Clicked on empty space: add new stop with interpolated color
-                    {
-                        let mut st = state.borrow_mut();
-                        let (r, g, b) = eval_gradient(&st.view.custom_gradient, pos_t);
-                        let new_stop = GradientStop::new(pos_t, r, g, b);
-                        // Insert sorted by position
-                        let insert_idx = st
-                            .view
-                            .custom_gradient
-                            .iter()
-                            .position(|s| s.position > pos_t)
-                            .unwrap_or(st.view.custom_gradient.len());
-                        st.view.custom_gradient.insert(insert_idx, new_stop);
-                        st.spec_renderer.invalidate();
-                        drop(st);
-
-                        let mut es = editor_state.borrow_mut();
-                        es.selected_stop = Some(insert_idx);
-                        es.dragging = true;
-                        drop(es);
-
-                        spec_display.redraw();
-                        gradient_preview_redraw.redraw();
-                    }
-                    true
-                }
-
-                fltk::enums::Event::Drag => {
-                    let es = editor_state.borrow();
-                    if !es.dragging {
-                        return false;
-                    }
-                    let idx = match es.selected_stop {
-                        Some(i) => i,
-                        None => return false,
-                    };
-                    drop(es);
-
-                    let mx = fltk::app::event_x();
-                    let pos_t = ((mx - bar_x) as f32 / bar_w as f32).clamp(0.0, 1.0);
-
-                    let mut st = state.borrow_mut();
-                    if idx < st.view.custom_gradient.len() {
-                        st.view.custom_gradient[idx].position = pos_t;
-                        // Re-sort stops and update selected index
-                        let stop = st.view.custom_gradient[idx];
-                        st.view
-                            .custom_gradient
-                            .sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
-                        // Find where our stop ended up after sort
-                        let new_idx = st.view.custom_gradient.iter().position(|s| {
-                            (s.position - stop.position).abs() < 1e-6
-                                && (s.r - stop.r).abs() < 1e-6
-                                && (s.g - stop.g).abs() < 1e-6
-                                && (s.b - stop.b).abs() < 1e-6
-                        });
-                        drop(st);
-
-                        let mut es = editor_state.borrow_mut();
-                        es.selected_stop = new_idx;
-                        drop(es);
-
-                        state.borrow_mut().spec_renderer.invalidate();
-                        spec_display.redraw();
-                        gradient_preview_redraw.redraw();
-                    }
-                    true
-                }
-
-                fltk::enums::Event::Released => {
-                    let mut es = editor_state.borrow_mut();
-                    es.dragging = false;
-                    true
-                }
-
-                _ => false,
-            }
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_move.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::Move;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::Move,
+            );
         });
     }
-}
 
-/// Find which stop handle (if any) is near the given normalized position.
-/// Returns the index of the nearest stop within a 6-pixel tolerance.
-fn find_stop_at_x(stops: &[GradientStop], pos_t: f32, bar_w: i32) -> Option<usize> {
-    let tolerance = 6.0 / bar_w.max(1) as f32;
-    let mut best: Option<(usize, f32)> = None;
-    for (i, stop) in stops.iter().enumerate() {
-        let dist = (stop.position - pos_t).abs();
-        if dist < tolerance {
-            if best.is_none() || dist < best.unwrap().1 {
-                best = Some((i, dist));
-            }
-        }
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_zoom.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::SelectZoom;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::SelectZoom,
+            );
+        });
     }
-    best.map(|(i, _)| i)
+
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_roi.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::RoiSelect;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::RoiSelect,
+            );
+        });
+    }
 }

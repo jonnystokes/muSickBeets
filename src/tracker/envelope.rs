@@ -29,7 +29,7 @@
 // - Logarithmic: Starts fast, slows down (good for attacks, sounds punchy)
 // ============================================================================
 
-use crate::helper::{lerp, exponential_interpolation, logarithmic_interpolation};
+use crate::helper::{exponential_interpolation, lerp, logarithmic_interpolation};
 
 // ============================================================================
 // ENVELOPE STATE
@@ -154,41 +154,39 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
     // Quick attack, slight dip to sustain, 2-second release
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        attack_time_seconds: 0.01,           // 10ms attack - very quick, barely noticeable
-        decay_time_seconds: 0.1,             // 100ms decay to sustain level
-        sustain_level: 0.85,                 // Slight dip to 85% during sustain
-        attack_curve: EnvelopeCurveType::Logarithmic,  // Fast start for punchy attack
+        attack_time_seconds: 0.01, // 10ms attack - very quick, barely noticeable
+        decay_time_seconds: 0.1,   // 100ms decay to sustain level
+        sustain_level: 0.85,       // Slight dip to 85% during sustain
+        attack_curve: EnvelopeCurveType::Logarithmic, // Fast start for punchy attack
         attack_curve_strength: 2.0,
-        decay_curve: EnvelopeCurveType::Exponential,   // Natural decay curve
+        decay_curve: EnvelopeCurveType::Exponential, // Natural decay curve
         decay_curve_strength: 1.5,
         release_curve: EnvelopeCurveType::Exponential, // Natural release sounds best
-        release_curve_strength: 2.0,                    // Moderate curve for natural sound
+        release_curve_strength: 2.0,                   // Moderate curve for natural sound
     },
-
     // -------------------------------------------------------------------------
     // ID 1: Pluck Envelope
     // Sharp attack with quick decay - good for plucked string sounds
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        attack_time_seconds: 0.005,          // 5ms - very snappy
-        decay_time_seconds: 0.3,             // 300ms decay
-        sustain_level: 0.3,                  // Low sustain for plucky sound
+        attack_time_seconds: 0.005, // 5ms - very snappy
+        decay_time_seconds: 0.3,    // 300ms decay
+        sustain_level: 0.3,         // Low sustain for plucky sound
         attack_curve: EnvelopeCurveType::Linear,
         attack_curve_strength: 1.0,
         decay_curve: EnvelopeCurveType::Exponential,
-        decay_curve_strength: 3.0,           // Strong curve for natural pluck decay
+        decay_curve_strength: 3.0, // Strong curve for natural pluck decay
         release_curve: EnvelopeCurveType::Exponential,
         release_curve_strength: 2.0,
     },
-
     // -------------------------------------------------------------------------
     // ID 2: Pad Envelope
     // Slow attack and release - good for ambient pads and strings
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        attack_time_seconds: 0.5,            // 500ms - slow fade in
-        decay_time_seconds: 0.2,             // 200ms slight decay
-        sustain_level: 0.9,                  // High sustain
+        attack_time_seconds: 0.5, // 500ms - slow fade in
+        decay_time_seconds: 0.2,  // 200ms slight decay
+        sustain_level: 0.9,       // High sustain
         attack_curve: EnvelopeCurveType::Logarithmic,
         attack_curve_strength: 1.5,
         decay_curve: EnvelopeCurveType::Linear,
@@ -196,15 +194,14 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
         release_curve: EnvelopeCurveType::Exponential,
         release_curve_strength: 2.5,
     },
-
     // -------------------------------------------------------------------------
     // ID 3: Percussion Envelope
     // Instant attack, no sustain - good for drums and hits
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        attack_time_seconds: 0.001,          // 1ms - nearly instant
-        decay_time_seconds: 0.0,             // No decay phase
-        sustain_level: 1.0,                  // Full sustain (but release is fast)
+        attack_time_seconds: 0.001, // 1ms - nearly instant
+        decay_time_seconds: 0.0,    // No decay phase
+        sustain_level: 1.0,         // Full sustain (but release is fast)
         attack_curve: EnvelopeCurveType::Linear,
         attack_curve_strength: 1.0,
         decay_curve: EnvelopeCurveType::Linear,
@@ -212,15 +209,14 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
         release_curve: EnvelopeCurveType::Exponential,
         release_curve_strength: 2.0,
     },
-
     // -------------------------------------------------------------------------
     // ID 4: Organ Envelope
     // Instant on/off like a real organ - no attack or release
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        attack_time_seconds: 0.005,          // 5ms to avoid clicks
-        decay_time_seconds: 0.0,             // No decay
-        sustain_level: 1.0,                  // Full sustain
+        attack_time_seconds: 0.005, // 5ms to avoid clicks
+        decay_time_seconds: 0.0,    // No decay
+        sustain_level: 1.0,         // Full sustain
         attack_curve: EnvelopeCurveType::Linear,
         attack_curve_strength: 1.0,
         decay_curve: EnvelopeCurveType::Linear,
@@ -228,15 +224,14 @@ pub static ENVELOPE_REGISTRY: &[EnvelopeDefinition] = &[
         release_curve: EnvelopeCurveType::Linear,
         release_curve_strength: 1.0,
     },
-
     // -------------------------------------------------------------------------
     // ID 5: Swell Envelope
     // Very slow attack - good for swelling strings or crescendos
     // -------------------------------------------------------------------------
     EnvelopeDefinition {
-        attack_time_seconds: 2.0,            // 2 second swell
-        decay_time_seconds: 0.0,             // No decay
-        sustain_level: 1.0,                  // Full sustain
+        attack_time_seconds: 2.0, // 2 second swell
+        decay_time_seconds: 0.0,  // No decay
+        sustain_level: 1.0,       // Full sustain
         attack_curve: EnvelopeCurveType::Logarithmic,
         attack_curve_strength: 1.2,
         decay_curve: EnvelopeCurveType::Linear,
@@ -320,7 +315,8 @@ impl EnvelopeState {
         self.phase_target_amplitude = 1.0; // Attack always goes to peak (1.0)
 
         // Calculate how many samples the attack phase will take
-        self.phase_total_samples = (definition.attack_time_seconds * self.sample_rate as f32) as u64;
+        self.phase_total_samples =
+            (definition.attack_time_seconds * self.sample_rate as f32) as u64;
 
         // If attack time is 0, skip directly to decay or sustain
         if self.phase_total_samples == 0 {
@@ -332,7 +328,8 @@ impl EnvelopeState {
     /// Releases the envelope with a custom release time
     /// Useful for fast releases to avoid pops
     pub fn release_with_time(&mut self, release_time_seconds: f32) {
-        if self.current_phase == EnvelopePhase::Release || self.current_phase == EnvelopePhase::Idle {
+        if self.current_phase == EnvelopePhase::Release || self.current_phase == EnvelopePhase::Idle
+        {
             return;
         }
 
@@ -368,7 +365,8 @@ impl EnvelopeState {
             self.phase_elapsed_samples = 0;
             self.phase_start_amplitude = 1.0; // Coming from peak
             self.phase_target_amplitude = definition.sustain_level;
-            self.phase_total_samples = (definition.decay_time_seconds * self.sample_rate as f32) as u64;
+            self.phase_total_samples =
+                (definition.decay_time_seconds * self.sample_rate as f32) as u64;
         } else {
             // Skip decay, go straight to sustain
             self.advance_to_sustain();
@@ -394,7 +392,8 @@ impl EnvelopeState {
 
             EnvelopePhase::Attack => {
                 if self.phase_total_samples > 0 {
-                    let progress = self.phase_elapsed_samples as f32 / self.phase_total_samples as f32;
+                    let progress =
+                        self.phase_elapsed_samples as f32 / self.phase_total_samples as f32;
 
                     // Apply the attack curve
                     self.current_amplitude = apply_curve(
@@ -420,7 +419,8 @@ impl EnvelopeState {
 
             EnvelopePhase::Decay => {
                 if self.phase_total_samples > 0 {
-                    let progress = self.phase_elapsed_samples as f32 / self.phase_total_samples as f32;
+                    let progress =
+                        self.phase_elapsed_samples as f32 / self.phase_total_samples as f32;
 
                     self.current_amplitude = apply_curve(
                         self.phase_start_amplitude,
@@ -447,7 +447,8 @@ impl EnvelopeState {
 
             EnvelopePhase::Release => {
                 if self.phase_total_samples > 0 {
-                    let progress = self.phase_elapsed_samples as f32 / self.phase_total_samples as f32;
+                    let progress =
+                        self.phase_elapsed_samples as f32 / self.phase_total_samples as f32;
 
                     self.current_amplitude = apply_curve(
                         self.phase_start_amplitude,
@@ -477,7 +478,6 @@ impl EnvelopeState {
     pub fn is_finished(&self) -> bool {
         self.current_phase == EnvelopePhase::Idle && self.current_amplitude < 0.001
     }
-
 }
 
 // ============================================================================
@@ -500,9 +500,7 @@ fn apply_curve(
     curve_strength: f32,
 ) -> f32 {
     match curve_type {
-        EnvelopeCurveType::Linear => {
-            lerp(start_value, end_value, progress)
-        }
+        EnvelopeCurveType::Linear => lerp(start_value, end_value, progress),
         EnvelopeCurveType::Exponential => {
             exponential_interpolation(start_value, end_value, progress, curve_strength)
         }

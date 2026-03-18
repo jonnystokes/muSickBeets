@@ -12,10 +12,13 @@
 - Worker pattern: `mpsc::channel` for background FFT/reconstruction -> UI
 - SharedCb pattern: `Rc<RefCell<Box<dyn FnMut()>>>` for shared mutable closures
 
-## Viewport vs Processing (Option C)
-- FFT processes FULL file; sidebar Start/Stop = reconstruction time range
-- Viewport zoom/scroll = visual only; "Snap to View" copies bounds to sidebar
-- Time outside processing: grayed out on spectrogram. Freq cutoffs: no graying
+## Viewport vs Processing
+- FFT analysis now uses two layers:
+  - whole-file overview layer with moderate default settings
+  - ROI focus layer using the user's current analysis settings
+- ROI is defined by sidebar Start/Stop and recon min/max frequency
+- Viewport zoom/scroll remains visual; "Snap to View" copies bounds to sidebar
+- Time and frequency outside the ROI can be shown dimmed while the focused ROI is overlaid at higher quality
 - Waveform uses recon_start_time offset for correct viewport alignment
 - Playback position = recon_start_time + audio_player.get_position_seconds()
 - Dirty flag tracks settings changes; Play auto-recomputes if dirty
@@ -23,8 +26,8 @@
 ## Key Gotchas
 - FLTK widget methods require `&mut self` - closures capturing widgets must be `FnMut`, not `Fn`
 - Use `Rc<RefCell<Box<dyn FnMut()>>>` and call as `(cb.borrow_mut())()`
-- **Spacebar — READ CLAUDE.md**: Three-layer defense required. `handle()` alone does NOT work for buttons/choices/checkbuttons because FLTK's internal C++ handler bypasses it. The PRIMARY defense is `clear_visible_focus()` which prevents keyboard focus entirely. See CLAUDE.md for complete rules.
-- `app::add_handler()` takes `fn(Event) -> bool` (no captures) — runs AFTER widgets, useless for blocking
+- **Spacebar -- see CODING_RULES.md**: Three-layer defense required. `handle()` alone does NOT work for buttons/choices/checkbuttons because FLTK's internal C++ handler bypasses it. The PRIMARY defense is `clear_visible_focus()` which prevents keyboard focus entirely. CODING_RULES.md documents the full checklist.
+- `app::add_handler()` takes `fn(Event) -> bool` (no captures) -- runs AFTER widgets, useless for blocking
 - **clear_visible_focus()**: Required on ALL buttons, choices, checkbuttons, sliders, scrollbars to prevent spacebar from activating them. Widgets still work by mouse click.
 - **handle() vs set_callback()**: These are INDEPENDENT in fltk-rs. Setting one does not overwrite the other. But calling `handle()` twice DOES overwrite the first handler.
 - **setup_spacebar_guards()**: MUST be called LAST in callback setup chain. It sets `handle()` on widgets and would be overwritten by any later `handle()` call.
@@ -33,7 +36,58 @@
 - `RgbImage::draw()` needs `use fltk::prelude::ImageExt`
 - Module paths from submodules: use `crate::data::...` not `crate::fft_analyzer::data::...` (binary root IS the crate)
 - When borrowing `st.renderer.draw(&st.data, ...)`, clone data first to avoid simultaneous mut/immut borrow
-- `if let Some(ref x) = st.field { st.other = ... }` won't compile — extract into locals first, then mutate
-- **FLTK Scrollbar**: `slider_size()` returns `f32` (not f64). slider_size is PURELY VISUAL (thumb size) — value range is always `[min, max]`, NOT clipped by slider_size. Use max=10000 (not 1.0) to avoid quantization. Timer must NOT call `set_value()` during user drag — use generation counters (`Rc<Cell<u64>>`) to detect active dragging. Simple: `frac = value / max`, `set_value(frac * max)`.
+- `if let Some(ref x) = st.field { st.other = ... }` won't compile -- extract into locals first, then mutate
+- **FLTK Scrollbar**: `slider_size()` returns `f32` (not f64). slider_size is PURELY VISUAL (thumb size) -- value range is always `[min, max]`, NOT clipped by slider_size. Use max=10000 (not 1.0) to avoid quantization. Timer must NOT call `set_value()` during user drag -- use generation counters (`Rc<Cell<u64>>`) to detect active dragging. Simple: `frac = value / max`, `set_value(frac * max)`.
 - **CSV load**: Must trigger reconstruction after loading FFT from CSV, otherwise no audio/waveform. Set proc_time to match spectrogram's time range to avoid graying.
 - Build deps: needs libxft-dev, libpango1.0-dev, libxinerama-dev, libxcursor-dev, libxfixes-dev on Linux
+
+### Memory note
+- Reconstructed audio samples are now stored in `AudioData` as `Arc<Vec<f32>>` so the
+  `AudioPlayer` can share the same allocation without cloning the full sample buffer.
+
+### ISTFT normalization threshold
+- The OLA denominator threshold is user-configurable via "Norm Floor" in the
+  sidebar (FloatInput). Stored in `view.recon_norm_floor` as **f64**, default `1e-6`.
+  Range: `1e-30` to `1e-4`. Persisted in settings.ini as scientific notation.
+- **DO NOT use `f32::MIN_POSITIVE`** (~1.175e-38) as threshold -- it causes
+  division-by-near-zero that amplifies f32 IFFT noise into spikes of 60,000+.
+  The threshold must be large enough that `noise / threshold` stays reasonable.
+- Gap width for symmetric Hann: `n_gap ≈ (threshold)^(1/4) / pi * (M-1)`.
+  At 1e-6: ~444 samples per side for 44100-sample window.
+- Boundary discontinuities at 0% overlap with sparse bin selection are expected
+  DSP behavior (spectrogram inconsistency). Not a bug. More overlap reduces them.
+- **Rectangular window** (`w[n]=1.0`) eliminates both gaps AND amplification
+  spikes because `w^2=1.0` everywhere. Unaffected by norm floor setting.
+  Best choice for zero-overlap single-frame edge-to-edge capture.
+- Default `recon_freq_max_hz = 5000` means only ~929 of ~4097 bins are used.
+  "Max" button sets to Nyquist for full-spectrum reconstruction.
+- The code uses symmetric windows (divisor n-1), not periodic (divisor n).
+  Both are valid. We chose to keep symmetric.
+
+### Sidebar layout gotcha
+- The sidebar is a `Flex` column that does NOT scroll. Adding widgets pushes
+  bottom widgets (Home, Save As Default) off-screen and they become invisible
+  AND unclickable. Always calculate total fixed height when adding widgets.
+  Use inline labels (`.with_label("Foo:")`) to save ~16px per label.
+- **This broke the Home button** when Norm Floor widgets were added. Root cause
+  was adding 55px of new widgets without compensating. Fix: shrink other widgets,
+  remove separate label frames, use inline labels.
+
+### FloatInput vs Input for text fields
+- **Always prefer `FloatInput`** for numeric fields. It rejects non-numeric
+  characters (including space) at the C++ level. Plain `Input` accepts any
+  character and relies on Rust `handle()` for validation, which can fail
+  especially on VNC/remote displays where event ordering varies.
+
+### Current behavioral model worth remembering
+- Whole-file overview FFT and focused ROI FFT are rendered as layered spectrograms
+- Focused FFT uses the current user settings; overview FFT uses separate configurable defaults
+- Reconstruction uses the focused/high-quality layer / ROI settings
+- Single-frame debugging is active: `SINGLE_FRAME_DBG` now logs case settings,
+  frame counts, support/crop info, gap runs, active-bin counts, and boundary jumps
+- Status bar is centralized through `StatusBarManager`
+- Status bar first slot = current activity, middle = recent timings, last = memory
+- Status bar can wrap and auto-expand vertically
+- Rerun button becomes **Cancel** during cancelable work and **Busy...** during non-cancelable work
+- CSV FFT load is asynchronous; reconstruction is triggered after import completes
+- Progress currently exists for FFT and reconstruction; save/load operations have timings but not detailed live percentages

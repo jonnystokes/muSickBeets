@@ -159,13 +159,10 @@ impl ColorLUT {
         ];
 
         // Find the two stops we're between
-        let mut idx = 0;
-        for i in 1..STOPS.len() {
-            if t < STOPS[i].0 {
-                break;
-            }
-            idx = i;
-        }
+        let idx = STOPS
+            .windows(2)
+            .position(|pair| t < pair[1].0)
+            .unwrap_or(STOPS.len() - 2);
 
         if idx >= STOPS.len() - 1 {
             // At or past last stop

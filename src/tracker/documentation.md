@@ -1,27 +1,25 @@
-# muSickBeets Documentation
+# Tracker Documentation
 
-## What is muSickBeets?
+CSV-driven music tracker synthesizer. Compose music by writing simple text files -- each row is a moment in time, each column is a voice/channel.
 
-**muSickBeets** is a CSV-driven music tracker synthesizer written in Rust. It allows you to compose music by writing simple text files - no complex DAW required. Think of it as programming music: each row is a moment in time, each column is a voice/channel.
+## Key Features
 
-### Key Features
-
-- **12 independent channels** - Play up to 12 sounds simultaneously
-- **5 built-in instruments** - Sine, Trisaw, Square, Noise, Pulse
-- **6 preset envelopes** - From punchy percussion to smooth pads
-- **Per-channel effects** - Amplitude, pan, vibrato, tremolo, bitcrush, distortion, chorus
-- **Master bus effects** - Reverb (simple & advanced), delay, chorus
-- **Real-time playback** - Hear your music as it plays
-- **WAV export** - Export high-quality 48kHz stereo WAV files
-- **Smooth transitions** - Glide between notes and effect changes
-- **Forgiving parser** - Handles sloppy input gracefully
+- **12 independent channels** -- Play up to 12 sounds simultaneously
+- **5 built-in instruments** -- Sine, Trisaw, Square, Noise, Pulse
+- **6 preset envelopes** -- From punchy percussion to smooth pads
+- **Per-channel effects** -- Amplitude, pan, vibrato, tremolo, bitcrush, distortion, chorus
+- **Master bus effects** -- Reverb (simple & advanced), delay, chorus
+- **Real-time playback** -- Hear your music as it plays
+- **WAV export** -- Export high-quality 48kHz stereo WAV files
+- **Smooth transitions** -- Glide between notes and effect changes
+- **Forgiving parser** -- Handles sloppy input gracefully
 
 ---
 
 ## Quick Start
 
 1. Create a CSV file with your song (see `assets/song.csv` for example)
-2. Run: `cargo run --release`
+2. Run: `cargo run --release --bin tracker`
 3. Listen to your creation!
 
 ---
@@ -73,10 +71,10 @@ config, title: Song Name, export_wav: true, tick_duration: 0.25, tempo_bpm: 120
 
 | ID | Name | Aliases | Parameters | Description |
 |----|------|---------|------------|-------------|
-| 1 | `sine` | `sin` | none | Pure sine wave - clean, mellow |
+| 1 | `sine` | `sin` | none | Pure sine wave -- clean, mellow |
 | 2 | `trisaw` | `tri`, `saw`, `triangle`, `sawtooth` | shape: 0.0-1.0 | Morphs from triangle (0) to sawtooth (1) |
 | 3 | `square` | `sq` | none | Hollow, retro 8-bit sound |
-| 4 | `noise` | `white`, `whitenoise` | none | White noise - no pitch required |
+| 4 | `noise` | `white`, `whitenoise` | none | White noise -- no pitch required |
 | 5 | `pulse` | `pwm` | width: 0.0-1.0 | Variable pulse width (0.5 = square) |
 
 ### Usage Examples
@@ -261,9 +259,9 @@ Envelopes shape how notes start and stop. They're defined per-instrument but con
 
 ### Envelope Curve Types
 
-- **Linear** - Straight line change
-- **Exponential** - Natural decay curve (faster start, slower end)
-- **Logarithmic** - Punchy curve (slower start, faster end)
+- **Linear** -- Straight line change
+- **Exponential** -- Natural decay curve (faster start, slower end)
+- **Logarithmic** -- Punchy curve (slower start, faster end)
 
 ### Simulating Envelope Variations
 
@@ -348,23 +346,23 @@ c4 pulse:0.3 a:0.5
 ### File Structure
 
 ```
-src/
-├── main.rs          // Configuration, entry point
-├── instruments.rs   // Instrument definitions
-├── effects/
-│   └── mod.rs       // Effect processing
-├── envelope.rs      // Envelope definitions
-├── parser.rs        // CSV parsing
-├── channel.rs       // Channel state
-├── master_bus.rs    // Master effects
-├── engine.rs        // Playback engine
-├── audio.rs         // WAV export
-└── helper.rs        // Utilities
+src/tracker/
+  main.rs          // Configuration, entry point
+  instruments.rs   // Instrument definitions
+  effects/
+    mod.rs         // Effect processing
+  envelope.rs      // Envelope definitions
+  parser.rs        // CSV parsing
+  channel.rs       // Channel state
+  master_bus.rs    // Master effects
+  engine.rs        // Playback engine
+  audio.rs         // WAV export
+  helper.rs        // Utilities
 ```
 
 ### Adding a New Instrument
 
-**Step 1: Edit `src/instruments.rs`**
+**Step 1: Edit `instruments.rs`**
 
 Add to `INSTRUMENT_REGISTRY` array (around line 115):
 
@@ -422,7 +420,7 @@ match instrument_id {
 
 ### Adding a New Channel Effect
 
-**Step 1: Edit `src/effects/mod.rs`**
+**Step 1: Edit `effects/mod.rs`**
 
 Add field to `ChannelEffectState` (around line 150):
 
@@ -470,7 +468,7 @@ pub fn apply_channel_effects(...) -> (f32, f32) {
 }
 ```
 
-**Step 3: Add parsing in `src/parser.rs`**
+**Step 3: Add parsing in `parser.rs`**
 
 In `apply_effect_token` function (around line 1017):
 
@@ -493,7 +491,7 @@ match effect_name {
 
 ### Adding a New Master Effect
 
-**Step 1: Edit `src/effects/mod.rs`**
+**Step 1: Edit `effects/mod.rs`**
 
 Add to `MasterEffectState`:
 
@@ -525,7 +523,7 @@ pub fn apply_master_effects(...) -> (f32, f32) {
 }
 ```
 
-**Step 3: Add parsing in `src/master_bus.rs`**
+**Step 3: Add parsing in `master_bus.rs`**
 
 In `apply_effect` method (around line 328):
 
@@ -549,7 +547,7 @@ match effect_name.to_lowercase().as_str() {
 
 ### Adding a New Envelope
 
-**Edit `src/envelope.rs`**
+**Edit `envelope.rs`**
 
 Add to `ENVELOPE_REGISTRY` array (around line 165):
 
@@ -575,7 +573,7 @@ EnvelopeDefinition {
 
 ## Configuration Constants
 
-Edit `src/main.rs` to change global settings:
+Edit `main.rs` to change global settings:
 
 ```rust
 // Audio settings
@@ -600,9 +598,9 @@ const DEFAULT_RELEASE_SECONDS: f32 = 0.5;
 
 ### Audio Glitches/Crackling
 
-- Increase `AUDIO_BUFFER_SIZE` in `src/main.rs`
+- Increase `AUDIO_BUFFER_SIZE` in `main.rs`
 - Reduce effect complexity
-- Use `--release` build: `cargo run --release`
+- Use `--release` build: `cargo run --release --bin tracker`
 
 ### Notes Cut Off Too Fast
 
@@ -626,36 +624,5 @@ const DEFAULT_RELEASE_SECONDS: f32 = 0.5;
 ## Example Songs
 
 See `assets/` directory:
-- `song.csv` - Creative musical piece
-- `test_demo.csv` - Comprehensive feature demonstration
-
----
-
-## Building
-
-```bash
-# Debug build
-cargo build
-
-# Release build (faster, recommended)
-cargo build --release
-
-# Run
-cargo run --release
-
-# Run with specific song file
-cargo run --release -- assets/mysong.csv
-
-# Run tests
-cargo test
-```
-
----
-
-## License
-
-MIT License - See LICENSE file for details.
-
----
-
-*muSickBeets - Making music with spreadsheets since 2024*
+- `song.csv` -- Creative musical piece
+- `test_demo.csv` -- Comprehensive feature demonstration

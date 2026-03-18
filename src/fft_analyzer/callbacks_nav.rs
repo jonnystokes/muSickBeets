@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use fltk::{
-    app,
+    app, dialog,
     enums::{Event, Key, Shortcut},
     menu::MenuFlag,
     prelude::*,
@@ -15,6 +15,18 @@ use crate::layout::Widgets;
 use crate::validation::{
     attach_float_validation_with_recompute, attach_uint_validation_with_recompute,
 };
+
+fn shortcut_key_text() -> &'static str {
+    "Keyboard shortcuts\n\n	navigation and analysis\n  Space        Recompute + Rebuild\n  Ctrl+O       Open audio file\n  Ctrl+S       Save FFT data\n  Ctrl+L       Load FFT data\n  Ctrl+E       Export WAV\n  Ctrl+Q       Quit the program\n  Escape       Close this keys window / active dialogs\n\nMouse wheel modifiers\n  Wheel            Zoom time + frequency\n  Ctrl + Wheel     Zoom time only\n  Shift + Wheel    Zoom frequency only\n  Alt + Wheel      Pan frequency\n  Alt+Ctrl+Wheel   Pan time\n  Alt+Shift+Wheel  Pan time + frequency"
+}
+
+pub fn setup_shortcut_key_button(widgets: &Widgets) {
+    let mut btn_key = widgets.btn_key.clone();
+    btn_key.set_callback(move |_| {
+        dialog::message_title_default("Shortcut Keys");
+        dialog::message_default(shortcut_key_text());
+    });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  MENU CALLBACKS
@@ -132,6 +144,7 @@ pub fn setup_scrollbar_callbacks(
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
         let x_scroll_gen = x_scroll_gen.clone();
 
         let mut x_scroll = widgets.x_scroll.clone();
@@ -156,12 +169,13 @@ pub fn setup_scrollbar_callbacks(
             st.view.time_min_sec = start.max(st.view.data_time_min_sec);
             st.view.time_max_sec = (start + vis_range).min(st.view.data_time_max_sec);
 
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -217,6 +231,7 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
 
         let mut btn = widgets.btn_time_zoom_in.clone();
         btn.set_callback(move |_| {
@@ -231,12 +246,13 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 st.view.time_min_sec =
                     (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
             }
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -246,6 +262,7 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
         let mut spec_display = widgets.spec_display.clone();
         let mut waveform_display = widgets.waveform_display.clone();
         let mut time_axis = widgets.time_axis.clone();
+        let mut scrub_slider = widgets.scrub_slider.clone();
 
         let mut btn = widgets.btn_time_zoom_out.clone();
         btn.set_callback(move |_| {
@@ -261,12 +278,13 @@ pub fn setup_zoom_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 st.view.time_min_sec =
                     (st.view.time_max_sec - new_range).max(st.view.data_time_min_sec);
             }
-            st.spec_renderer.invalidate();
+            st.invalidate_all_spectrogram_renderers();
             st.wave_renderer.invalidate();
             drop(st);
             spec_display.redraw();
             waveform_display.redraw();
             time_axis.redraw();
+            scrub_slider.redraw();
         });
     }
 
@@ -361,25 +379,41 @@ pub fn setup_snap_to_view(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
 
 pub fn setup_spacebar_handler(win: &mut Window, widgets: &Widgets) {
     let mut btn_rerun = widgets.btn_rerun.clone();
-    win.handle(move |_, event| {
-        let is_space = app::event_key() == Key::from_char(' ');
-        if !is_space {
-            return false;
-        }
-
+    let mut status_fft = widgets.status_fft.clone();
+    let mut status_bar = widgets.status_bar.clone();
+    let mut root = widgets.root.clone();
+    win.handle(move |w, event| {
         match event {
-            // Consume KeyDown to prevent space from reaching any focused widget
-            // (buttons, dropdowns, text inputs). This is the primary guard.
-            Event::KeyDown => true,
-
-            // Trigger recompute on KeyUp (not KeyDown to avoid double-fire)
-            Event::KeyUp => {
+            // ── Spacebar handling ──
+            Event::KeyDown | Event::Shortcut if app::event_key() == Key::from_char(' ') => true,
+            Event::KeyUp if app::event_key() == Key::from_char(' ') => {
                 btn_rerun.do_callback();
                 true
             }
 
-            // VNC/remote desktop may send space as a Shortcut event
-            Event::Shortcut => true,
+            // ── Window resize: reposition absolute-positioned status bars ──
+            Event::Resize => {
+                let win_w = w.w();
+                let win_h = w.h();
+                let menu_h = 25;
+                let base_h = status_bar.h(); // preserve current auto-expanded height
+                let fft_h = status_fft.h(); // preserve current height
+                root.resize(
+                    0,
+                    menu_h,
+                    win_w,
+                    win_h - menu_h - base_h - fft_h - crate::layout::STATUS_FFT_OFFSET,
+                );
+                status_fft.resize(
+                    0,
+                    win_h - base_h - fft_h - crate::layout::STATUS_FFT_OFFSET,
+                    win_w,
+                    fft_h,
+                );
+                status_bar.resize(0, win_h - base_h, win_w, base_h);
+                // Return false so FLTK still processes the resize internally
+                false
+            }
 
             _ => false,
         }
@@ -433,33 +467,45 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     // handle() can intercept. clear_visible_focus() on all buttons prevents
     // them from receiving keyboard focus so space never reaches them.
     block_space!(widgets.btn_open.clone(), btn_rerun);
+    block_space!(widgets.btn_key.clone(), btn_rerun);
     block_space!(widgets.btn_save_fft.clone(), btn_rerun);
     block_space!(widgets.btn_load_fft.clone(), btn_rerun);
     block_space!(widgets.btn_save_wav.clone(), btn_rerun);
     block_space!(widgets.btn_time_unit.clone(), btn_rerun);
     block_space!(widgets.btn_rerun.clone(), btn_rerun);
     block_space!(widgets.btn_snap_to_view.clone(), btn_rerun);
+    block_space!(widgets.btn_freq_max.clone(), btn_rerun);
     block_space!(widgets.btn_home.clone(), btn_rerun);
     block_space!(widgets.btn_save_defaults.clone(), btn_rerun);
     block_space!(widgets.btn_play.clone(), btn_rerun);
     block_space!(widgets.btn_pause.clone(), btn_rerun);
     block_space!(widgets.btn_stop.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_time.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_move.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_zoom.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_roi.clone(), btn_rerun);
     block_space!(widgets.btn_freq_zoom_in.clone(), btn_rerun);
     block_space!(widgets.btn_freq_zoom_out.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_in.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_out.clone(), btn_rerun);
     widgets.btn_open.clone().clear_visible_focus();
+    widgets.btn_key.clone().clear_visible_focus();
     widgets.btn_save_fft.clone().clear_visible_focus();
     widgets.btn_load_fft.clone().clear_visible_focus();
     widgets.btn_save_wav.clone().clear_visible_focus();
     widgets.btn_time_unit.clone().clear_visible_focus();
     widgets.btn_rerun.clone().clear_visible_focus();
     widgets.btn_snap_to_view.clone().clear_visible_focus();
+    widgets.btn_freq_max.clone().clear_visible_focus();
     widgets.btn_home.clone().clear_visible_focus();
     widgets.btn_save_defaults.clone().clear_visible_focus();
     widgets.btn_play.clone().clear_visible_focus();
     widgets.btn_pause.clone().clear_visible_focus();
     widgets.btn_stop.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_time.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_move.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_zoom.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_roi.clone().clear_visible_focus();
     widgets.btn_freq_zoom_in.clone().clear_visible_focus();
     widgets.btn_freq_zoom_out.clone().clear_visible_focus();
     widgets.btn_time_zoom_in.clone().clear_visible_focus();
@@ -486,9 +532,14 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.check_center.clone(), btn_rerun);
     block_space!(widgets.btn_tooltips.clone(), btn_rerun);
     block_space!(widgets.check_lock_active.clone(), btn_rerun);
+    block_space!(widgets.check_render_full_outside_roi.clone(), btn_rerun);
     widgets.check_center.clone().clear_visible_focus();
     widgets.btn_tooltips.clone().clear_visible_focus();
     widgets.check_lock_active.clone().clear_visible_focus();
+    widgets
+        .check_render_full_outside_roi
+        .clone()
+        .clear_visible_focus();
 
     // ── Sliders ──
     block_space!(widgets.slider_overlap.clone(), btn_rerun);
@@ -526,4 +577,5 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     attach_uint_validation_with_recompute(&mut widgets.input_freq_count.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_recon_freq_min.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_recon_freq_max.clone(), &btn_rerun);
+    attach_float_validation_with_recompute(&mut widgets.input_norm_floor.clone(), &btn_rerun);
 }

@@ -139,7 +139,7 @@ fn run_terminal() {
     println!("  TERMINAL KEYBOARD DEBUGGER");
     println!("========================================");
     println!("Press any key. Ctrl+C to exit.");
-    println!("");
+    println!();
 
     if let Err(e) = terminal::enable_raw_mode() {
         eprintln!("Error: {}", e);
@@ -148,14 +148,13 @@ fn run_terminal() {
 
     loop {
         use crossterm::event::poll;
-        if poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
-            if let Ok(Event::Key(k)) = crossterm::event::read() {
-                if k.kind == KeyEventKind::Press {
-                    print_terminal_key(&k);
-                    if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
-                        break;
-                    }
-                }
+        if poll(std::time::Duration::from_millis(100)).unwrap_or(false)
+            && let Ok(Event::Key(k)) = crossterm::event::read()
+            && k.kind == KeyEventKind::Press
+        {
+            print_terminal_key(&k);
+            if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
+                break;
             }
         }
     }
@@ -428,10 +427,8 @@ Close X button to exit."#;
         }
 
         // Shift
-        if st.contains(Shortcut::Shift) && ev == Event::KeyDown {
-            if key_matches_char(key, 'a') {
-                add_log("SHIFT+A");
-            }
+        if st.contains(Shortcut::Shift) && ev == Event::KeyDown && key_matches_char(key, 'a') {
+            add_log("SHIFT+A");
         }
 
         // Alt - prevent spam

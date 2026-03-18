@@ -31,6 +31,7 @@ pub struct SolverInput {
     pub active_samples: usize,
     pub window_length: usize,
     pub overlap_percent: f32,
+    pub use_center: bool,
     pub zero_pad_factor: usize,
     pub target_segments_per_active: Option<usize>,
     pub target_bins_per_segment: Option<usize>,
@@ -62,14 +63,24 @@ pub fn solve(input: SolverInput) -> SolverOutput {
     match input.last_edited {
         LastEditedField::SegmentsPerActive => {
             if let Some(target) = input.target_segments_per_active {
-                window =
-                    solve_window_for_segments(input.active_samples, overlap, target, constraints);
+                window = solve_window_for_segments(
+                    input.active_samples,
+                    overlap,
+                    input.use_center,
+                    target,
+                    constraints,
+                );
             }
         }
         LastEditedField::Overlap => {
             if let Some(target) = input.target_segments_per_active {
-                window =
-                    solve_window_for_segments(input.active_samples, overlap, target, constraints);
+                window = solve_window_for_segments(
+                    input.active_samples,
+                    overlap,
+                    input.use_center,
+                    target,
+                    constraints,
+                );
             }
         }
         LastEditedField::BinsPerSegment => {
@@ -77,6 +88,7 @@ pub fn solve(input: SolverInput) -> SolverOutput {
                 window = solve_window_for_segments(
                     input.active_samples,
                     overlap,
+                    input.use_center,
                     target_segments,
                     constraints,
                 );
@@ -96,7 +108,7 @@ pub fn solve(input: SolverInput) -> SolverOutput {
     );
 
     let hop = hop_length(window, overlap);
-    let segments = num_segments(input.active_samples, window, hop);
+    let segments = num_segments(input.active_samples, window, hop, input.use_center);
     let bins = (window * input.zero_pad_factor.max(1)) / 2 + 1;
 
     SolverOutput {
@@ -110,6 +122,7 @@ pub fn solve(input: SolverInput) -> SolverOutput {
 fn solve_window_for_segments(
     active_samples: usize,
     overlap_percent: f32,
+    use_center: bool,
     target_segments: usize,
     constraints: SolverConstraints,
 ) -> usize {
@@ -151,7 +164,7 @@ fn solve_window_for_segments(
         for mut cand in candidates {
             cand = clamp_even(cand, constraints.min_window, constraints.max_window);
             let hop = hop_length(cand, overlap_percent);
-            let segs = num_segments(active_samples, cand, hop);
+            let segs = num_segments(active_samples, cand, hop, use_center);
             let err = segs.abs_diff(target);
             let dist = cand.abs_diff(approx_window);
             if err < best_err
@@ -174,7 +187,7 @@ fn solve_window_for_segments(
 fn clamp_even(value: usize, min: usize, max: usize) -> usize {
     let floor = min.max(4); // absolute minimum: 4 (see SolverConstraints::default)
     let mut v = value.clamp(floor, max.max(floor));
-    if v % 2 != 0 {
+    if !v.is_multiple_of(2) {
         v = if v == max { v.saturating_sub(1) } else { v + 1 };
     }
     v.max(floor)
@@ -184,11 +197,19 @@ fn hop_length(window: usize, overlap_percent: f32) -> usize {
     ((window as f32) * (1.0 - (overlap_percent / 100.0))).max(1.0) as usize
 }
 
-fn num_segments(active_samples: usize, window: usize, hop: usize) -> usize {
-    if active_samples < window {
+fn num_segments(active_samples: usize, window: usize, hop: usize, use_center: bool) -> usize {
+    if active_samples == 0 {
         return 0;
     }
-    (active_samples.saturating_sub(window)) / hop.max(1) + 1
+    let padded = if use_center {
+        active_samples + window
+    } else {
+        if active_samples < window {
+            return 0;
+        }
+        active_samples
+    };
+    (padded.saturating_sub(window)) / hop.max(1) + 1
 }
 
 #[cfg(test)]
@@ -201,6 +222,7 @@ mod tests {
             active_samples: 44_100,
             window_length: 8192,
             overlap_percent: 75.0,
+            use_center: false,
             zero_pad_factor: 1,
             target_segments_per_active: Some(18),
             target_bins_per_segment: None,
@@ -217,6 +239,7 @@ mod tests {
             active_samples: 44_100,
             window_length: 8192,
             overlap_percent: 50.0,
+            use_center: false,
             zero_pad_factor: 1,
             target_segments_per_active: Some(10),
             target_bins_per_segment: None,
@@ -232,6 +255,7 @@ mod tests {
             active_samples: 44_100,
             window_length: 8192,
             overlap_percent: 75.0,
+            use_center: false,
             zero_pad_factor: 1,
             target_segments_per_active: None,
             target_bins_per_segment: Some(1025),
@@ -248,6 +272,7 @@ mod tests {
             active_samples: 88_200,
             window_length: 1024,
             overlap_percent: 75.0,
+            use_center: false,
             zero_pad_factor: 1,
             target_segments_per_active: Some(1),
             target_bins_per_segment: Some(1),
@@ -269,6 +294,7 @@ mod tests {
             active_samples: 44_100,
             window_length: 8192,
             overlap_percent: 75.0,
+            use_center: false,
             zero_pad_factor: 4,
             target_segments_per_active: None,
             target_bins_per_segment: Some(1025),
@@ -287,6 +313,7 @@ mod tests {
             active_samples: 1_000_000,
             window_length: 999_999,
             overlap_percent: 123.0,
+            use_center: false,
             zero_pad_factor: 1,
             target_segments_per_active: Some(1),
             target_bins_per_segment: None,
@@ -306,6 +333,7 @@ mod tests {
             active_samples: 44_100,
             window_length: 8,
             overlap_percent: 75.0,
+            use_center: false,
             zero_pad_factor: 8,
             target_segments_per_active: None,
             target_bins_per_segment: Some(2),

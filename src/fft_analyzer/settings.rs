@@ -17,6 +17,14 @@ pub struct Settings {
     pub target_bins_per_segment: usize,
     pub last_edited_field: String, // "Overlap", "SegmentsPerActive", "BinsPerSegment"
 
+    // ── Overview FFT (whole-file coarse/default layer) ──
+    pub overview_window_length: usize,
+    pub overview_overlap_percent: f32,
+    pub overview_window_type: String, // "Hann", "Hamming", "Blackman", "Kaiser"
+    pub overview_kaiser_beta: f32,
+    pub overview_center_pad: bool,
+    pub overview_zero_pad_factor: usize,
+
     // ── View: Frequency ──
     pub view_freq_min_hz: f32,
     pub view_freq_max_hz: f32,
@@ -33,6 +41,7 @@ pub struct Settings {
     pub recon_freq_min_hz: f32,
     pub recon_freq_max_hz: f32,
     pub recon_freq_count: usize,
+    pub recon_norm_floor: f64,
 
     // ── Audio ──
     pub normalize_audio: bool,
@@ -60,6 +69,7 @@ pub struct Settings {
     // ── Tooltips ──
     pub show_tooltips: bool,
     pub lock_to_active: bool,
+    pub render_full_file_outside_roi: bool,
 
     // ── Playback ──
     pub repeat_playback: bool,
@@ -94,6 +104,14 @@ impl Default for Settings {
             target_bins_per_segment: 0,
             last_edited_field: "Overlap".to_string(),
 
+            // Overview FFT
+            overview_window_length: 8192,
+            overview_overlap_percent: 75.0,
+            overview_window_type: "Hann".to_string(),
+            overview_kaiser_beta: 8.6,
+            overview_center_pad: false,
+            overview_zero_pad_factor: 1,
+
             // View: Frequency
             view_freq_min_hz: 100.0,
             view_freq_max_hz: 2000.0,
@@ -110,6 +128,7 @@ impl Default for Settings {
             recon_freq_min_hz: 0.0,
             recon_freq_max_hz: 5000.0,
             recon_freq_count: 4097,
+            recon_norm_floor: 1e-6,
 
             // Audio
             normalize_audio: true,
@@ -137,6 +156,7 @@ impl Default for Settings {
             // Tooltips
             show_tooltips: true,
             lock_to_active: false,
+            render_full_file_outside_roi: true,
 
             // Playback
             repeat_playback: false,
@@ -159,7 +179,7 @@ impl Default for Settings {
 }
 
 use crate::app_state::AppState;
-use crate::data::{default_custom_gradient, FreqScale, GradientStop};
+use crate::data::{FreqScale, GradientStop, default_custom_gradient};
 
 #[allow(dead_code)]
 impl Settings {
@@ -171,7 +191,7 @@ impl Settings {
         let old_path = Path::new("muSickBeets.ini");
         let path = Path::new(Self::FILE_NAME);
         if !path.exists() && old_path.exists() {
-            eprintln!("[Settings] Migrating muSickBeets.ini -> settings.ini");
+            app_log!("Settings", "Migrating muSickBeets.ini -> settings.ini");
             let _ = fs::rename(old_path, path);
         }
         if path.exists() {
@@ -182,7 +202,8 @@ impl Settings {
                     settings
                 }
                 Err(e) => {
-                    eprintln!(
+                    app_log!(
+                        "Settings",
                         "Warning: Could not read {}: {}. Using defaults.",
                         Self::FILE_NAME,
                         e
@@ -207,6 +228,7 @@ impl Settings {
         cfg.window_length = st.fft_params.window_length;
         cfg.overlap_percent = st.fft_params.overlap_percent;
         cfg.window_type = match st.fft_params.window_type {
+            crate::data::WindowType::Rectangular => "Rectangular".to_string(),
             crate::data::WindowType::Hann => "Hann".to_string(),
             crate::data::WindowType::Hamming => "Hamming".to_string(),
             crate::data::WindowType::Blackman => "Blackman".to_string(),
@@ -224,6 +246,20 @@ impl Settings {
             crate::data::LastEditedField::SegmentsPerActive => "SegmentsPerActive".to_string(),
             crate::data::LastEditedField::BinsPerSegment => "BinsPerSegment".to_string(),
         };
+        cfg.overview_window_length = st.overview_fft_defaults.window_length;
+        cfg.overview_overlap_percent = st.overview_fft_defaults.overlap_percent;
+        cfg.overview_window_type = match st.overview_fft_defaults.window_type {
+            crate::data::WindowType::Rectangular => "Rectangular".to_string(),
+            crate::data::WindowType::Hann => "Hann".to_string(),
+            crate::data::WindowType::Hamming => "Hamming".to_string(),
+            crate::data::WindowType::Blackman => "Blackman".to_string(),
+            crate::data::WindowType::Kaiser(b) => {
+                cfg.overview_kaiser_beta = b;
+                "Kaiser".to_string()
+            }
+        };
+        cfg.overview_center_pad = st.overview_fft_defaults.use_center;
+        cfg.overview_zero_pad_factor = st.overview_fft_defaults.zero_pad_factor;
 
         // View
         cfg.view_freq_min_hz = st.view.freq_min_hz;
@@ -245,6 +281,7 @@ impl Settings {
         cfg.recon_freq_min_hz = st.view.recon_freq_min_hz;
         cfg.recon_freq_max_hz = st.view.recon_freq_max_hz;
         cfg.recon_freq_count = st.view.recon_freq_count;
+        cfg.recon_norm_floor = st.view.recon_norm_floor;
 
         // Audio
         cfg.normalize_audio = st.normalize_audio;
@@ -258,6 +295,7 @@ impl Settings {
 
         // UI
         cfg.lock_to_active = st.lock_to_active;
+        cfg.render_full_file_outside_roi = st.render_full_file_outside_roi;
 
         // Custom Gradient
         cfg.custom_gradient = serialize_gradient(&st.view.custom_gradient);
@@ -269,7 +307,12 @@ impl Settings {
     pub fn save(&self) {
         let content = self.to_ini();
         if let Err(e) = fs::write(Self::FILE_NAME, content) {
-            eprintln!("Warning: Could not save {}: {}", Self::FILE_NAME, e);
+            app_log!(
+                "Settings",
+                "Warning: Could not save {}: {}",
+                Self::FILE_NAME,
+                e
+            );
         }
     }
 
@@ -296,6 +339,32 @@ impl Settings {
         s.push_str(&format!("last_edited_field = {}\n", self.last_edited_field));
         s.push('\n');
 
+        s.push_str("[OverviewFFT]\n");
+        s.push_str("# Whole-file background layer defaults used for the fast overview spectrogram.\n");
+        s.push_str("# These are moderate/faster settings used outside the focused ROI.\n");
+        s.push_str("# overview_window_length: even integer >= 4\n");
+        s.push_str(&format!("overview_window_length = {}\n", self.overview_window_length));
+        s.push_str("# overview_overlap_percent: 0..99 (75 is a good fast default)\n");
+        s.push_str(&format!(
+            "overview_overlap_percent = {}\n",
+            self.overview_overlap_percent
+        ));
+        s.push_str("# overview_window_type: Rectangular, Hann, Hamming, Blackman, Kaiser\n");
+        s.push_str(&format!("overview_window_type = {}\n", self.overview_window_type));
+        s.push_str("# overview_kaiser_beta: only used when overview_window_type = Kaiser\n");
+        s.push_str(&format!(
+            "overview_kaiser_beta = {}\n",
+            self.overview_kaiser_beta
+        ));
+        s.push_str("# overview_center_pad: true/false\n");
+        s.push_str(&format!("overview_center_pad = {}\n", self.overview_center_pad));
+        s.push_str("# overview_zero_pad_factor: 1, 2, 4, or 8\n");
+        s.push_str(&format!(
+            "overview_zero_pad_factor = {}\n",
+            self.overview_zero_pad_factor
+        ));
+        s.push('\n');
+
         s.push_str("[View]\n");
         s.push_str(&format!("view_freq_min_hz = {}\n", self.view_freq_min_hz));
         s.push_str(&format!("view_freq_max_hz = {}\n", self.view_freq_max_hz));
@@ -318,6 +387,7 @@ impl Settings {
         s.push_str(&format!("recon_freq_min_hz = {}\n", self.recon_freq_min_hz));
         s.push_str(&format!("recon_freq_max_hz = {}\n", self.recon_freq_max_hz));
         s.push_str(&format!("recon_freq_count = {}\n", self.recon_freq_count));
+        s.push_str(&format!("recon_norm_floor = {:e}\n", self.recon_norm_floor));
         s.push('\n');
 
         s.push_str("[Audio]\n");
@@ -356,6 +426,13 @@ impl Settings {
         s.push_str("[UI]\n");
         s.push_str(&format!("show_tooltips = {}\n", self.show_tooltips));
         s.push_str(&format!("lock_to_active = {}\n", self.lock_to_active));
+        s.push_str(
+            "# render_full_file_outside_roi: when true, show dimmed full-file content outside the ROI\n",
+        );
+        s.push_str(&format!(
+            "render_full_file_outside_roi = {}\n",
+            self.render_full_file_outside_roi
+        ));
         s.push_str(&format!("repeat_playback = {}\n", self.repeat_playback));
         s.push('\n');
 
@@ -397,174 +474,208 @@ impl Settings {
         let map = parse_ini_to_map(content);
 
         // Analysis
-        if let Some(v) = map.get("window_length") {
-            if let Ok(n) = v.parse() {
-                self.window_length = n;
-            }
+        if let Some(v) = map.get("window_length")
+            && let Ok(n) = v.parse()
+        {
+            self.window_length = n;
         }
-        if let Some(v) = map.get("overlap_percent") {
-            if let Ok(n) = v.parse() {
-                self.overlap_percent = n;
-            }
+        if let Some(v) = map.get("overlap_percent")
+            && let Ok(n) = v.parse()
+        {
+            self.overlap_percent = n;
         }
         if let Some(v) = map.get("window_type") {
             self.window_type = v.clone();
         }
-        if let Some(v) = map.get("kaiser_beta") {
-            if let Ok(n) = v.parse() {
-                self.kaiser_beta = n;
-            }
+        if let Some(v) = map.get("kaiser_beta")
+            && let Ok(n) = v.parse()
+        {
+            self.kaiser_beta = n;
         }
         if let Some(v) = map.get("center_pad") {
             self.center_pad = v == "true";
         }
-        if let Some(v) = map.get("zero_pad_factor") {
-            if let Ok(n) = v.parse() {
-                self.zero_pad_factor = n;
-            }
+        if let Some(v) = map.get("zero_pad_factor")
+            && let Ok(n) = v.parse()
+        {
+            self.zero_pad_factor = n;
         }
-        if let Some(v) = map.get("target_segments_per_active") {
-            if let Ok(n) = v.parse() {
-                self.target_segments_per_active = n;
-            }
+        if let Some(v) = map.get("target_segments_per_active")
+            && let Ok(n) = v.parse()
+        {
+            self.target_segments_per_active = n;
         }
-        if let Some(v) = map.get("target_bins_per_segment") {
-            if let Ok(n) = v.parse() {
-                self.target_bins_per_segment = n;
-            }
+        if let Some(v) = map.get("target_bins_per_segment")
+            && let Ok(n) = v.parse()
+        {
+            self.target_bins_per_segment = n;
         }
         if let Some(v) = map.get("last_edited_field") {
             self.last_edited_field = v.clone();
         }
+        if let Some(v) = map.get("overview_window_length")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_window_length = n;
+        }
+        if let Some(v) = map.get("overview_overlap_percent")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_overlap_percent = n;
+        }
+        if let Some(v) = map.get("overview_window_type") {
+            self.overview_window_type = v.clone();
+        }
+        if let Some(v) = map.get("overview_kaiser_beta")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_kaiser_beta = n;
+        }
+        if let Some(v) = map.get("overview_center_pad") {
+            self.overview_center_pad = v == "true";
+        }
+        if let Some(v) = map.get("overview_zero_pad_factor")
+            && let Ok(n) = v.parse()
+        {
+            self.overview_zero_pad_factor = n;
+        }
 
         // View
-        if let Some(v) = map.get("view_freq_min_hz") {
-            if let Ok(n) = v.parse() {
-                self.view_freq_min_hz = n;
-            }
+        if let Some(v) = map.get("view_freq_min_hz")
+            && let Ok(n) = v.parse()
+        {
+            self.view_freq_min_hz = n;
         }
-        if let Some(v) = map.get("view_freq_max_hz") {
-            if let Ok(n) = v.parse() {
-                self.view_freq_max_hz = n;
-            }
+        if let Some(v) = map.get("view_freq_max_hz")
+            && let Ok(n) = v.parse()
+        {
+            self.view_freq_max_hz = n;
         }
-        if let Some(v) = map.get("freq_scale_power") {
-            if let Ok(n) = v.parse() {
-                self.freq_scale_power = n;
-            }
+        if let Some(v) = map.get("freq_scale_power")
+            && let Ok(n) = v.parse()
+        {
+            self.freq_scale_power = n;
         }
 
         // Display
         if let Some(v) = map.get("colormap") {
             self.colormap = v.clone();
         }
-        if let Some(v) = map.get("threshold_db") {
-            if let Ok(n) = v.parse() {
-                self.threshold_db = n;
-            }
+        if let Some(v) = map.get("threshold_db")
+            && let Ok(n) = v.parse()
+        {
+            self.threshold_db = n;
         }
-        if let Some(v) = map.get("db_ceiling") {
-            if let Ok(n) = v.parse() {
-                self.db_ceiling = n;
-            }
+        if let Some(v) = map.get("db_ceiling")
+            && let Ok(n) = v.parse()
+        {
+            self.db_ceiling = n;
         }
-        if let Some(v) = map.get("brightness") {
-            if let Ok(n) = v.parse() {
-                self.brightness = n;
-            }
+        if let Some(v) = map.get("brightness")
+            && let Ok(n) = v.parse()
+        {
+            self.brightness = n;
         }
-        if let Some(v) = map.get("gamma") {
-            if let Ok(n) = v.parse() {
-                self.gamma = n;
-            }
+        if let Some(v) = map.get("gamma")
+            && let Ok(n) = v.parse()
+        {
+            self.gamma = n;
         }
 
         // Reconstruction
-        if let Some(v) = map.get("recon_freq_min_hz") {
-            if let Ok(n) = v.parse() {
-                self.recon_freq_min_hz = n;
-            }
+        if let Some(v) = map.get("recon_freq_min_hz")
+            && let Ok(n) = v.parse()
+        {
+            self.recon_freq_min_hz = n;
         }
-        if let Some(v) = map.get("recon_freq_max_hz") {
-            if let Ok(n) = v.parse() {
-                self.recon_freq_max_hz = n;
-            }
+        if let Some(v) = map.get("recon_freq_max_hz")
+            && let Ok(n) = v.parse()
+        {
+            self.recon_freq_max_hz = n;
         }
-        if let Some(v) = map.get("recon_freq_count") {
-            if let Ok(n) = v.parse() {
-                self.recon_freq_count = n;
-            }
+        if let Some(v) = map.get("recon_freq_count")
+            && let Ok(n) = v.parse()
+        {
+            self.recon_freq_count = n;
+        }
+        if let Some(v) = map.get("recon_norm_floor")
+            && let Ok(n) = v.parse::<f64>()
+        {
+            self.recon_norm_floor = n.clamp(1e-30, 1e-4);
         }
 
         // Audio
         if let Some(v) = map.get("normalize_audio") {
             self.normalize_audio = v == "true";
         }
-        if let Some(v) = map.get("normalize_peak") {
-            if let Ok(n) = v.parse() {
-                self.normalize_peak = n;
-            }
+        if let Some(v) = map.get("normalize_peak")
+            && let Ok(n) = v.parse()
+        {
+            self.normalize_peak = n;
         }
 
         // Zoom
-        if let Some(v) = map.get("time_zoom_factor") {
-            if let Ok(n) = v.parse() {
-                self.time_zoom_factor = n;
-            }
+        if let Some(v) = map.get("time_zoom_factor")
+            && let Ok(n) = v.parse()
+        {
+            self.time_zoom_factor = n;
         }
-        if let Some(v) = map.get("freq_zoom_factor") {
-            if let Ok(n) = v.parse() {
-                self.freq_zoom_factor = n;
-            }
+        if let Some(v) = map.get("freq_zoom_factor")
+            && let Ok(n) = v.parse()
+        {
+            self.freq_zoom_factor = n;
         }
-        if let Some(v) = map.get("mouse_zoom_factor") {
-            if let Ok(n) = v.parse() {
-                self.mouse_zoom_factor = n;
-            }
+        if let Some(v) = map.get("mouse_zoom_factor")
+            && let Ok(n) = v.parse()
+        {
+            self.mouse_zoom_factor = n;
+        }
+        if let Some(v) = map.get("swap_zoom_axes") {
+            self.swap_zoom_axes = v == "true";
         }
         if let Some(v) = map.get("swap_zoom_axes") {
             self.swap_zoom_axes = v == "true";
         }
 
         // Window
-        if let Some(v) = map.get("window_width") {
-            if let Ok(n) = v.parse() {
-                self.window_width = n;
-            }
+        if let Some(v) = map.get("window_width")
+            && let Ok(n) = v.parse()
+        {
+            self.window_width = n;
         }
-        if let Some(v) = map.get("window_height") {
-            if let Ok(n) = v.parse() {
-                self.window_height = n;
-            }
+        if let Some(v) = map.get("window_height")
+            && let Ok(n) = v.parse()
+        {
+            self.window_height = n;
         }
-        if let Some(v) = map.get("sidebar_width") {
-            if let Ok(n) = v.parse() {
-                self.sidebar_width = n;
-            }
+        if let Some(v) = map.get("sidebar_width")
+            && let Ok(n) = v.parse()
+        {
+            self.sidebar_width = n;
         }
 
         // Axis Labels
-        if let Some(v) = map.get("axis_font_size") {
-            if let Ok(n) = v.parse() {
-                self.axis_font_size = n;
-            }
+        if let Some(v) = map.get("axis_font_size")
+            && let Ok(n) = v.parse()
+        {
+            self.axis_font_size = n;
         }
-        if let Some(v) = map.get("freq_axis_width") {
-            if let Ok(n) = v.parse() {
-                self.freq_axis_width = n;
-            }
+        if let Some(v) = map.get("freq_axis_width")
+            && let Ok(n) = v.parse()
+        {
+            self.freq_axis_width = n;
         }
-        if let Some(v) = map.get("time_axis_height") {
-            if let Ok(n) = v.parse() {
-                self.time_axis_height = n;
-            }
+        if let Some(v) = map.get("time_axis_height")
+            && let Ok(n) = v.parse()
+        {
+            self.time_axis_height = n;
         }
 
         // Waveform
-        if let Some(v) = map.get("waveform_height") {
-            if let Ok(n) = v.parse() {
-                self.waveform_height = n;
-            }
+        if let Some(v) = map.get("waveform_height")
+            && let Ok(n) = v.parse()
+        {
+            self.waveform_height = n;
         }
 
         // UI
@@ -573,6 +684,9 @@ impl Settings {
         }
         if let Some(v) = map.get("lock_to_active") {
             self.lock_to_active = v == "true";
+        }
+        if let Some(v) = map.get("render_full_file_outside_roi") {
+            self.render_full_file_outside_roi = v == "true";
         }
         if let Some(v) = map.get("repeat_playback") {
             self.repeat_playback = v == "true";
@@ -584,50 +698,50 @@ impl Settings {
         }
 
         // Colors
-        if let Some(v) = map.get("color_background") {
-            if let Some(n) = parse_hex(v) {
-                self.color_background = n;
-            }
+        if let Some(v) = map.get("color_background")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_background = n;
         }
-        if let Some(v) = map.get("color_panel") {
-            if let Some(n) = parse_hex(v) {
-                self.color_panel = n;
-            }
+        if let Some(v) = map.get("color_panel")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_panel = n;
         }
-        if let Some(v) = map.get("color_widget") {
-            if let Some(n) = parse_hex(v) {
-                self.color_widget = n;
-            }
+        if let Some(v) = map.get("color_widget")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_widget = n;
         }
-        if let Some(v) = map.get("color_text_primary") {
-            if let Some(n) = parse_hex(v) {
-                self.color_text_primary = n;
-            }
+        if let Some(v) = map.get("color_text_primary")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_text_primary = n;
         }
-        if let Some(v) = map.get("color_text_secondary") {
-            if let Some(n) = parse_hex(v) {
-                self.color_text_secondary = n;
-            }
+        if let Some(v) = map.get("color_text_secondary")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_text_secondary = n;
         }
-        if let Some(v) = map.get("color_accent") {
-            if let Some(n) = parse_hex(v) {
-                self.color_accent = n;
-            }
+        if let Some(v) = map.get("color_accent")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_accent = n;
         }
-        if let Some(v) = map.get("color_waveform") {
-            if let Some(n) = parse_hex(v) {
-                self.color_waveform = n;
-            }
+        if let Some(v) = map.get("color_waveform")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_waveform = n;
         }
-        if let Some(v) = map.get("color_cursor") {
-            if let Some(n) = parse_hex(v) {
-                self.color_cursor = n;
-            }
+        if let Some(v) = map.get("color_cursor")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_cursor = n;
         }
-        if let Some(v) = map.get("color_center_line") {
-            if let Some(n) = parse_hex(v) {
-                self.color_center_line = n;
-            }
+        if let Some(v) = map.get("color_center_line")
+            && let Some(n) = parse_hex(v)
+        {
+            self.color_center_line = n;
         }
     }
 
