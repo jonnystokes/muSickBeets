@@ -49,6 +49,9 @@ https://rustup.rs
 
 ![FFT Analyzer Interface](assets/fft_screenshot_2.png)
 
+
+![FFT Analyzer Interface](assets/fft_screenshot_3.png)
+
 ### spreadsheet music tracker 
 
 ![spreadsheet music tracker ](assets/tracker_screenshot_1.png)
