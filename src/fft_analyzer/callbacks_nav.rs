@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use fltk::{
-    app,
+    app, dialog,
     enums::{Event, Key, Shortcut},
     menu::MenuFlag,
     prelude::*,
@@ -15,6 +15,18 @@ use crate::layout::Widgets;
 use crate::validation::{
     attach_float_validation_with_recompute, attach_uint_validation_with_recompute,
 };
+
+fn shortcut_key_text() -> &'static str {
+    "Keyboard shortcuts\n\n	navigation and analysis\n  Space        Recompute + Rebuild\n  Ctrl+O       Open audio file\n  Ctrl+S       Save FFT data\n  Ctrl+L       Load FFT data\n  Ctrl+E       Export WAV\n  Ctrl+Q       Quit the program\n  Escape       Close this keys window / active dialogs\n\nMouse wheel modifiers\n  Wheel            Zoom time + frequency\n  Ctrl + Wheel     Zoom time only\n  Shift + Wheel    Zoom frequency only\n  Alt + Wheel      Pan frequency\n  Alt+Ctrl+Wheel   Pan time\n  Alt+Shift+Wheel  Pan time + frequency"
+}
+
+pub fn setup_shortcut_key_button(widgets: &Widgets) {
+    let mut btn_key = widgets.btn_key.clone();
+    btn_key.set_callback(move |_| {
+        dialog::message_title_default("Shortcut Keys");
+        dialog::message_default(shortcut_key_text());
+    });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  MENU CALLBACKS
@@ -455,6 +467,7 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     // handle() can intercept. clear_visible_focus() on all buttons prevents
     // them from receiving keyboard focus so space never reaches them.
     block_space!(widgets.btn_open.clone(), btn_rerun);
+    block_space!(widgets.btn_key.clone(), btn_rerun);
     block_space!(widgets.btn_save_fft.clone(), btn_rerun);
     block_space!(widgets.btn_load_fft.clone(), btn_rerun);
     block_space!(widgets.btn_save_wav.clone(), btn_rerun);
@@ -467,11 +480,16 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.btn_play.clone(), btn_rerun);
     block_space!(widgets.btn_pause.clone(), btn_rerun);
     block_space!(widgets.btn_stop.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_time.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_move.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_zoom.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_roi.clone(), btn_rerun);
     block_space!(widgets.btn_freq_zoom_in.clone(), btn_rerun);
     block_space!(widgets.btn_freq_zoom_out.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_in.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_out.clone(), btn_rerun);
     widgets.btn_open.clone().clear_visible_focus();
+    widgets.btn_key.clone().clear_visible_focus();
     widgets.btn_save_fft.clone().clear_visible_focus();
     widgets.btn_load_fft.clone().clear_visible_focus();
     widgets.btn_save_wav.clone().clear_visible_focus();
@@ -484,6 +502,10 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     widgets.btn_play.clone().clear_visible_focus();
     widgets.btn_pause.clone().clear_visible_focus();
     widgets.btn_stop.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_time.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_move.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_zoom.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_roi.clone().clear_visible_focus();
     widgets.btn_freq_zoom_in.clone().clear_visible_focus();
     widgets.btn_freq_zoom_out.clone().clear_visible_focus();
     widgets.btn_time_zoom_in.clone().clear_visible_focus();

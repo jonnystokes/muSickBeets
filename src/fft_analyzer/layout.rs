@@ -34,6 +34,7 @@ pub const SPEC_RIGHT_GUTTER_W: i32 = 20;
 pub struct Widgets {
     pub root: Flex,
     pub menu: MenuBar,
+    pub btn_key: Button,
     pub btn_open: Button,
     pub btn_save_fft: Button,
     pub btn_load_fft: Button,
@@ -92,6 +93,10 @@ pub struct Widgets {
     pub btn_play: Button,
     pub btn_pause: Button,
     pub btn_stop: Button,
+    pub btn_mouse_mode_time: Button,
+    pub btn_mouse_mode_move: Button,
+    pub btn_mouse_mode_zoom: Button,
+    pub btn_mouse_mode_roi: Button,
     pub scrub_slider: Widget,
     pub cursor_readout: Frame,
     pub lbl_time: Frame,
@@ -134,7 +139,15 @@ pub fn build_ui() -> (Window, Widgets) {
     msg_bar.set_label_color(theme::color(theme::TEXT_SECONDARY));
     msg_bar.set_label_size(11);
     msg_bar.set_align(Align::Inside | Align::Left);
-    // msg_bar gets remaining width (no fixed() call)
+
+    let mut btn_key = Button::default().with_label("Key");
+    btn_key.set_color(theme::color(theme::BG_WIDGET));
+    btn_key.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    set_tooltip(
+        &mut btn_key,
+        "Show all keyboard shortcuts used by the program.",
+    );
+    menu_row.fixed(&btn_key, 52);
 
     menu_row.end();
 
@@ -332,6 +345,57 @@ pub fn build_ui() -> (Window, Widgets) {
     set_tooltip(&mut btn_stop, "Stop playback and reset to start.");
     transport_row.fixed(&btn_stop, 36);
 
+    let mut mode_gap = Frame::default();
+    mode_gap.set_frame(FrameType::FlatBox);
+    mode_gap.set_color(theme::color(theme::BG_PANEL));
+    transport_row.fixed(&mode_gap, 50);
+
+    let mut lbl_mouse_mode = Frame::default().with_label("Mode");
+    lbl_mouse_mode.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_mouse_mode.set_label_size(11);
+    lbl_mouse_mode.set_align(Align::Inside | Align::Left);
+    transport_row.fixed(&lbl_mouse_mode, 36);
+
+    let mut btn_mouse_mode_time = Button::default().with_label("Time");
+    btn_mouse_mode_time.set_color(theme::color(theme::ACCENT_BLUE));
+    btn_mouse_mode_time.set_label_color(theme::color(theme::BG_DARK));
+    btn_mouse_mode_time.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_time,
+        "Mouse mode: Time. Click or drag in the spectrogram or waveform to seek playback.",
+    );
+    transport_row.fixed(&btn_mouse_mode_time, 48);
+
+    let mut btn_mouse_mode_move = Button::default().with_label("Move");
+    btn_mouse_mode_move.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_move.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_move.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_move,
+        "Mouse mode: Move. Drag the spectrogram to pan time and frequency, or drag the waveform to pan time.",
+    );
+    transport_row.fixed(&btn_mouse_mode_move, 52);
+
+    let mut btn_mouse_mode_zoom = Button::default().with_label("Sel Zoom");
+    btn_mouse_mode_zoom.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_zoom.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_zoom.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_zoom,
+        "Mouse mode: Select Zoom. Drag a box to zoom into that region.",
+    );
+    transport_row.fixed(&btn_mouse_mode_zoom, 66);
+
+    let mut btn_mouse_mode_roi = Button::default().with_label("ROI Sel");
+    btn_mouse_mode_roi.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_roi.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_roi.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_roi,
+        "Mouse mode: ROI Select. Drag a box to set Start/Stop and Recon Min/Max without recomputing.",
+    );
+    transport_row.fixed(&btn_mouse_mode_roi, 60);
+
     // Flexible spacer pushes everything after it to the right
     Frame::default();
 
@@ -399,6 +463,7 @@ pub fn build_ui() -> (Window, Widgets) {
     let widgets = Widgets {
         root,
         menu,
+        btn_key,
         btn_open: sb.btn_open,
         btn_save_fft: sb.btn_save_fft,
         btn_load_fft: sb.btn_load_fft,
@@ -457,6 +522,10 @@ pub fn build_ui() -> (Window, Widgets) {
         btn_play,
         btn_pause,
         btn_stop,
+        btn_mouse_mode_time,
+        btn_mouse_mode_move,
+        btn_mouse_mode_zoom,
+        btn_mouse_mode_roi,
         scrub_slider,
         cursor_readout,
         lbl_time,

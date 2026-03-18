@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use fltk::{enums::CallbackTrigger, prelude::*};
 
-use crate::app_state::{set_msg, AppState, MsgLevel, SharedCallbacks, UpdateThrottle};
+use crate::app_state::{set_msg, AppState, MouseMode, MsgLevel, SharedCallbacks, UpdateThrottle};
 use crate::data::{
     ColormapId, FreqScale, LastEditedField, SolverConstraints, TimeUnit, WindowType,
 };
@@ -803,6 +803,146 @@ pub fn setup_misc_callbacks(
             cfg.window_height = win.h();
             cfg.save();
             app_log!("Settings", "Saved current settings to settings.ini");
+        });
+    }
+}
+
+pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+    fn style_buttons(
+        btn_time: &mut fltk::button::Button,
+        btn_move: &mut fltk::button::Button,
+        btn_zoom: &mut fltk::button::Button,
+        btn_roi: &mut fltk::button::Button,
+        mode: MouseMode,
+    ) {
+        use fltk::enums::Color;
+
+        let selected_bg = Color::from_hex(crate::ui::theme::ACCENT_BLUE);
+        let selected_fg = Color::from_hex(crate::ui::theme::BG_DARK);
+        let idle_bg = Color::from_hex(crate::ui::theme::BG_WIDGET);
+        let idle_fg = Color::from_hex(crate::ui::theme::TEXT_PRIMARY);
+
+        let is_time = mode == MouseMode::Time;
+        btn_time.set_color(if is_time { selected_bg } else { idle_bg });
+        btn_time.set_label_color(if is_time { selected_fg } else { idle_fg });
+
+        let is_move = mode == MouseMode::Move;
+        btn_move.set_color(if is_move { selected_bg } else { idle_bg });
+        btn_move.set_label_color(if is_move { selected_fg } else { idle_fg });
+
+        let is_zoom = mode == MouseMode::SelectZoom;
+        btn_zoom.set_color(if is_zoom { selected_bg } else { idle_bg });
+        btn_zoom.set_label_color(if is_zoom { selected_fg } else { idle_fg });
+
+        let is_roi = mode == MouseMode::RoiSelect;
+        btn_roi.set_color(if is_roi { selected_bg } else { idle_bg });
+        btn_roi.set_label_color(if is_roi { selected_fg } else { idle_fg });
+
+        btn_time.redraw();
+        btn_move.redraw();
+        btn_zoom.redraw();
+        btn_roi.redraw();
+    }
+
+    {
+        let mut btn_time = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi = widgets.btn_mouse_mode_roi.clone();
+        style_buttons(
+            &mut btn_time,
+            &mut btn_move,
+            &mut btn_zoom,
+            &mut btn_roi,
+            state.borrow().mouse_mode,
+        );
+    }
+
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_time.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::Time;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::Time,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_move.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::Move;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::Move,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_zoom.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::SelectZoom;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::SelectZoom,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn = widgets.btn_mouse_mode_roi.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::RoiSelect;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                MouseMode::RoiSelect,
+            );
         });
     }
 }

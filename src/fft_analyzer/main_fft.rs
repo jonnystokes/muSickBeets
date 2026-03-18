@@ -191,6 +191,10 @@ fn create_shared_callbacks(
         let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
         let mut btn_freq_max = widgets.btn_freq_max.clone();
         let mut input_norm_floor = widgets.input_norm_floor.clone();
+        let mut btn_mouse_mode_time = widgets.btn_mouse_mode_time.clone();
+        let mut btn_mouse_mode_move = widgets.btn_mouse_mode_move.clone();
+        let mut btn_mouse_mode_zoom = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_mouse_mode_roi = widgets.btn_mouse_mode_roi.clone();
         let mut btn_play = widgets.btn_play.clone();
         let mut btn_pause = widgets.btn_pause.clone();
         let mut btn_stop = widgets.btn_stop.clone();
@@ -205,6 +209,10 @@ fn create_shared_callbacks(
             input_recon_freq_max.activate();
             btn_freq_max.activate();
             input_norm_floor.activate();
+            btn_mouse_mode_time.activate();
+            btn_mouse_mode_move.activate();
+            btn_mouse_mode_zoom.activate();
+            btn_mouse_mode_roi.activate();
             btn_play.activate();
             btn_pause.activate();
             btn_stop.activate();
@@ -243,6 +251,10 @@ fn create_shared_callbacks(
         let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
         let mut btn_freq_max = widgets.btn_freq_max.clone();
         let mut input_norm_floor = widgets.input_norm_floor.clone();
+        let mut btn_mouse_mode_time = widgets.btn_mouse_mode_time.clone();
+        let mut btn_mouse_mode_move = widgets.btn_mouse_mode_move.clone();
+        let mut btn_mouse_mode_zoom = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_mouse_mode_roi = widgets.btn_mouse_mode_roi.clone();
         let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
         let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
         Rc::new(RefCell::new(Box::new(move || {
@@ -264,6 +276,10 @@ fn create_shared_callbacks(
             input_recon_freq_max.deactivate();
             btn_freq_max.deactivate();
             input_norm_floor.deactivate();
+            btn_mouse_mode_time.deactivate();
+            btn_mouse_mode_move.deactivate();
+            btn_mouse_mode_zoom.deactivate();
+            btn_mouse_mode_roi.deactivate();
             btn_snap_to_view.deactivate();
             check_render_full_outside_roi.deactivate();
         })))
@@ -436,6 +452,7 @@ fn main() {
 
     // Wire up all callbacks
     callbacks_nav::setup_menu_callbacks(&widgets, &state);
+    callbacks_nav::setup_shortcut_key_button(&widgets);
     callbacks_file::setup_file_callbacks(&widgets, &state, &tx, &shared, &win);
     callbacks_file::setup_rerun_callback(&widgets, &state, &tx, &shared);
     callbacks_ui::setup_parameter_callbacks(&widgets, &state, &shared);
@@ -443,7 +460,8 @@ fn main() {
     gradient_editor::setup_gradient_editor(&widgets, &state);
     callbacks_ui::setup_playback_callbacks(&widgets, &state);
     callbacks_ui::setup_misc_callbacks(&widgets, &state, &win);
-    callbacks_draw::setup_draw_callbacks(&widgets, &state);
+    callbacks_ui::setup_mouse_mode_callbacks(&widgets, &state);
+    callbacks_draw::setup_draw_callbacks(&widgets, &state, &shared);
     let (x_scroll_gen, y_scroll_gen) = callbacks_nav::setup_scrollbar_callbacks(&widgets, &state);
     callbacks_nav::setup_zoom_callbacks(&widgets, &state);
     callbacks_nav::setup_snap_to_view(&widgets, &state);

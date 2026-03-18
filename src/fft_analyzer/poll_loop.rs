@@ -381,6 +381,8 @@ fn sync_scrollbars(
     last_x_gen: &mut u64,
     last_y_gen: &mut u64,
 ) {
+    const SCROLLBAR_LINE_FRAC: f64 = 0.10;
+
     let cur_x_gen = x_scroll_gen.get();
     let cur_y_gen = y_scroll_gen.get();
     let x_user_active = cur_x_gen != *last_x_gen;
@@ -429,12 +431,16 @@ fn sync_scrollbars(
     if let Some((x_data, y_data)) = scroll_data {
         if let Some((sz, pos)) = x_data {
             x_scroll.set_slider_size(sz);
+            x_scroll
+                .set_linesize(((10000.0 * sz as f64 * SCROLLBAR_LINE_FRAC).round() as i32).max(1));
             if !x_user_active {
                 x_scroll.set_value(pos);
             }
         }
         if let Some((sz, pos)) = y_data {
             y_scroll.set_slider_size(sz);
+            y_scroll
+                .set_linesize(((10000.0 * sz as f64 * SCROLLBAR_LINE_FRAC).round() as i32).max(1));
             if !y_user_active {
                 y_scroll.set_value(pos);
             }

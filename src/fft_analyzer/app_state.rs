@@ -70,6 +70,29 @@ pub enum WorkerMessage {
     Cancelled(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseMode {
+    Time,
+    Move,
+    SelectZoom,
+    RoiSelect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseSurface {
+    Spectrogram,
+    Waveform,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseSelection {
+    pub surface: MouseSurface,
+    pub start_x: i32,
+    pub start_y: i32,
+    pub current_x: i32,
+    pub current_y: i32,
+}
+
 // ─── Status Bar Manager ────────────────────────────────────────────────────────
 //
 // Single system managing all status bar writes.
@@ -313,6 +336,8 @@ pub struct AppState {
     pub render_full_file_outside_roi: bool,
     pub has_audio: bool,
     pub current_filename: String,
+    pub mouse_mode: MouseMode,
+    pub mouse_selection: Option<MouseSelection>,
 
     pub tooltip_mgr: TooltipManager,
 
@@ -380,6 +405,8 @@ impl AppState {
             render_full_file_outside_roi: true,
             has_audio: false,
             current_filename: String::new(),
+            mouse_mode: MouseMode::Time,
+            mouse_selection: None,
 
             tooltip_mgr: TooltipManager::new(),
 

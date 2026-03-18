@@ -39,6 +39,6 @@ miniaudio = { package = "om-fork-miniaudio", version = "0.12.2" }
 rand = "0.9.2"
 x11 = "2.21.0"
 crossterm = "0.29.0"
-termion = "4.0.6"
+#termion = "4.0.6"
 rdev = "0.5.3"
 enigo = "0.6.1"

@@ -12,6 +12,7 @@ const WAVE_COLOR: (u8, u8, u8) = (0x89, 0xb4, 0xfa); // accent blue
 const DOT_COLOR: (u8, u8, u8) = (0xf9, 0xe2, 0xaf); // warm yellow for sample dots
 const CENTER_LINE_COLOR: (u8, u8, u8) = (0x45, 0x47, 0x5a);
 const CURSOR_COLOR: (u8, u8, u8) = (0xf3, 0x8b, 0xa8); // red-pink
+const CURSOR_WIDTH: i32 = 3;
 
 pub struct WaveformRenderer {
     cached_image: Option<RgbImage>,
@@ -112,7 +113,7 @@ impl WaveformRenderer {
                 CURSOR_COLOR.1,
                 CURSOR_COLOR.2,
             ));
-            draw::draw_line(x + cx, y, x + cx, y + h);
+            draw::draw_rectf(x + cx - CURSOR_WIDTH / 2, y, CURSOR_WIDTH, h);
         }
     }
 
