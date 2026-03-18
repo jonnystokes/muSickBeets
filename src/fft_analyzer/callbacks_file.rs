@@ -683,6 +683,8 @@ pub fn setup_rerun_callback(
     let input_freq_count = widgets.input_freq_count.clone();
     let input_recon_freq_min = widgets.input_recon_freq_min.clone();
     let input_recon_freq_max = widgets.input_recon_freq_max.clone();
+    let input_norm_floor = widgets.input_norm_floor.clone();
+    let mut lbl_norm_floor_sci = widgets.lbl_norm_floor_sci.clone();
     let check_center = widgets.check_center.clone();
     let shared_cb = shared.clone();
     let update_info = shared.update_info.clone();
@@ -720,6 +722,16 @@ pub fn setup_rerun_callback(
             st.view.recon_freq_count = fc;
             st.view.recon_freq_min_hz = parse_or_zero_f32(&input_recon_freq_min.value());
             st.view.recon_freq_max_hz = parse_or_zero_f32(&input_recon_freq_max.value());
+            st.view.recon_norm_floor = {
+                let val: f64 = input_norm_floor.value().parse().unwrap_or(1e-6);
+                val.clamp(1e-30, 1e-4)
+            };
+            // Update the scientific notation display label
+            lbl_norm_floor_sci.set_label(&format!(
+                "{} = {}",
+                crate::validation::format_norm_floor_with_commas_f64(st.view.recon_norm_floor),
+                crate::validation::format_scientific_f64(st.view.recon_norm_floor),
+            ));
         }
 
         if has_audio {
@@ -770,10 +782,11 @@ pub fn setup_rerun_callback(
 
                 // Read window type + kaiser beta
                 st.fft_params.window_type = match window_type_choice.value() {
-                    0 => WindowType::Hann,
-                    1 => WindowType::Hamming,
-                    2 => WindowType::Blackman,
-                    3 => {
+                    0 => WindowType::Rectangular,
+                    1 => WindowType::Hann,
+                    2 => WindowType::Hamming,
+                    3 => WindowType::Blackman,
+                    4 => {
                         let beta = parse_or_zero_f32(&input_kaiser_beta.value());
                         WindowType::Kaiser(if beta > 0.0 { beta } else { 8.6 })
                     }

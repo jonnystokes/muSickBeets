@@ -590,22 +590,68 @@ Interpretation:
 
 ---
 
-## Immediate Bug-Fix Order
+## Resolution: Epsilon Threshold Fix (Step 7)
 
-The current recommended order is:
+Step 7 fixed the root cause of the artificially wide silent gaps and added
+comprehensive automated tests.
 
-1. Instrument one-frame reconstruction math.
-2. Audit center pad on/off semantics end-to-end.
-3. Fix centered one-frame reconstruction length/cropping correctness.
-4. Replace or redesign the aggressive `window_sum` edge-zeroing rule.
-5. Measure blank-edge size per window type and document it.
+### What changed
 
-Why this order:
+- `reconstructor.rs:321` -- threshold changed from `(max_wsum * 1e-6).max(1e-8)`
+  to `f32::MIN_POSITIVE` (~1.175e-38)
+- Added 10 `#[cfg(test)]` roundtrip tests covering all 4 window types, 0% and
+  75% overlap, identity mode, sparse bins, centered mode, and gap regression
 
-- center pad correctness is a foundational bug
-- the edge-zeroing rule is likely the main cause of cliff-drop behavior
-- future single-frame export should be designed **after** the normal math path
-  is trustworthy
+### Threshold history
+
+| Version | Threshold | Hann gap (44100 samples) |
+|---------|-----------|--------------------------|
+| Pre-step-5 | `0.1 * max(window_sum)` | ~25,000 samples |
+| Step 5 | `1e-6 * max(window_sum)` | ~444 samples |
+| **Step 7** | **`f32::MIN_POSITIVE`** | **2 samples** |
+
+The 2-sample gap is mathematically correct: symmetric Hann has `w[0] = w[M-1] = 0`
+exactly, so NOLA is genuinely violated at those two indices. No normalization
+can recover those samples because the forward FFT multiplied them by zero.
+
+### Test results
+
+| Test | Window | Overlap | Mode | max_err | gaps |
+|------|--------|---------|------|---------|------|
+| Identity interior | Hann | 75% | full spectrum | 3.6e-7 | 2 (endpoints) |
+| Identity | Hamming | 0% | full spectrum | 2.5e-6 | 0 |
+| Identity | Kaiser | 0% | full spectrum | 1.1e-4 | 0 |
+| Identity | Hann | 0% | full spectrum | 0.205 | 9 (endpoint zeros) |
+| Identity | Blackman | 0% | full spectrum | 6.4 | 0 |
+| Regression | Hann | 0% | single frame | - | left=2, right=2 |
+| Sparse | Hamming | 0% | 400-500Hz | - | 0 (jumps=0.05) |
+| Sparse | Hann | 50% | 400-500Hz | - | 1 (endpoint) |
+
+The Blackman identity error of 6.4 at 0% overlap is high but comes from the
+near-zero endpoint region where division by tiny `w^2` amplifies floating-point
+noise. This is expected behavior for exact-zero-endpoint windows at 0% overlap --
+the normalization is dividing by numbers on the order of 1e-30, which amplifies
+any noise in the IFFT output.
+
+### Two separate artifact mechanisms confirmed
+
+1. **Silent gaps** (Hann/Blackman at 0% overlap): Caused by the epsilon threshold
+   being too large. Now reduced to 1-2 samples at exact window zeros. This is a
+   genuine NOLA violation -- mathematically irrecoverable.
+
+2. **Boundary spikes** (all windows at 0% overlap with sparse bins): Caused by
+   spectrogram inconsistency -- modified STFT frames produce independently
+   filtered waveforms that don't match at boundaries. This is expected DSP
+   behavior, not a bug. The standard solution is more overlap (50%+ for COLA,
+   75% for robustness).
+
+### What remains
+
+- **Pending decision:** Whether to switch from symmetric to periodic window
+  generation. Periodic would eliminate the last 1-2 sample endpoint gaps and
+  match standard library conventions.
+- **Future work:** Dedicated single-frame export mode for the instrument
+  project (deferred until user says foundation is solid).
 
 ---
 
@@ -635,11 +681,18 @@ Recommendation:
 
 ---
 
-## Next Work Slices
+## Completed Bug-Fix Steps
 
-1. Instrument one-frame reconstruction math (`num_frames`, output length,
-   `window_sum`, zeroed spans).
-2. Verify center pad on/off semantics against actual STFT behavior.
-3. Fix centered one-frame reconstruction correctness.
-4. Redesign the hard edge-zeroing rule.
-5. Revisit future single-frame export design only after the above are stable.
+All items from the original bug-fix order are complete:
+
+1. Done -- Instrument one-frame reconstruction math.
+2. Done -- Audit center pad on/off semantics end-to-end.
+3. Done -- Fix centered one-frame reconstruction length/cropping correctness.
+4. Done -- Replace aggressive `window_sum` edge-zeroing rule (step 5 -> step 7).
+5. Done -- Measure blank-edge size per window type and document it.
+6. Done -- Separate gap vs spike artifacts and confirm expected DSP behavior.
+7. Done -- Fix epsilon to standard-library level, add automated tests.
+
+### Remaining open item
+
+- Evaluate symmetric vs periodic window generation (step 8, pending).

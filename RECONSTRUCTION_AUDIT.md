@@ -1,5 +1,11 @@
 # Reconstruction Audit: Code Review vs DSP Theory
 
+> **Update (step 7):** Finding 1 (epsilon threshold) has been **fixed**. The
+> threshold was changed from `1e-6 * max` to `f32::MIN_POSITIVE` (~1.175e-38).
+> Hann gaps shrank from 444 samples to 2 samples (exact window zeros only).
+> 10 automated roundtrip tests were added to `reconstructor.rs` to prevent
+> regression. See `PROGRESS.md` and `SINGLE_FRAME_FFT_NOTES.md` for current state.
+
 **Reviewer:** Claude Opus 4.6 (Anthropic), running in OpenCode harness  
 **Date:** 2026-03-16  
 **Scope:** Zero-overlap reconstruction correctness -- silent gaps and boundary spikes  
@@ -99,17 +105,20 @@ predicted this without seeing the code -- their hypothesis is confirmed.
 - **SciPy:** Relies on NOLA (denominator truly nonzero), no percentage cutoff
 - **PyTorch:** Throws RuntimeError when NOLA fails
 
-### What the fix should be
+### Resolution (step 7) -- FIXED
 
-Replace with `f32::MIN_POSITIVE` (~1.175e-38) or a similar dtype-tiny value.
-This would reduce the gap to only the 1-2 samples where `w[n]` is exactly 0.0
-(the window endpoints for symmetric Hann/Blackman). Those 1-2 sample gaps are
-mathematically correct -- NOLA is genuinely violated there.
+The threshold was changed to `f32::MIN_POSITIVE` (~1.175e-38). Verified results:
 
-The code comment at line 314-319 already says "Standard weighted overlap-add /
-ISTFT practice is to divide wherever the squared-window sum is nonzero" -- the
-intent is correct, but the implementation uses a threshold 32 orders of magnitude
-larger than standard practice.
+| Metric | Before (1e-6) | After (MIN_POSITIVE) |
+|--------|---------------|----------------------|
+| Hann 44100-sample gap per side | 444 samples | 2 samples |
+| Hamming 0% identity max error | same | 2.5e-6 |
+| Kaiser 0% identity max error | same | 1.1e-4 |
+
+The 2-sample gap is mathematically correct: symmetric Hann has `w[0]=w[M-1]=0`
+exactly, making those indices irrecoverable (NOLA violation at exact zeros).
+
+10 automated roundtrip tests were added to prevent regression.
 
 ### Impact on boundary spikes
 

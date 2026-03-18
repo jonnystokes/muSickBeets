@@ -99,10 +99,14 @@ fn create_shared_callbacks(
 
             let sentence = info.format_segmentation_sentence();
             status_fft.set_value(&sentence);
-            let width_chars = ((win.w() - 16).max(40) / 7).max(20) as usize;
+            // Estimate height needed for word-wrapped text.
+            // Use ~7px per char at text_size=11 to estimate wrapped line count.
+            let width_px = (win.w() - 16).max(100) as usize;
+            let char_width = 7usize; // approximate px per character at size 11
+            let chars_per_line = (width_px / char_width).max(10);
             let line_count = sentence
                 .split('\n')
-                .map(|line| ((line.chars().count().max(1) - 1) / width_chars) + 1)
+                .map(|line| ((line.chars().count().max(1) - 1) / chars_per_line) + 1)
                 .sum::<usize>()
                 .max(1) as i32;
             let fft_h = (line_count * 17 + 8).max(24);
@@ -185,6 +189,8 @@ fn create_shared_callbacks(
         let mut input_freq_count = widgets.input_freq_count.clone();
         let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
         let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_freq_max = widgets.btn_freq_max.clone();
+        let mut input_norm_floor = widgets.input_norm_floor.clone();
         let mut btn_play = widgets.btn_play.clone();
         let mut btn_pause = widgets.btn_pause.clone();
         let mut btn_stop = widgets.btn_stop.clone();
@@ -197,6 +203,8 @@ fn create_shared_callbacks(
             input_freq_count.activate();
             input_recon_freq_min.activate();
             input_recon_freq_max.activate();
+            btn_freq_max.activate();
+            input_norm_floor.activate();
             btn_play.activate();
             btn_pause.activate();
             btn_stop.activate();
@@ -233,6 +241,8 @@ fn create_shared_callbacks(
         let mut input_freq_count = widgets.input_freq_count.clone();
         let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
         let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_freq_max = widgets.btn_freq_max.clone();
+        let mut input_norm_floor = widgets.input_norm_floor.clone();
         let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
         let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
         Rc::new(RefCell::new(Box::new(move || {
@@ -252,6 +262,8 @@ fn create_shared_callbacks(
             input_freq_count.deactivate();
             input_recon_freq_min.deactivate();
             input_recon_freq_max.deactivate();
+            btn_freq_max.deactivate();
+            input_norm_floor.deactivate();
             btn_snap_to_view.deactivate();
             check_render_full_outside_roi.deactivate();
         })))
@@ -377,6 +389,7 @@ fn main() {
         st.view.recon_freq_min_hz = cfg.recon_freq_min_hz;
         st.view.recon_freq_max_hz = cfg.recon_freq_max_hz;
         st.view.recon_freq_count = cfg.recon_freq_count;
+        st.view.recon_norm_floor = cfg.recon_norm_floor;
         st.lock_to_active = cfg.lock_to_active;
         st.render_full_file_outside_roi = cfg.render_full_file_outside_roi;
         st.time_zoom_factor = cfg.time_zoom_factor;
@@ -405,6 +418,7 @@ fn main() {
         st.overview_fft_defaults.window_length = cfg.overview_window_length;
         st.overview_fft_defaults.overlap_percent = cfg.overview_overlap_percent;
         st.overview_fft_defaults.window_type = match cfg.overview_window_type.as_str() {
+            "Rectangular" => data::WindowType::Rectangular,
             "Hamming" => data::WindowType::Hamming,
             "Blackman" => data::WindowType::Blackman,
             "Kaiser" => data::WindowType::Kaiser(cfg.overview_kaiser_beta),
@@ -469,6 +483,18 @@ fn main() {
             .slider_overlap
             .clone()
             .set_value(st.fft_params.overlap_percent as f64);
+        widgets
+            .input_norm_floor
+            .clone()
+            .set_value(&format!("{}", st.view.recon_norm_floor));
+        widgets
+            .lbl_norm_floor_sci
+            .clone()
+            .set_label(&format!(
+                "{} = {}",
+                crate::validation::format_norm_floor_with_commas_f64(st.view.recon_norm_floor),
+                crate::validation::format_scientific_f64(st.view.recon_norm_floor)
+            ));
     }
 
     // ── Start the 16ms poll loop (worker messages, scrollbar sync, transport) ──

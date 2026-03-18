@@ -53,6 +53,8 @@ pub fn start_poll_loop(
     let mut input_start = widgets.input_start.clone();
     let mut input_stop = widgets.input_stop.clone();
     let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+    let mut input_norm_floor = widgets.input_norm_floor.clone();
+    let mut lbl_norm_floor_sci = widgets.lbl_norm_floor_sci.clone();
     let mut slider_overlap = widgets.slider_overlap.clone();
     let mut x_scroll = widgets.x_scroll.clone();
     let mut y_scroll = widgets.y_scroll.clone();
@@ -194,6 +196,8 @@ pub fn start_poll_loop(
                         &mut waveform_display,
                         &mut input_stop,
                         &mut input_recon_freq_max,
+                        &mut input_norm_floor,
+                        &mut lbl_norm_floor_sci,
                         &mut win_poll,
                         &enable_audio_widgets,
                         &update_info,
@@ -799,6 +803,8 @@ fn handle_audio_loaded(
     waveform_display: &mut fltk::widget::Widget,
     input_stop: &mut fltk::input::FloatInput,
     input_recon_freq_max: &mut fltk::input::FloatInput,
+    input_norm_floor: &mut fltk::input::FloatInput,
+    lbl_norm_floor_sci: &mut fltk::frame::Frame,
     win_poll: &mut fltk::window::Window,
     enable_audio_widgets: &SharedCb,
     update_info: &SharedCb,
@@ -881,6 +887,12 @@ fn handle_audio_loaded(
             }
         }
         input_recon_freq_max.set_value(&format!("{:.0}", st.view.recon_freq_max_hz));
+        input_norm_floor.set_value(&format!("{}", st.view.recon_norm_floor));
+        lbl_norm_floor_sci.set_label(&format!(
+            "{} = {}",
+            crate::validation::format_norm_floor_with_commas_f64(st.view.recon_norm_floor),
+            crate::validation::format_scientific_f64(st.view.recon_norm_floor),
+        ));
     }
 
     (enable_audio_widgets.borrow_mut())();

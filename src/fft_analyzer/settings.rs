@@ -41,6 +41,7 @@ pub struct Settings {
     pub recon_freq_min_hz: f32,
     pub recon_freq_max_hz: f32,
     pub recon_freq_count: usize,
+    pub recon_norm_floor: f64,
 
     // ── Audio ──
     pub normalize_audio: bool,
@@ -127,6 +128,7 @@ impl Default for Settings {
             recon_freq_min_hz: 0.0,
             recon_freq_max_hz: 5000.0,
             recon_freq_count: 4097,
+            recon_norm_floor: 1e-6,
 
             // Audio
             normalize_audio: true,
@@ -226,6 +228,7 @@ impl Settings {
         cfg.window_length = st.fft_params.window_length;
         cfg.overlap_percent = st.fft_params.overlap_percent;
         cfg.window_type = match st.fft_params.window_type {
+            crate::data::WindowType::Rectangular => "Rectangular".to_string(),
             crate::data::WindowType::Hann => "Hann".to_string(),
             crate::data::WindowType::Hamming => "Hamming".to_string(),
             crate::data::WindowType::Blackman => "Blackman".to_string(),
@@ -246,6 +249,7 @@ impl Settings {
         cfg.overview_window_length = st.overview_fft_defaults.window_length;
         cfg.overview_overlap_percent = st.overview_fft_defaults.overlap_percent;
         cfg.overview_window_type = match st.overview_fft_defaults.window_type {
+            crate::data::WindowType::Rectangular => "Rectangular".to_string(),
             crate::data::WindowType::Hann => "Hann".to_string(),
             crate::data::WindowType::Hamming => "Hamming".to_string(),
             crate::data::WindowType::Blackman => "Blackman".to_string(),
@@ -277,6 +281,7 @@ impl Settings {
         cfg.recon_freq_min_hz = st.view.recon_freq_min_hz;
         cfg.recon_freq_max_hz = st.view.recon_freq_max_hz;
         cfg.recon_freq_count = st.view.recon_freq_count;
+        cfg.recon_norm_floor = st.view.recon_norm_floor;
 
         // Audio
         cfg.normalize_audio = st.normalize_audio;
@@ -344,7 +349,7 @@ impl Settings {
             "overview_overlap_percent = {}\n",
             self.overview_overlap_percent
         ));
-        s.push_str("# overview_window_type: Hann, Hamming, Blackman, Kaiser\n");
+        s.push_str("# overview_window_type: Rectangular, Hann, Hamming, Blackman, Kaiser\n");
         s.push_str(&format!("overview_window_type = {}\n", self.overview_window_type));
         s.push_str("# overview_kaiser_beta: only used when overview_window_type = Kaiser\n");
         s.push_str(&format!(
@@ -382,6 +387,7 @@ impl Settings {
         s.push_str(&format!("recon_freq_min_hz = {}\n", self.recon_freq_min_hz));
         s.push_str(&format!("recon_freq_max_hz = {}\n", self.recon_freq_max_hz));
         s.push_str(&format!("recon_freq_count = {}\n", self.recon_freq_count));
+        s.push_str(&format!("recon_norm_floor = {:e}\n", self.recon_norm_floor));
         s.push('\n');
 
         s.push_str("[Audio]\n");
@@ -591,6 +597,11 @@ impl Settings {
             && let Ok(n) = v.parse()
         {
             self.recon_freq_count = n;
+        }
+        if let Some(v) = map.get("recon_norm_floor")
+            && let Ok(n) = v.parse::<f64>()
+        {
+            self.recon_norm_floor = n.clamp(1e-30, 1e-4);
         }
 
         // Audio

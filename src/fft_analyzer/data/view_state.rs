@@ -138,6 +138,11 @@ pub struct ViewState {
     pub recon_freq_count: usize,
     pub recon_freq_min_hz: f32,
     pub recon_freq_max_hz: f32,
+    /// Normalization floor for ISTFT overlap-add denominator.
+    /// Samples where the squared-window sum falls below this value are zeroed.
+    /// Default: 1e-6. User-configurable via sidebar "Norm Floor" field.
+    /// Uses f64 to allow very small thresholds (down to ~1e-30).
+    pub recon_norm_floor: f64,
 
     // Full data bounds (for reset zoom / unlocked scrolling)
     pub data_freq_max_hz: f32,
@@ -166,6 +171,7 @@ impl Default for ViewState {
             recon_freq_count: 4097,
             recon_freq_min_hz: 0.0,
             recon_freq_max_hz: 5000.0,
+            recon_norm_floor: 1e-6,
 
             data_freq_max_hz: 5000.0,
             data_time_min_sec: 0.0,

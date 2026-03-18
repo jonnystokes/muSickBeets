@@ -56,6 +56,9 @@ pub struct SidebarWidgets {
     pub input_freq_count: Input,
     pub input_recon_freq_min: FloatInput,
     pub input_recon_freq_max: FloatInput,
+    pub btn_freq_max: Button,
+    pub input_norm_floor: FloatInput,
+    pub lbl_norm_floor_sci: Frame,
     pub btn_snap_to_view: Button,
     pub lbl_info: MultilineOutput,
     pub btn_tooltips: fltk::button::CheckButton,
@@ -277,17 +280,18 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
 
     // Window type
     let mut window_type_choice = Choice::default();
+    window_type_choice.add_choice("Rectangular");
     window_type_choice.add_choice("Hann");
     window_type_choice.add_choice("Hamming");
     window_type_choice.add_choice("Blackman");
     window_type_choice.add_choice("Kaiser");
-    window_type_choice.set_value(0);
+    window_type_choice.set_value(1); // Hann default (index shifted by 1)
     window_type_choice.set_color(theme::color(theme::BG_WIDGET));
     window_type_choice.set_text_color(theme::color(theme::TEXT_PRIMARY));
     window_type_choice.deactivate();
     set_tooltip(
         &mut window_type_choice,
-        "Windowing function applied to each FFT segment.\nHann: general purpose, good frequency resolution.\nHamming: slightly better sidelobe rejection.\nBlackman: best sidelobe rejection, wider main lobe.\nKaiser: configurable via beta parameter.",
+        "Windowing function applied to each FFT segment.\nRectangular: no tapering, zero gaps at edges, more spectral leakage.\nHann: general purpose, good frequency resolution.\nHamming: slightly better sidelobe rejection.\nBlackman: best sidelobe rejection, wider main lobe.\nKaiser: configurable via beta parameter.",
     );
     left.fixed(&window_type_choice, 25);
 
@@ -334,13 +338,14 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     );
     left.fixed(&zero_pad_choice, 25);
 
-    // Resolution trade-off display (live feedback)
+    // Resolution trade-off display (live feedback, word-wrapping)
     let mut lbl_resolution_info = MultilineOutput::default();
     lbl_resolution_info.set_value("--");
     lbl_resolution_info.set_text_color(theme::color(theme::TEXT_SECONDARY));
     lbl_resolution_info.set_text_size(9);
     lbl_resolution_info.set_color(theme::color(theme::BG_WIDGET));
-    left.fixed(&lbl_resolution_info, 56);
+    lbl_resolution_info.set_wrap(true);
+    left.fixed(&lbl_resolution_info, 80);
 
     let mut btn_rerun = Button::default().with_label("Recompute + Rebuild (Space)");
     btn_rerun.set_color(theme::color(theme::ACCENT_BLUE));
@@ -549,6 +554,8 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
     lbl_freq_max.set_align(Align::Inside | Align::Left);
     left.fixed(&lbl_freq_max, 16);
 
+    let mut freq_max_row = Flex::default().row();
+
     let mut input_recon_freq_max = FloatInput::default();
     input_recon_freq_max.set_value("5000");
     input_recon_freq_max.set_color(theme::color(theme::BG_WIDGET));
@@ -559,7 +566,49 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         "Maximum frequency for reconstruction.\nFunctional range: 0 to Nyquist.\nBins above this frequency are zeroed out.",
     );
     attach_float_validation(&mut input_recon_freq_max);
-    left.fixed(&input_recon_freq_max, 25);
+
+    let mut btn_freq_max = Button::default().with_label("Max");
+    btn_freq_max.set_color(theme::color(theme::BG_WIDGET));
+    btn_freq_max.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_freq_max.set_label_size(10);
+    btn_freq_max.deactivate();
+    set_tooltip(
+        &mut btn_freq_max,
+        "Set reconstruction max frequency to Nyquist\n(half the sample rate — the highest\nrepresentable frequency).",
+    );
+    freq_max_row.fixed(&btn_freq_max, 35);
+
+    freq_max_row.end();
+    left.fixed(&freq_max_row, 25);
+
+    // Norm floor (inline label to save vertical space)
+    let mut input_norm_floor = FloatInput::default().with_label("Norm Floor:");
+    input_norm_floor.set_value("0.000001");
+    input_norm_floor.set_color(theme::color(theme::BG_WIDGET));
+    input_norm_floor.set_text_color(theme::color(theme::TEXT_PRIMARY));
+    attach_float_validation(&mut input_norm_floor);
+    input_norm_floor.deactivate();
+    set_tooltip(
+        &mut input_norm_floor,
+        "Normalization floor for overlap-add reconstruction.\n\
+         Samples where the squared window sum falls below\n\
+         this value are zeroed (left silent) instead of\n\
+         divided, preventing amplification spikes.\n\n\
+         This is a unitless threshold on the window^2 sum.\n\
+         Type a small decimal like 0.000001.\n\n\
+         Range: 0.000000000000001 (1e-15) to 0.0001 (1e-4)\n\
+         Default: 0.000001 (1e-6)\n\n\
+         Smaller = fewer silent gaps at window edges\n\
+         but higher risk of noise amplification spikes.\n\
+         Larger = more conservative, wider silent edge gaps.",
+    );
+    left.fixed(&input_norm_floor, 25);
+
+    let mut lbl_norm_floor_sci = Frame::default().with_label("0.000,001 = 1e-6");
+    lbl_norm_floor_sci.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_norm_floor_sci.set_label_size(10);
+    lbl_norm_floor_sci.set_align(Align::Inside | Align::Right);
+    left.fixed(&lbl_norm_floor_sci, 12);
 
     // Snap viewport to processing window
     let mut btn_snap_to_view = Button::default().with_label("Snap to View");
@@ -693,6 +742,9 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         input_freq_count,
         input_recon_freq_min,
         input_recon_freq_max,
+        btn_freq_max,
+        input_norm_floor,
+        lbl_norm_floor_sci,
         btn_snap_to_view,
         lbl_info,
         btn_tooltips,

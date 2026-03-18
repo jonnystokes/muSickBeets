@@ -32,6 +32,13 @@ pub const FILE_IO_DBG: bool = true;
 #[allow(dead_code)]
 pub const SINGLE_FRAME_DBG: bool = true;
 
+/// Dense sample dump at frame transitions. Prints 150 samples on each side
+/// of selected frame boundaries (start edge, one interior, end edge).
+/// WARNING: produces ~1000 lines of output per reconstruction. Toggle off
+/// when not actively investigating frame-boundary sample data.
+#[allow(dead_code)]
+pub const FRAME_SAMPLE_DUMP_DBG: bool = false;
+
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 fn elapsed_since_start() -> f64 {

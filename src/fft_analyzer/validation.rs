@@ -203,3 +203,61 @@ pub fn parse_or_zero_f32(s: &str) -> f32 {
         s.parse().unwrap_or(0.0)
     }
 }
+
+// ─── Norm Floor Display ──────────────────────────────────────────────────────
+
+/// Format a norm floor f64 value as a plain decimal string with commas
+/// inserted every 3 digits in both the integer and fractional parts.
+pub fn format_norm_floor_with_commas_f64(val: f64) -> String {
+    let plain = format!("{:.30}", val);
+    let trimmed = plain.trim_end_matches('0');
+    let trimmed = if trimmed.ends_with('.') {
+        &plain[..trimmed.len() + 1]
+    } else {
+        trimmed
+    };
+
+    let parts: Vec<&str> = trimmed.splitn(2, '.').collect();
+    let int_part = parts[0];
+    let frac_part = if parts.len() > 1 { parts[1] } else { "0" };
+
+    let int_with_commas: String = {
+        let chars: Vec<char> = int_part.chars().collect();
+        let mut result = String::new();
+        for (i, c) in chars.iter().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                result.push(',');
+            }
+            result.push(*c);
+        }
+        result.chars().rev().collect()
+    };
+
+    let frac_with_commas: String = {
+        let chars: Vec<char> = frac_part.chars().collect();
+        let mut result = String::new();
+        for (i, c) in chars.iter().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                result.push(',');
+            }
+            result.push(*c);
+        }
+        result
+    };
+
+    format!("{}.{}", int_with_commas, frac_with_commas)
+}
+
+/// Format a f64 value in scientific notation (e.g., "1e-20").
+pub fn format_scientific_f64(val: f64) -> String {
+    if val == 0.0 {
+        return "0".to_string();
+    }
+    let exp = val.log10().floor() as i32;
+    let mantissa = val / 10.0_f64.powi(exp);
+    if (mantissa - 1.0).abs() < 0.01 {
+        format!("1e{}", exp)
+    } else {
+        format!("{:.1}e{}", mantissa, exp)
+    }
+}

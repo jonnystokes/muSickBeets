@@ -24,7 +24,7 @@ const STATUS_FFT_MIN_H: i32 = 0;
 pub const STATUS_FFT_OFFSET: i32 = 0;
 const SIDEBAR_W: i32 = 215;
 const SIDEBAR_INNER_W: i32 = 200;
-const SIDEBAR_INNER_H: i32 = 1400;
+const SIDEBAR_INNER_H: i32 = 1800;
 pub const SPEC_LEFT_GUTTER_W: i32 = 50;
 pub const SPEC_RIGHT_GUTTER_W: i32 = 20;
 
@@ -69,6 +69,9 @@ pub struct Widgets {
     pub input_freq_count: Input,
     pub input_recon_freq_min: FloatInput,
     pub input_recon_freq_max: FloatInput,
+    pub btn_freq_max: Button,
+    pub input_norm_floor: FloatInput,
+    pub lbl_norm_floor_sci: Frame,
     pub btn_snap_to_view: Button,
     pub lbl_info: MultilineOutput,
     pub btn_tooltips: fltk::button::CheckButton,
@@ -372,6 +375,7 @@ pub fn build_ui() -> (Window, Widgets) {
     status_fft.set_color(theme::color(theme::BG_PANEL));
     status_fft.set_text_color(theme::color(theme::TEXT_SECONDARY));
     status_fft.set_text_size(11);
+    status_fft.set_wrap(true);
     set_tooltip(
         &mut status_fft,
         "My active time range (the selected portion of the full audio) is divided into overlapping segments; each segment is then transformed into a set of frequency bins – the vertical columns of the spectrogram.",
@@ -430,6 +434,9 @@ pub fn build_ui() -> (Window, Widgets) {
         input_freq_count: sb.input_freq_count,
         input_recon_freq_min: sb.input_recon_freq_min,
         input_recon_freq_max: sb.input_recon_freq_max,
+        btn_freq_max: sb.btn_freq_max,
+        input_norm_floor: sb.input_norm_floor,
+        lbl_norm_floor_sci: sb.lbl_norm_floor_sci,
         btn_snap_to_view: sb.btn_snap_to_view,
         lbl_info: sb.lbl_info,
         btn_tooltips: sb.btn_tooltips,

@@ -45,6 +45,40 @@
 - Reconstructed audio samples are now stored in `AudioData` as `Arc<Vec<f32>>` so the
   `AudioPlayer` can share the same allocation without cloning the full sample buffer.
 
+### ISTFT normalization threshold
+- The OLA denominator threshold is user-configurable via "Norm Floor" in the
+  sidebar (FloatInput). Stored in `view.recon_norm_floor` as **f64**, default `1e-6`.
+  Range: `1e-30` to `1e-4`. Persisted in settings.ini as scientific notation.
+- **DO NOT use `f32::MIN_POSITIVE`** (~1.175e-38) as threshold -- it causes
+  division-by-near-zero that amplifies f32 IFFT noise into spikes of 60,000+.
+  The threshold must be large enough that `noise / threshold` stays reasonable.
+- Gap width for symmetric Hann: `n_gap ≈ (threshold)^(1/4) / pi * (M-1)`.
+  At 1e-6: ~444 samples per side for 44100-sample window.
+- Boundary discontinuities at 0% overlap with sparse bin selection are expected
+  DSP behavior (spectrogram inconsistency). Not a bug. More overlap reduces them.
+- **Rectangular window** (`w[n]=1.0`) eliminates both gaps AND amplification
+  spikes because `w^2=1.0` everywhere. Unaffected by norm floor setting.
+  Best choice for zero-overlap single-frame edge-to-edge capture.
+- Default `recon_freq_max_hz = 5000` means only ~929 of ~4097 bins are used.
+  "Max" button sets to Nyquist for full-spectrum reconstruction.
+- The code uses symmetric windows (divisor n-1), not periodic (divisor n).
+  Both are valid. We chose to keep symmetric.
+
+### Sidebar layout gotcha
+- The sidebar is a `Flex` column that does NOT scroll. Adding widgets pushes
+  bottom widgets (Home, Save As Default) off-screen and they become invisible
+  AND unclickable. Always calculate total fixed height when adding widgets.
+  Use inline labels (`.with_label("Foo:")`) to save ~16px per label.
+- **This broke the Home button** when Norm Floor widgets were added. Root cause
+  was adding 55px of new widgets without compensating. Fix: shrink other widgets,
+  remove separate label frames, use inline labels.
+
+### FloatInput vs Input for text fields
+- **Always prefer `FloatInput`** for numeric fields. It rejects non-numeric
+  characters (including space) at the C++ level. Plain `Input` accepts any
+  character and relies on Rust `handle()` for validation, which can fail
+  especially on VNC/remote displays where event ordering varies.
+
 ### Current behavioral model worth remembering
 - Whole-file overview FFT and focused ROI FFT are rendered as layered spectrograms
 - Focused FFT uses the current user settings; overview FFT uses separate configurable defaults

@@ -3,6 +3,7 @@ use std::f32::consts::PI;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowType {
+    Rectangular,
     Hann,
     Hamming,
     Blackman,
@@ -117,6 +118,11 @@ impl FftParams {
         let mut window = vec![0.0; n];
 
         match self.window_type {
+            WindowType::Rectangular => {
+                for w in window.iter_mut() {
+                    *w = 1.0;
+                }
+            }
             WindowType::Hann => {
                 for (i, w) in window.iter_mut().enumerate() {
                     *w = 0.5 * (1.0 - ((2.0 * PI * i as f32) / (n - 1) as f32).cos());

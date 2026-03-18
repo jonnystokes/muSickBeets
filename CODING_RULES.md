@@ -68,6 +68,36 @@ if fltk::app::event_key() == fltk::enums::Key::from_char(' ') {
 }
 ```
 
+### FloatInput vs Input for New Text Fields
+
+**Always prefer `FloatInput` over plain `Input`** for numeric fields. `FloatInput`
+rejects non-numeric characters (including space) at the C++ level before Rust
+even sees the event. Plain `Input` accepts any character and relies entirely on
+the Rust `handle()` callback for validation -- which can fail if events arrive
+in unexpected order (especially on VNC/remote displays).
+
+If you need to accept non-numeric characters (commas, special formats), use
+`Input` but be extra careful with validation. The spacebar will still be caught
+by the `handle()` recompute handler, but other characters need explicit rejection.
+
+### Sidebar Overflow -- CRITICAL
+
+The sidebar is a `Flex` column with a fixed-size spacer at the bottom. **FLTK Flex
+does NOT scroll** -- if the total height of fixed widgets exceeds the container
+height, bottom widgets are clipped and become invisible and unclickable.
+
+**When adding new widgets to the sidebar:**
+1. Calculate the total fixed height you're adding
+2. Check that existing bottom widgets (Home, Save As Default) remain visible
+3. If space is tight, use inline labels (`.with_label("Foo:")`) instead of
+   separate label frames to save ~16px per label
+4. Consider shrinking other widgets (e.g., resolution info box) to recover space
+
+The Home button was broken in a previous session by adding 55px of new widgets
+without compensating. The fix was to remove a separate label frame and shrink
+other widgets. This is easy to miss because the button still exists in the
+widget tree -- it just renders off-screen.
+
 ### Where The Code Lives
 
 - **`callbacks_nav.rs` -> `setup_spacebar_handler()`** -- Window-level handler (Layer 3)

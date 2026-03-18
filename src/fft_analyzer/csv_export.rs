@@ -37,6 +37,7 @@ pub fn export_to_csv<P: AsRef<Path>>(
 
     // Write metadata header (row 1): FFT params + reconstruction params
     let window_type_str = match params.window_type {
+        WindowType::Rectangular => "Rectangular".to_string(),
         WindowType::Hann => "Hann".to_string(),
         WindowType::Hamming => "Hamming".to_string(),
         WindowType::Blackman => "Blackman".to_string(),

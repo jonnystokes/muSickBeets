@@ -733,6 +733,22 @@ pub fn setup_misc_callbacks(
         });
     }
 
+    // Max freq button — set recon max to Nyquist
+    {
+        let state = state.clone();
+        let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+        let mut btn_rerun = widgets.btn_rerun.clone();
+
+        let mut btn_freq_max = widgets.btn_freq_max.clone();
+        btn_freq_max.set_callback(move |_| {
+            let nyquist = state.borrow().view.data_freq_max_hz;
+            if nyquist > 0.0 {
+                input_recon_freq_max.set_value(&format!("{:.0}", nyquist));
+                btn_rerun.do_callback();
+            }
+        });
+    }
+
     // Home button — snap viewport to reconstruction time + freq range
     {
         let state = state.clone();
@@ -747,6 +763,14 @@ pub fn setup_misc_callbacks(
             let mut st = state.borrow_mut();
             let proc_min = st.fft_params.start_seconds();
             let proc_max = st.fft_params.stop_seconds();
+            app_log!(
+                "Home",
+                "proc_time={:.3}-{:.3}s freq={:.0}-{:.0}Hz data_time={:.3}-{:.3}s data_freq={:.0}Hz",
+                proc_min, proc_max,
+                st.view.recon_freq_min_hz, st.view.recon_freq_max_hz,
+                st.view.data_time_min_sec, st.view.data_time_max_sec,
+                st.view.data_freq_max_hz
+            );
             if proc_max > proc_min {
                 st.view.time_min_sec = proc_min.max(st.view.data_time_min_sec);
                 st.view.time_max_sec = proc_max.min(st.view.data_time_max_sec);

@@ -461,6 +461,7 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.btn_time_unit.clone(), btn_rerun);
     block_space!(widgets.btn_rerun.clone(), btn_rerun);
     block_space!(widgets.btn_snap_to_view.clone(), btn_rerun);
+    block_space!(widgets.btn_freq_max.clone(), btn_rerun);
     block_space!(widgets.btn_home.clone(), btn_rerun);
     block_space!(widgets.btn_save_defaults.clone(), btn_rerun);
     block_space!(widgets.btn_play.clone(), btn_rerun);
@@ -477,6 +478,7 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     widgets.btn_time_unit.clone().clear_visible_focus();
     widgets.btn_rerun.clone().clear_visible_focus();
     widgets.btn_snap_to_view.clone().clear_visible_focus();
+    widgets.btn_freq_max.clone().clear_visible_focus();
     widgets.btn_home.clone().clear_visible_focus();
     widgets.btn_save_defaults.clone().clear_visible_focus();
     widgets.btn_play.clone().clear_visible_focus();
@@ -553,4 +555,5 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     attach_uint_validation_with_recompute(&mut widgets.input_freq_count.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_recon_freq_min.clone(), &btn_rerun);
     attach_float_validation_with_recompute(&mut widgets.input_recon_freq_max.clone(), &btn_rerun);
+    attach_float_validation_with_recompute(&mut widgets.input_norm_floor.clone(), &btn_rerun);
 }
