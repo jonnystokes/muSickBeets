@@ -665,42 +665,6 @@ pub fn update_status_bar(status_bar: &mut MultilineOutput, text: &str) {
     app::flush();
 }
 
-// ─── Message bar helper ───────────────────────────────────────────────────────
-//
-// Color-coded transient messages in the top message bar (right of menu).
-// Use instead of status_bar for warnings, errors, and parameter-change notices.
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-pub enum MsgLevel {
-    Info,    // neutral notice — dimmed text
-    Warning, // yellow — something was adjusted or unexpected
-    Error,   // red — something failed
-}
-
-/// Set a color-coded message on the top message bar.
-/// Call with an empty string to clear.
-pub fn set_msg(bar: &mut fltk::frame::Frame, level: MsgLevel, text: &str) {
-    use crate::ui::theme;
-    let color = match level {
-        MsgLevel::Info => theme::TEXT_SECONDARY,
-        MsgLevel::Warning => theme::ACCENT_YELLOW,
-        MsgLevel::Error => theme::ACCENT_RED,
-    };
-    bar.set_label_color(fltk::enums::Color::from_hex(color));
-    if text.is_empty() {
-        bar.set_label("");
-    } else {
-        let prefix = match level {
-            MsgLevel::Info => "",
-            MsgLevel::Warning => " Warning: ",
-            MsgLevel::Error => " Error: ",
-        };
-        bar.set_label(&format!("{}{}", prefix, text));
-    }
-    bar.redraw();
-}
-
 // ─── Format time as M:SS.ms ───────────────────────────────────────────────────
 
 pub fn format_time(seconds: f64) -> String {
