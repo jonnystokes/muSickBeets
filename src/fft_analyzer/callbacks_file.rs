@@ -28,6 +28,7 @@ pub fn setup_file_callbacks(
     setup_save_fft_callback(widgets, state, tx, shared);
     setup_load_fft_callback(widgets, state, tx, shared, win);
     setup_save_wav_callback(widgets, state, tx, shared);
+    setup_save_fft_frame_callback(widgets, state);
 }
 
 pub fn spawn_fft_stage(
@@ -964,6 +965,99 @@ pub fn setup_rerun_callback(
                     }
                 }
             });
+        }
+    });
+}
+
+// ── Save Single FFT Frame ──
+fn setup_save_fft_frame_callback(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
+    let state = state.clone();
+    let mut msg_bar = widgets.msg_bar.clone();
+
+    let mut btn = widgets.btn_save_fft_frame.clone();
+    btn.set_callback(move |_| {
+        use crate::app_state::{set_msg, MsgLevel};
+
+        // Validate selection
+        let export_data = {
+            let st = state.borrow();
+            let selected = match &st.selected_frame {
+                Some(s) => s.clone(),
+                None => {
+                    set_msg(
+                        &mut msg_bar,
+                        MsgLevel::Warning,
+                        "No frame selected. Use Sel Frame mode first.",
+                    );
+                    return;
+                }
+            };
+            let spec = match st.active_spectrogram() {
+                Some(s) => s,
+                None => {
+                    set_msg(&mut msg_bar, MsgLevel::Error, "No FFT data available.");
+                    return;
+                }
+            };
+            if selected.frame_index >= spec.frames.len() {
+                set_msg(
+                    &mut msg_bar,
+                    MsgLevel::Error,
+                    "Selected frame is no longer valid.",
+                );
+                return;
+            }
+            let params = st.fft_params.clone();
+            let view = st.view.clone();
+            (spec, selected, params, view)
+        };
+
+        let mut chooser =
+            dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+        chooser.set_filter("*.fftframe");
+        chooser.set_preset_file("instrument.fftframe");
+        chooser.show();
+
+        let filename = chooser.filename();
+        if filename.as_os_str().is_empty() {
+            return;
+        }
+
+        let (spec, selected, params, view) = export_data;
+        match crate::frame_export::export_single_frame(
+            &filename,
+            &spec,
+            selected.frame_index,
+            &params,
+            &view,
+        ) {
+            Ok(active_count) => {
+                set_msg(
+                    &mut msg_bar,
+                    MsgLevel::Info,
+                    &format!(
+                        "Frame {} saved ({} active bins) to {}",
+                        selected.frame_index,
+                        active_count,
+                        filename.display()
+                    ),
+                );
+                app_log!(
+                    "FrameExport",
+                    "Saved frame {} ({} active bins) to {:?}",
+                    selected.frame_index,
+                    active_count,
+                    filename
+                );
+            }
+            Err(e) => {
+                set_msg(
+                    &mut msg_bar,
+                    MsgLevel::Error,
+                    &format!("Frame export failed: {}", e),
+                );
+                app_log!("FrameExport", "Export error: {}", e);
+            }
         }
     });
 }

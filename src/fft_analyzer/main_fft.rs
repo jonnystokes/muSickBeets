@@ -7,6 +7,7 @@ mod callbacks_nav;
 mod callbacks_ui;
 mod csv_export;
 mod data;
+mod frame_export;
 mod gradient_editor;
 mod layout;
 mod layout_sidebar;
@@ -195,6 +196,7 @@ fn create_shared_callbacks(
         let mut btn_mouse_mode_move = widgets.btn_mouse_mode_move.clone();
         let mut btn_mouse_mode_zoom = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_mouse_mode_roi = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_mouse_mode_frame = widgets.btn_mouse_mode_frame.clone();
         let mut btn_play = widgets.btn_play.clone();
         let mut btn_pause = widgets.btn_pause.clone();
         let mut btn_stop = widgets.btn_stop.clone();
@@ -213,6 +215,7 @@ fn create_shared_callbacks(
             btn_mouse_mode_move.activate();
             btn_mouse_mode_zoom.activate();
             btn_mouse_mode_roi.activate();
+            btn_mouse_mode_frame.activate();
             btn_play.activate();
             btn_pause.activate();
             btn_stop.activate();
@@ -255,6 +258,8 @@ fn create_shared_callbacks(
         let mut btn_mouse_mode_move = widgets.btn_mouse_mode_move.clone();
         let mut btn_mouse_mode_zoom = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_mouse_mode_roi = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_mouse_mode_frame = widgets.btn_mouse_mode_frame.clone();
+        let mut btn_save_fft_frame = widgets.btn_save_fft_frame.clone();
         let mut btn_snap_to_view = widgets.btn_snap_to_view.clone();
         let mut check_render_full_outside_roi = widgets.check_render_full_outside_roi.clone();
         Rc::new(RefCell::new(Box::new(move || {
@@ -271,6 +276,7 @@ fn create_shared_callbacks(
             zero_pad_choice.deactivate();
             btn_save_fft.deactivate();
             btn_save_wav.deactivate();
+            btn_save_fft_frame.deactivate();
             input_freq_count.deactivate();
             input_recon_freq_min.deactivate();
             input_recon_freq_max.deactivate();
@@ -280,6 +286,7 @@ fn create_shared_callbacks(
             btn_mouse_mode_move.deactivate();
             btn_mouse_mode_zoom.deactivate();
             btn_mouse_mode_roi.deactivate();
+            btn_mouse_mode_frame.deactivate();
             btn_snap_to_view.deactivate();
             check_render_full_outside_roi.deactivate();
         })))

@@ -813,6 +813,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         btn_move: &mut fltk::button::Button,
         btn_zoom: &mut fltk::button::Button,
         btn_roi: &mut fltk::button::Button,
+        btn_frame: &mut fltk::button::Button,
         mode: MouseMode,
     ) {
         use fltk::enums::Color;
@@ -838,10 +839,15 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         btn_roi.set_color(if is_roi { selected_bg } else { idle_bg });
         btn_roi.set_label_color(if is_roi { selected_fg } else { idle_fg });
 
+        let is_frame = mode == MouseMode::SelectFrame;
+        btn_frame.set_color(if is_frame { selected_bg } else { idle_bg });
+        btn_frame.set_label_color(if is_frame { selected_fg } else { idle_fg });
+
         btn_time.redraw();
         btn_move.redraw();
         btn_zoom.redraw();
         btn_roi.redraw();
+        btn_frame.redraw();
     }
 
     {
@@ -849,11 +855,13 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         let mut btn_move = widgets.btn_mouse_mode_move.clone();
         let mut btn_zoom = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_roi = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_frame = widgets.btn_mouse_mode_frame.clone();
         style_buttons(
             &mut btn_time,
             &mut btn_move,
             &mut btn_zoom,
             &mut btn_roi,
+            &mut btn_frame,
             state.borrow().mouse_mode,
         );
     }
@@ -864,6 +872,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
         let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_frame_style = widgets.btn_mouse_mode_frame.clone();
         let mut btn = widgets.btn_mouse_mode_time.clone();
         btn.set_callback(move |_| {
             let mut st = state.borrow_mut();
@@ -875,6 +884,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
                 &mut btn_move_style,
                 &mut btn_zoom_style,
                 &mut btn_roi_style,
+                &mut btn_frame_style,
                 MouseMode::Time,
             );
         });
@@ -886,6 +896,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
         let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_frame_style = widgets.btn_mouse_mode_frame.clone();
         let mut btn = widgets.btn_mouse_mode_move.clone();
         btn.set_callback(move |_| {
             let mut st = state.borrow_mut();
@@ -897,6 +908,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
                 &mut btn_move_style,
                 &mut btn_zoom_style,
                 &mut btn_roi_style,
+                &mut btn_frame_style,
                 MouseMode::Move,
             );
         });
@@ -908,6 +920,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
         let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_frame_style = widgets.btn_mouse_mode_frame.clone();
         let mut btn = widgets.btn_mouse_mode_zoom.clone();
         btn.set_callback(move |_| {
             let mut st = state.borrow_mut();
@@ -919,6 +932,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
                 &mut btn_move_style,
                 &mut btn_zoom_style,
                 &mut btn_roi_style,
+                &mut btn_frame_style,
                 MouseMode::SelectZoom,
             );
         });
@@ -930,6 +944,7 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
         let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
         let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
         let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_frame_style = widgets.btn_mouse_mode_frame.clone();
         let mut btn = widgets.btn_mouse_mode_roi.clone();
         btn.set_callback(move |_| {
             let mut st = state.borrow_mut();
@@ -941,7 +956,32 @@ pub fn setup_mouse_mode_callbacks(widgets: &Widgets, state: &Rc<RefCell<AppState
                 &mut btn_move_style,
                 &mut btn_zoom_style,
                 &mut btn_roi_style,
+                &mut btn_frame_style,
                 MouseMode::RoiSelect,
+            );
+        });
+    }
+
+    {
+        let state = state.clone();
+        let mut btn_time_style = widgets.btn_mouse_mode_time.clone();
+        let mut btn_move_style = widgets.btn_mouse_mode_move.clone();
+        let mut btn_zoom_style = widgets.btn_mouse_mode_zoom.clone();
+        let mut btn_roi_style = widgets.btn_mouse_mode_roi.clone();
+        let mut btn_frame_style = widgets.btn_mouse_mode_frame.clone();
+        let mut btn = widgets.btn_mouse_mode_frame.clone();
+        btn.set_callback(move |_| {
+            let mut st = state.borrow_mut();
+            st.mouse_mode = MouseMode::SelectFrame;
+            st.mouse_selection = None;
+            drop(st);
+            style_buttons(
+                &mut btn_time_style,
+                &mut btn_move_style,
+                &mut btn_zoom_style,
+                &mut btn_roi_style,
+                &mut btn_frame_style,
+                MouseMode::SelectFrame,
             );
         });
     }

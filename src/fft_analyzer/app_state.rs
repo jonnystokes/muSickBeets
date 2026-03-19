@@ -76,6 +76,17 @@ pub enum MouseMode {
     Move,
     SelectZoom,
     RoiSelect,
+    SelectFrame,
+}
+
+/// A selected FFT frame ready for single-frame export.
+#[derive(Clone, Debug)]
+pub struct SelectedFrame {
+    /// Index into the active spectrogram's frames vec.
+    pub frame_index: usize,
+    /// Time in seconds of the selected frame (used by export callback).
+    #[allow(dead_code)]
+    pub time_seconds: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -338,6 +349,7 @@ pub struct AppState {
     pub current_filename: String,
     pub mouse_mode: MouseMode,
     pub mouse_selection: Option<MouseSelection>,
+    pub selected_frame: Option<SelectedFrame>,
 
     pub tooltip_mgr: TooltipManager,
 
@@ -407,6 +419,7 @@ impl AppState {
             current_filename: String::new(),
             mouse_mode: MouseMode::Time,
             mouse_selection: None,
+            selected_frame: None,
 
             tooltip_mgr: TooltipManager::new(),
 

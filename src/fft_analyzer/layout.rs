@@ -97,6 +97,8 @@ pub struct Widgets {
     pub btn_mouse_mode_move: Button,
     pub btn_mouse_mode_zoom: Button,
     pub btn_mouse_mode_roi: Button,
+    pub btn_mouse_mode_frame: Button,
+    pub btn_save_fft_frame: Button,
     pub scrub_slider: Widget,
     pub cursor_readout: Frame,
     pub lbl_time: Frame,
@@ -396,6 +398,21 @@ pub fn build_ui() -> (Window, Widgets) {
     );
     transport_row.fixed(&btn_mouse_mode_roi, 60);
 
+    let mut frame_gap = Frame::default();
+    frame_gap.set_frame(FrameType::FlatBox);
+    frame_gap.set_color(theme::color(theme::BG_PANEL));
+    transport_row.fixed(&frame_gap, 20);
+
+    let mut btn_mouse_mode_frame = Button::default().with_label("Sel Frame");
+    btn_mouse_mode_frame.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_frame.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_frame.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_frame,
+        "Mouse mode: Select Frame. Click the spectrogram to select an FFT frame for single-frame export.",
+    );
+    transport_row.fixed(&btn_mouse_mode_frame, 74);
+
     // Flexible spacer pushes everything after it to the right
     Frame::default();
 
@@ -526,6 +543,8 @@ pub fn build_ui() -> (Window, Widgets) {
         btn_mouse_mode_move,
         btn_mouse_mode_zoom,
         btn_mouse_mode_roi,
+        btn_mouse_mode_frame,
+        btn_save_fft_frame: sb.btn_save_fft_frame,
         scrub_slider,
         cursor_readout,
         lbl_time,

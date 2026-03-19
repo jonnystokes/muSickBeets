@@ -8,7 +8,7 @@ use fltk::{
 };
 
 use crate::app_state::format_time;
-use crate::app_state::{AppState, MouseMode, MouseSelection, MouseSurface, SharedCallbacks};
+use crate::app_state::{AppState, MouseMode, MouseSelection, MouseSurface, SelectedFrame, SharedCallbacks};
 use crate::data;
 use crate::debug_flags;
 use crate::layout::Widgets;
@@ -41,6 +41,17 @@ fn clamp_local_x(x: i32, widget_w: i32) -> i32 {
 
 fn clamp_local_y(y: i32, widget_h: i32) -> i32 {
     y.clamp(0, widget_h.max(1))
+}
+
+/// In non-centered mode, the renderer shifts frame display right by half a
+/// window. This returns that offset so click-to-select and highlight drawing
+/// can match the visual frame positions.
+fn frame_display_offset(st: &AppState) -> f64 {
+    if st.fft_params.use_center {
+        0.0
+    } else {
+        st.fft_params.window_length as f64 / st.fft_params.sample_rate.max(1) as f64 * 0.5
+    }
 }
 
 fn local_x_to_time(st: &AppState, local_x: i32, widget_w: i32) -> f64 {
@@ -477,6 +488,64 @@ fn setup_spectrogram_draw(widgets: &Widgets, state: &Rc<RefCell<AppState>>) {
                 {
                     draw_selection_overlay(w, selection);
                 }
+
+                // Draw selected-frame highlight as transparent-looking overlay
+                if let Some(ref sel_frame) = st.selected_frame {
+                    if let Some(spec) = st.active_spectrogram() {
+                        let fi = sel_frame.frame_index;
+                        if fi < spec.frames.len() {
+                            let offset = frame_display_offset(&st);
+                            // Compute shifted center (matches renderer logic)
+                            let t_center = spec.frames[fi].time_seconds + offset;
+                            let window_sec = st.fft_params.window_length as f64
+                                / st.fft_params.sample_rate.max(1) as f64;
+
+                            // Compute edges as midpoints to shifted neighbors
+                            let t_left = if fi > 0 {
+                                let prev_center = spec.frames[fi - 1].time_seconds + offset;
+                                (prev_center + t_center) * 0.5
+                            } else if st.fft_params.use_center {
+                                (t_center - window_sec * 0.5).max(st.view.data_time_min_sec)
+                            } else {
+                                spec.frames[fi].time_seconds
+                            };
+                            let t_right = if fi + 1 < spec.frames.len() {
+                                let next_center = spec.frames[fi + 1].time_seconds + offset;
+                                (t_center + next_center) * 0.5
+                            } else if st.fft_params.use_center {
+                                (t_center + window_sec * 0.5).min(st.view.data_time_max_sec)
+                            } else {
+                                (spec.frames[fi].time_seconds + window_sec)
+                                    .min(st.view.data_time_max_sec)
+                            };
+
+                            let view_min = st.view.time_min_sec;
+                            let view_max = st.view.time_max_sec;
+                            let view_range = (view_max - view_min).max(1e-12);
+
+                            let px_left = ((t_left - view_min) / view_range * w.w() as f64) as i32;
+                            let px_right = ((t_right - view_min) / view_range * w.w() as f64) as i32;
+                            let x0 = (w.x() + px_left).max(w.x());
+                            let x1 = (w.x() + px_right).min(w.x() + w.w());
+                            let band_w = (x1 - x0).max(2);
+
+                            if x1 > w.x() && x0 < w.x() + w.w() {
+                                // Draw semi-transparent overlay by alternating pixels
+                                // (checkerboard pattern simulates ~33% alpha on FLTK)
+                                fltk::draw::set_draw_color(theme::color(theme::ACCENT_GREEN));
+                                for row in 0..w.h() {
+                                    let y = w.y() + row;
+                                    for col_offset in 0..band_w {
+                                        let x = x0 + col_offset;
+                                        if (row + col_offset) % 3 == 0 {
+                                            fltk::draw::draw_point(x, y);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             None => {
                 fltk::draw::set_draw_color(theme::color(theme::BG_DARK));
@@ -507,6 +576,7 @@ fn setup_spectrogram_mouse(
     let mut input_stop = widgets.input_stop.clone();
     let mut input_recon_freq_min = widgets.input_recon_freq_min.clone();
     let mut input_recon_freq_max = widgets.input_recon_freq_max.clone();
+    let mut btn_save_fft_frame = widgets.btn_save_fft_frame.clone();
 
     let mut spec_display = widgets.spec_display.clone();
     spec_display.handle(move |w, ev| {
@@ -551,6 +621,25 @@ fn setup_spectrogram_mouse(
                             current_x: clamp_local_x(mx, w.w()),
                             current_y: clamp_local_y(my, w.h()),
                         });
+                    }
+                    MouseMode::SelectFrame => {
+                        let time = local_x_to_time(&st, mx, w.w()) - frame_display_offset(&st);
+                        if let Some(spec) = st.active_spectrogram() {
+                            if let Some(idx) = spec.frame_at_time(time) {
+                                let frame_time = spec.frames[idx].time_seconds;
+                                st.selected_frame = Some(SelectedFrame {
+                                    frame_index: idx,
+                                    time_seconds: frame_time,
+                                });
+                                btn_save_fft_frame.activate();
+                                app_log!(
+                                    "SelectFrame",
+                                    "Selected frame {} at {:.5}s",
+                                    idx,
+                                    frame_time
+                                );
+                            }
+                        }
                     }
                 }
                 drop(st);
@@ -618,7 +707,11 @@ fn setup_spectrogram_mouse(
                                 .and_then(|f| f.magnitudes.get(bin_idx))
                             {
                                 let db = data::Spectrogram::magnitude_to_db(*mag);
-                                let text = format!("{:.1} Hz | {:.1} dB | {:.5}s", freq, db, time);
+                                let text = if in_time_roi {
+                                    format!("F{} | {:.1} Hz | {:.1} dB | {:.5}s", frame_idx, freq, db, time)
+                                } else {
+                                    format!("{:.1} Hz | {:.1} dB | {:.5}s", freq, db, time)
+                                };
                                 dbg_log!(
                                     debug_flags::CURSOR_DBG,
                                     "Cursor",
@@ -773,6 +866,20 @@ fn setup_spectrogram_mouse(
                             selection.current_y = clamp_local_y(my, w.h());
                         }
                     }
+                    MouseMode::SelectFrame => {
+                        // Drag updates frame selection to track cursor
+                        let time = local_x_to_time(&st, mx, w.w()) - frame_display_offset(&st);
+                        if let Some(spec) = st.active_spectrogram() {
+                            if let Some(idx) = spec.frame_at_time(time) {
+                                let frame_time = spec.frames[idx].time_seconds;
+                                st.selected_frame = Some(SelectedFrame {
+                                    frame_index: idx,
+                                    time_seconds: frame_time,
+                                });
+                                btn_save_fft_frame.activate();
+                            }
+                        }
+                    }
                 }
                 drop(st);
                 spec_display_c.redraw();
@@ -856,6 +963,9 @@ fn setup_spectrogram_mouse(
                             }
                         }
                     }
+                    MouseMode::SelectFrame => {
+                        // Released after frame selection — nothing extra needed
+                    }
                 }
                 drop(st);
 
@@ -932,6 +1042,9 @@ fn setup_waveform_mouse(
                             current_y: clamp_local_y(my, w.h()),
                         });
                     }
+                    MouseMode::SelectFrame => {
+                        // Frame selection only works on spectrogram; ignore waveform clicks
+                    }
                 }
                 drop(st);
                 waveform_display_c.redraw();
@@ -973,6 +1086,7 @@ fn setup_waveform_mouse(
                             selection.current_y = clamp_local_y(my, w.h());
                         }
                     }
+                    MouseMode::SelectFrame => {}
                 }
                 drop(st);
                 waveform_display_c.redraw();
@@ -1042,6 +1156,7 @@ fn setup_waveform_mouse(
                             }
                         }
                     }
+                    MouseMode::SelectFrame => {}
                 }
                 drop(st);
 

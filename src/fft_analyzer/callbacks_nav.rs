@@ -484,6 +484,8 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     block_space!(widgets.btn_mouse_mode_move.clone(), btn_rerun);
     block_space!(widgets.btn_mouse_mode_zoom.clone(), btn_rerun);
     block_space!(widgets.btn_mouse_mode_roi.clone(), btn_rerun);
+    block_space!(widgets.btn_mouse_mode_frame.clone(), btn_rerun);
+    block_space!(widgets.btn_save_fft_frame.clone(), btn_rerun);
     block_space!(widgets.btn_freq_zoom_in.clone(), btn_rerun);
     block_space!(widgets.btn_freq_zoom_out.clone(), btn_rerun);
     block_space!(widgets.btn_time_zoom_in.clone(), btn_rerun);
@@ -506,6 +508,8 @@ pub fn setup_spacebar_guards(widgets: &Widgets) {
     widgets.btn_mouse_mode_move.clone().clear_visible_focus();
     widgets.btn_mouse_mode_zoom.clone().clear_visible_focus();
     widgets.btn_mouse_mode_roi.clone().clear_visible_focus();
+    widgets.btn_mouse_mode_frame.clone().clear_visible_focus();
+    widgets.btn_save_fft_frame.clone().clear_visible_focus();
     widgets.btn_freq_zoom_in.clone().clear_visible_focus();
     widgets.btn_freq_zoom_out.clone().clear_visible_focus();
     widgets.btn_time_zoom_in.clone().clear_visible_focus();

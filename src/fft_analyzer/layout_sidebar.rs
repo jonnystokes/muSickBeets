@@ -25,6 +25,7 @@ pub struct SidebarWidgets {
     pub btn_save_fft: Button,
     pub btn_load_fft: Button,
     pub btn_save_wav: Button,
+    pub btn_save_fft_frame: Button,
     pub btn_time_unit: Button,
     pub input_start: FloatInput,
     pub input_stop: FloatInput,
@@ -129,6 +130,16 @@ pub fn build_sidebar(left: &mut Flex) -> SidebarWidgets {
         "Save reconstructed audio as 16-bit WAV.\nReconstruct audio first, then export.",
     );
     left.fixed(&btn_save_wav, 28);
+
+    let mut btn_save_fft_frame = Button::default().with_label("Save FFT Frame");
+    btn_save_fft_frame.set_color(theme::color(theme::BG_WIDGET));
+    btn_save_fft_frame.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_save_fft_frame.deactivate();
+    set_tooltip(
+        &mut btn_save_fft_frame,
+        "Export a single selected FFT frame as an instrument fingerprint.\nSelect a frame first using the Sel Frame mouse mode.",
+    );
+    left.fixed(&btn_save_fft_frame, 28);
 
     // Separator
     let mut sep1 = Frame::default();
@@ -711,6 +722,7 @@ If Segments/Active is locked (e.g. 1), bins may be constrained by that lock.",
         btn_save_fft,
         btn_load_fft,
         btn_save_wav,
+        btn_save_fft_frame,
         btn_time_unit,
         input_start,
         input_stop,
