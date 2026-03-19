@@ -321,36 +321,10 @@ pub fn build_ui() -> (Window, Widgets) {
 
     scrub_row.end();
 
-    // ── Transport controls row (buttons | cursor readout | time | repeat) ──
+    // ── Transport controls row (mode buttons | readout | repeat | play/pause/stop) ──
     let mut transport_row = Flex::default().row();
     transport_row.set_color(theme::color(theme::BG_PANEL));
     right.fixed(&transport_row, 28);
-
-    let mut btn_play = Button::default().with_label("@>");
-    btn_play.set_color(theme::color(theme::BG_WIDGET));
-    btn_play.set_label_color(theme::color(theme::ACCENT_GREEN));
-    btn_play.deactivate();
-    set_tooltip(&mut btn_play, "Play audio from current position.");
-    transport_row.fixed(&btn_play, 36);
-
-    let mut btn_pause = Button::default().with_label("@||");
-    btn_pause.set_color(theme::color(theme::BG_WIDGET));
-    btn_pause.set_label_color(theme::color(theme::ACCENT_YELLOW));
-    btn_pause.deactivate();
-    set_tooltip(&mut btn_pause, "Pause playback at current position.");
-    transport_row.fixed(&btn_pause, 36);
-
-    let mut btn_stop = Button::default().with_label("@square");
-    btn_stop.set_color(theme::color(theme::BG_WIDGET));
-    btn_stop.set_label_color(theme::color(theme::ACCENT_RED));
-    btn_stop.deactivate();
-    set_tooltip(&mut btn_stop, "Stop playback and reset to start.");
-    transport_row.fixed(&btn_stop, 36);
-
-    let mut mode_gap = Frame::default();
-    mode_gap.set_frame(FrameType::FlatBox);
-    mode_gap.set_color(theme::color(theme::BG_PANEL));
-    transport_row.fixed(&mode_gap, 50);
 
     let mut lbl_mouse_mode = Frame::default().with_label("Mode");
     lbl_mouse_mode.set_label_color(theme::color(theme::TEXT_SECONDARY));
@@ -398,21 +372,6 @@ pub fn build_ui() -> (Window, Widgets) {
     );
     transport_row.fixed(&btn_mouse_mode_roi, 60);
 
-    let mut frame_gap = Frame::default();
-    frame_gap.set_frame(FrameType::FlatBox);
-    frame_gap.set_color(theme::color(theme::BG_PANEL));
-    transport_row.fixed(&frame_gap, 20);
-
-    let mut btn_mouse_mode_frame = Button::default().with_label("Sel Frame");
-    btn_mouse_mode_frame.set_color(theme::color(theme::BG_WIDGET));
-    btn_mouse_mode_frame.set_label_color(theme::color(theme::TEXT_PRIMARY));
-    btn_mouse_mode_frame.deactivate();
-    set_tooltip(
-        &mut btn_mouse_mode_frame,
-        "Mouse mode: Select Frame. Click the spectrogram to select an FFT frame for single-frame export.",
-    );
-    transport_row.fixed(&btn_mouse_mode_frame, 74);
-
     // Flexible spacer pushes everything after it to the right
     Frame::default();
 
@@ -443,7 +402,53 @@ pub fn build_ui() -> (Window, Widgets) {
     );
     transport_row.fixed(&repeat_choice, 70);
 
+    let mut btn_play = Button::default().with_label("@>");
+    btn_play.set_color(theme::color(theme::BG_WIDGET));
+    btn_play.set_label_color(theme::color(theme::ACCENT_GREEN));
+    btn_play.deactivate();
+    set_tooltip(&mut btn_play, "Play audio from current position.");
+    transport_row.fixed(&btn_play, 36);
+
+    let mut btn_pause = Button::default().with_label("@||");
+    btn_pause.set_color(theme::color(theme::BG_WIDGET));
+    btn_pause.set_label_color(theme::color(theme::ACCENT_YELLOW));
+    btn_pause.deactivate();
+    set_tooltip(&mut btn_pause, "Pause playback at current position.");
+    transport_row.fixed(&btn_pause, 36);
+
+    let mut btn_stop = Button::default().with_label("@square");
+    btn_stop.set_color(theme::color(theme::BG_WIDGET));
+    btn_stop.set_label_color(theme::color(theme::ACCENT_RED));
+    btn_stop.deactivate();
+    set_tooltip(&mut btn_stop, "Stop playback and reset to start.");
+    transport_row.fixed(&btn_stop, 36);
+
     transport_row.end();
+
+    // ── Frame controls row (dedicated block below transport row) ──
+    let mut frame_row = Flex::default().row();
+    frame_row.set_color(theme::color(theme::BG_PANEL));
+    right.fixed(&frame_row, 28);
+
+    let mut lbl_frame_mode = Frame::default().with_label("Frame");
+    lbl_frame_mode.set_label_color(theme::color(theme::TEXT_SECONDARY));
+    lbl_frame_mode.set_label_size(11);
+    lbl_frame_mode.set_align(Align::Inside | Align::Left);
+    frame_row.fixed(&lbl_frame_mode, 40);
+
+    let mut btn_mouse_mode_frame = Button::default().with_label("Sel Frame");
+    btn_mouse_mode_frame.set_color(theme::color(theme::BG_WIDGET));
+    btn_mouse_mode_frame.set_label_color(theme::color(theme::TEXT_PRIMARY));
+    btn_mouse_mode_frame.deactivate();
+    set_tooltip(
+        &mut btn_mouse_mode_frame,
+        "Mouse mode: Select Frame. Click the spectrogram to select an FFT frame for single-frame export.",
+    );
+    frame_row.fixed(&btn_mouse_mode_frame, 74);
+
+    Frame::default();
+
+    frame_row.end();
 
     right.end();
     root.end();
