@@ -27,7 +27,9 @@ Ask for confirmation before launching sub-agents unless the user has given stand
 
 ## Active Work
 
-Ready for the next feature add-on.
+Active project work is currently centered on the new `noise_maker` binary.
+
+- See `NOISE_MAKER_PROGRESS.md` for the weighted task list and readiness tracking.
 
 ---
 

@@ -1,11 +1,11 @@
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
 #[derive(Clone, Debug)]
 pub struct FrameBin {
-    #[allow(dead_code)]
     pub bin_index: usize,
     pub frequency_hz: f32,
     pub magnitude: f32,
@@ -23,6 +23,7 @@ pub struct FrameFile {
 }
 
 impl FrameFile {
+    #[allow(dead_code)]
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let text = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read frame file: {:?}", path.as_ref()))?;
@@ -114,5 +115,63 @@ impl FrameFile {
             .iter()
             .map(|b| b.frequency_hz)
             .fold(0.0_f32, f32::max)
+    }
+
+    pub fn to_text(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "MUSICKBEETS_FRAME_V1");
+        let _ = writeln!(out, "sample_rate={}", self.sample_rate);
+        let _ = writeln!(out, "fft_size={}", self.fft_size);
+        let _ = writeln!(out, "frame_index={}", self.frame_index);
+        let _ = writeln!(out, "frame_time_seconds={:.10}", self.frame_time_seconds);
+        let _ = writeln!(out, "active_bin_count={}", self.active_bin_count);
+        let _ = writeln!(out, "---");
+        let _ = writeln!(out, "bin_index,frequency_hz,magnitude,phase_rad");
+        for bin in &self.bins {
+            let _ = writeln!(
+                out,
+                "{},{:.4},{:.6},{:.6}",
+                bin.bin_index, bin.frequency_hz, bin.magnitude, bin.phase_rad
+            );
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_file_roundtrip_preserves_core_state() {
+        let frame = FrameFile {
+            sample_rate: 48_000,
+            fft_size: 2048,
+            frame_index: 2,
+            frame_time_seconds: 0.125,
+            active_bin_count: 2,
+            bins: vec![
+                FrameBin {
+                    bin_index: 5,
+                    frequency_hz: 117.2,
+                    magnitude: 0.25,
+                    phase_rad: 0.1,
+                },
+                FrameBin {
+                    bin_index: 9,
+                    frequency_hz: 222.4,
+                    magnitude: 0.75,
+                    phase_rad: -0.3,
+                },
+            ],
+        };
+
+        let text = frame.to_text();
+        let parsed = FrameFile::parse(&text).expect("frame parse should succeed");
+        assert_eq!(parsed.sample_rate, frame.sample_rate);
+        assert_eq!(parsed.fft_size, frame.fft_size);
+        assert_eq!(parsed.frame_index, frame.frame_index);
+        assert_eq!(parsed.active_bin_count, frame.active_bin_count);
+        assert_eq!(parsed.bins.len(), frame.bins.len());
     }
 }
