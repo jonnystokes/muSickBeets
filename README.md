@@ -21,6 +21,8 @@ follow this link to set up rust in order to compile this project.
 https://rustup.rs
 
 ## Features
+#### test
+plain text
 
 ### Tracker
 - 12 independent channels with real-time playback
